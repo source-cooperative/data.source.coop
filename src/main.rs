@@ -1,179 +1,41 @@
+mod utils;
+mod clients;
+
 use actix_web::{
-    body::{BodySize, MessageBody},
     http::header::RANGE,
     get, head, web, App, Error as ActixError, HttpRequest, HttpResponse, HttpServer, Responder,
 };
-use futures::{Stream, TryStreamExt};
-use pin_project_lite::pin_project;
+use futures::TryStreamExt;
 use rusoto_core::Region;
-use rusoto_dynamodb::{AttributeValue, DynamoDb, DynamoDbClient, GetItemInput};
 use rusoto_s3::{GetObjectRequest, HeadObjectRequest, S3Client, S3};
-use serde_json::{json, Map, Value};
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use serde::Deserialize;
+use quick_xml::se::to_string_with_root;
+use crate::utils::core::{S3ObjectStream, FakeBody};
+use crate::clients::common::fetch_repository_client;
 
-pin_project! {
-    pub struct S3ObjectStream<S> {
-        #[pin]
-        inner: S,
-        size: u64,
-    }
-}
 
-struct FakeBody {
-    size: usize,
-}
-
-impl MessageBody for FakeBody {
-    type Error = actix_web::Error;
-    fn size(&self) -> BodySize {
-        BodySize::Sized(self.size as u64)
-    }
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<web::Bytes, actix_web::Error>>> {
-        Poll::Ready(None)
-    }
-}
-
-impl<S> S3ObjectStream<S> {
-    pub fn new(inner: S, size: u64) -> Self {
-        Self { inner, size }
-    }
-}
-
-impl<S> MessageBody for S3ObjectStream<S>
-where
-    S: Stream,
-    S::Item: Into<Result<web::Bytes, ActixError>>,
-{
-    type Error = ActixError;
-
-    fn size(&self) -> BodySize {
-        BodySize::Sized(self.size)
-    }
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<web::Bytes, Self::Error>>> {
-        let this = self.project();
-        match this.inner.poll_next(cx) {
-            Poll::Ready(Some(item)) => Poll::Ready(Some(item.into())),
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
+fn split_at_first_slash(input: String) -> (String, String) {
+    match input.find('/') {
+        Some(index) => {
+            let (before, after) = input.split_at(index);
+            (before.to_string(), after[1..].to_string())
         }
+        None => (input, String::new()),
     }
-}
-
-fn attribute_value_to_json(attr: AttributeValue) -> Value {
-    match attr {
-        AttributeValue { s: Some(s), .. } => Value::String(s),
-        AttributeValue { n: Some(n), .. } => n.parse().map(Value::Number).unwrap_or(Value::Null),
-        AttributeValue { bool: Some(b), .. } => Value::Bool(b),
-        AttributeValue { m: Some(m), .. } => {
-            let mut map = Map::new();
-            for (k, v) in m {
-                map.insert(k, attribute_value_to_json(v));
-            }
-            Value::Object(map)
-        }
-        AttributeValue { l: Some(l), .. } => {
-            Value::Array(l.into_iter().map(attribute_value_to_json).collect())
-        }
-        // Add other AttributeValue types as needed
-        _ => Value::Null,
-    }
-}
-
-async fn get_repository_record(account_id: &String, repository_id: &String) -> Result<String, Box<dyn std::error::Error>> {
-    let client = DynamoDbClient::new(Region::default());
-
-    let mut key = HashMap::new();
-    key.insert(
-        "account_id".to_string(),
-        AttributeValue {
-            s: Some(account_id.to_string()),
-            ..Default::default()
-        },
-    );
-    key.insert(
-        "repository_id".to_string(),
-        AttributeValue {
-            s: Some(repository_id.to_string()),
-            ..Default::default()
-        },
-    );
-
-    let input = GetItemInput {
-        table_name: "source-cooperative-repositories".to_string(),
-        key,
-        ..Default::default()
-    };
-
-    match client.get_item(input).await {
-        Ok(output) => {
-            if let Some(item) = output.item {
-                let json_value: Value = Value::Object(
-                    item.into_iter()
-                        .map(|(k, v)| (k, attribute_value_to_json(v)))
-                        .collect(),
-                );
-
-                // Convert the JSON Value to a pretty-printed string
-                let _json_string = serde_json::to_string_pretty(&json_value)?;
-                // println!("Item found:\n{}", json_string);
-            } else {
-                println!("No item found with the specified keys.");
-            }
-        }
-        Err(error) => {
-            println!("Error: {:?}", error);
-        }
-    }
-
-    Ok("foobar".to_string())
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().service(get_readme).service(get_object).service(head_object))
+    HttpServer::new(|| App::new().service(get_object).service(head_object).service(list_objects))
         .bind("0.0.0.0:8080")?
         .run()
         .await
-}
-
-#[get("/{account_id}/{repository_id}/READMEFOO.md")]
-async fn get_readme(path: web::Path<(String, String)>) -> impl Responder {
-    let (account_id, repository_id) = path.into_inner();
-    dbg!(&account_id);
-    let json_value = json!({
-        "account_id": account_id,
-        "repository_id": repository_id
-    });
-
-    HttpResponse::Ok()
-        .content_type("application/json")
-        .body(json_value.to_string())
 }
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>) -> impl Responder {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
-
-    //if let Some(_range) = headers.get("Range") {
-        //println!("Range: {:?}", range);
-        //}
-
-    match get_repository_record(&account_id, &repository_id).await {
-        Ok(_res) => {
-            // println!("{}", res);
-        }
-        Err(_) => {
-            return HttpResponse::InternalServerError().finish();
-        }
-    }
 
     let client = S3Client::new(Region::UsWest2);
 
@@ -194,7 +56,7 @@ async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>)
         Ok(output) => {
             let content_length = output.content_length.unwrap_or(0);
             let content_type = output.content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-            let last_modified = output.last_modified.unwrap_or_else(|| "Wed, 21 Oct 2015 07:28:00 GMT".to_string());
+            let last_modified = output.last_modified.unwrap_or_else(|| "Thu, 1 Jan 1970 00:00:00 GMT".to_string());
 
             if let Some(body) = output.body {
                 // Create a stream from the body
@@ -231,13 +93,54 @@ async fn head_object(path: web::Path<(String, String, String)>) -> impl Responde
     match client.head_object(request).await {
         Ok(output) => {
             let content_length = output.content_length.unwrap_or_default() as usize;
-            let last_modified = output.last_modified.unwrap_or_else(|| "Wed, 21 Oct 2015 07:28:00 GMT".to_string());
+            let last_modified = output.last_modified.unwrap_or_else(|| "Thu, 1 Jan 1970 00:00:00 GMT".to_string());
             HttpResponse::Ok()
                 .insert_header(("Last-Modified", last_modified))
                 .body(FakeBody { size: content_length })
         }
         Err(err) => {
             dbg!(&err);
+            HttpResponse::NotFound().finish()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ListObjectsV2Query {
+    #[serde(rename = "list-type")]
+    list_type: u8,
+    #[serde(rename = "prefix")]
+    prefix: String
+}
+
+#[get("/{account_id}")]
+async fn list_objects(info: web::Query<ListObjectsV2Query>, path: web::Path<String>) -> impl Responder {
+    let account_id = path.into_inner();
+
+    let (repository_id, prefix) = split_at_first_slash(info.prefix.clone());
+
+    match fetch_repository_client(&account_id, &repository_id).await {
+        Ok(repository_client) =>  {
+            match repository_client.list_objects_v2(prefix.clone()).await {
+                Ok(res) => {
+                    match to_string_with_root("ListBucketResult", &res) {
+                        Ok(serialized) => {
+                            HttpResponse::Ok()
+                                .content_type("application/xml")
+                                .body(serialized)
+                        },
+                        Err(e) => {
+                            eprintln!("Serialization error: {:?}", e);
+                            HttpResponse::InternalServerError().finish()
+                        }
+                    }
+                }
+                Err(_) => {
+                    HttpResponse::NotFound().finish()
+                }
+            }
+        }
+        Err(_) => {
             HttpResponse::NotFound().finish()
         }
     }
