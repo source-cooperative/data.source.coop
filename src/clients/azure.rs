@@ -1,58 +1,80 @@
 use async_trait::async_trait;
-use rusoto_core::Region;
-use rusoto_s3::{ListObjectsV2Request, S3Client, S3};
-use chrono::Utc;
+use azure_storage_blobs::container::operations::list_blobs::BlobItem;
+use azure_storage_blobs::prelude::*;
+use azure_storage::StorageCredentials;
+use futures::StreamExt;
+use time::format_description::well_known::Rfc2822;
 
 use crate::clients::common::{Content, CommonPrefix, ListBucketResult, Repository};
 
 pub struct AzureRepository {
     pub account_id: String,
     pub repository_id: String,
-    pub region: Region,
-    pub bucket: String,
+    pub account_name: String,
+    pub container_name: String,
     pub base_prefix: String,
+    pub delimiter: String,
 }
 
 #[async_trait]
 impl Repository for AzureRepository {
     async fn list_objects_v2(&self, prefix: String) -> Result<ListBucketResult, ()> {
-        let client = S3Client::new(self.region.clone());
-        let request = ListObjectsV2Request {
-            bucket: self.bucket.clone(),
-            prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
-            delimiter: Some("/".to_string()),
-            ..Default::default()
+        let mut result = ListBucketResult {
+            name: format!("{}", self.account_id),
+            prefix: prefix.clone(),
+            key_count: 0,
+            max_keys: 0,
+            is_truncated: false,
+            contents: vec![],
+            common_prefixes: vec![],
         };
 
-        match client.list_objects_v2(request).await {
-            Ok(output) => {
-                let result = ListBucketResult {
-                    name: format!("{}", self.account_id),
-                    prefix: prefix.clone(),
-                    key_count: output.key_count.unwrap_or(0),
-                    max_keys: output.max_keys.unwrap_or(0),
-                    is_truncated: output.is_truncated.unwrap_or(false),
-                    contents: output.contents.unwrap_or_default().iter().map(|item| {
-                        Content {
-                            key: item.key.clone().unwrap_or_else(|| "".to_string()),
-                            last_modified: item.last_modified.clone().unwrap_or_else(|| Utc::now().to_rfc2822()),
-                            etag: item.e_tag.clone().unwrap_or_else(|| "".to_string()),
-                            size: item.size.unwrap_or(0),
-                            storage_class: item.storage_class.clone().unwrap_or_else(|| "".to_string()),
-                        }
-                    }).collect(),
-                    common_prefixes: output.common_prefixes.unwrap_or_default().iter().map(|item| {
-                        CommonPrefix {
-                            prefix: item.prefix.clone().unwrap_or_else(|| "".to_string())
-                        }
-                    }).collect(),
-                };
+        let delimiter = self.delimiter.clone();
 
-                return Ok(result);
-            }
-            Err(_) => {
-                return Err(());
+        let credentials = StorageCredentials::anonymous();
+
+        // Create a client for anonymous access
+        let client = BlobServiceClient::new(
+            format!("{}", &self.account_name),
+            credentials
+        )
+        .container_client(&self.container_name);
+
+        let search_prefix = format!("{}/{}", self.base_prefix, prefix);
+        dbg!(&self.container_name);
+        dbg!(&search_prefix);
+        dbg!(&delimiter);
+
+
+        // List blobs
+        let mut stream = client.list_blobs().prefix(search_prefix).delimiter(delimiter).into_stream();
+
+        while let Some(blob_result) = stream.next().await {
+            match blob_result {
+                Ok(blob) => {
+                    for blob_item in blob.blobs.items {
+                        match blob_item {
+                            BlobItem::Blob(b) => {
+                                result.contents.push(Content {
+                                    key: b.name,
+                                    last_modified: b.properties.last_modified.format(&Rfc2822).unwrap_or_else(|_| String::from("Invalid DateTime")),
+                                    etag: b.properties.etag.to_string(),
+                                    size: b.properties.content_length as i64,
+                                    storage_class: b.properties.blob_type.to_string(),
+                                });
+                            }
+                            BlobItem::BlobPrefix(bp) => {
+                                result.common_prefixes.push(CommonPrefix {
+                                    prefix: bp.name,
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error listing blob: {:?}", e),
             }
         }
+
+        Ok(result)
     }
 }

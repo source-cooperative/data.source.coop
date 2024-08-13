@@ -35,3 +35,7 @@ env_logger = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1.81"
 serde_dynamodb = "0.9.0"
+azure_storage_blobs = "0.20.0"
+azure_storage = "0.20.0"
+azure_core = "0.20.0"
+time = { version = "0.3", features = ["formatting"] }

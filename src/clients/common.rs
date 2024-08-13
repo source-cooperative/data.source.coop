@@ -108,9 +108,10 @@ pub async fn fetch_repository_client(account_id: &String, repository_id: &String
                             Box::new(AzureRepository {
                                 account_id: account_id.to_string(),
                                 repository_id: repository_id.to_string(),
-                                region: Region::UsWest2,
-                                bucket: "us-west-2.opendata.source.coop".to_string(),
-                                base_prefix: "fused/overture".to_string()
+                                account_name: "radiantearth".to_string(),
+                                container_name: "mlhub".to_string(),
+                                base_prefix: "landcovernet".to_string(),
+                                delimiter: "/".to_string()
                             })
                         )
                     }
