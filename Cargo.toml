@@ -21,6 +21,7 @@ rusoto_s3 = { version = "0.47", default-features = false, features = [
 rusoto_dynamodb = { version = "0.47", default-features = false, features = [
     "rustls",
 ] }
+tokio-util = { version = "0.7", features = ["codec"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 xml-rs = "0.8"
@@ -30,6 +31,7 @@ bytes = "1.0"
 serde_json = "1.0"
 pin-project-lite = "0.2"
 futures = "0.3"
+futures-core = "0.3"
 log = "0.4"
 env_logger = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
@@ -39,3 +41,5 @@ azure_storage_blobs = "0.20.0"
 azure_storage = "0.20.0"
 azure_core = "0.20.0"
 time = { version = "0.3", features = ["formatting"] }
+url = "2.2.2"
+reqwest = { version = "0.11.0", features = ["stream"] }
