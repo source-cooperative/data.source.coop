@@ -11,7 +11,7 @@ use reqwest;
 use rusoto_core::Region;
 use rusoto_s3::{HeadObjectRequest, ListObjectsV2Request, S3Client, S3};
 use std::pin::Pin;
-// TODO: Implement GetObject and HeadRequest, Polish ListObject
+// TODO: Polish ListObject
 
 pub struct S3Repository {
     pub account_id: String,

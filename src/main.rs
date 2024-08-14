@@ -11,6 +11,8 @@ use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 
+// TODO: Handdle errors better
+
 fn split_at_first_slash(input: String) -> (String, String) {
     match input.find('/') {
         Some(index) => {

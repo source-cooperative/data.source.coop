@@ -15,7 +15,7 @@ use crate::clients::common::{
 };
 use crate::utils::core::replace_first;
 
-// TODO: Polish ListObjects, Implement Markers, Max Size, etc. Implement GetObject with Range Request, Implement HeadObject
+// TODO: Polish ListObjects, Implement Markers, Max Size, etc.
 
 pub struct AzureRepository {
     pub account_id: String,
