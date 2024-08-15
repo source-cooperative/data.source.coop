@@ -7,6 +7,7 @@ use actix_web::error::ErrorInternalServerError;
 use actix_web::{
     get, head, http::header::RANGE, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
+use core::num::NonZeroU32;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
@@ -82,6 +83,12 @@ async fn head_object(path: web::Path<(String, String, String)>) -> impl Responde
 struct ListObjectsV2Query {
     #[serde(rename = "prefix")]
     prefix: String,
+    #[serde(rename = "list-type")]
+    _list_type: u8,
+    #[serde(rename = "max-keys")]
+    max_keys: Option<NonZeroU32>,
+    #[serde(rename = "continuation-token")]
+    continuation_token: Option<String>,
 }
 
 #[get("/{account_id}")]
@@ -93,8 +100,16 @@ async fn list_objects(
 
     let (repository_id, prefix) = split_at_first_slash(info.prefix.clone());
 
+    let mut max_keys = NonZeroU32::new(20).unwrap_or(NonZeroU32::new(20).unwrap());
+    if let Some(mk) = info.max_keys {
+        max_keys = mk;
+    }
+
     match fetch_repository_client(&account_id, &repository_id).await {
-        Ok(repository_client) => match repository_client.list_objects_v2(prefix.clone()).await {
+        Ok(repository_client) => match repository_client
+            .list_objects_v2(prefix.clone(), info.continuation_token.clone(), max_keys)
+            .await
+        {
             Ok(res) => match to_string_with_root("ListBucketResult", &res) {
                 Ok(serialized) => HttpResponse::Ok()
                     .content_type("application/xml")

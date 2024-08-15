@@ -6,6 +6,7 @@ use actix_web::http::header::RANGE;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::Utc;
+use core::num::NonZeroU32;
 use futures_core::Stream;
 use reqwest;
 use rusoto_core::Region;
@@ -100,14 +101,24 @@ impl Repository for S3Repository {
         }
     }
 
-    async fn list_objects_v2(&self, prefix: String) -> Result<ListBucketResult, ()> {
+    async fn list_objects_v2(
+        &self,
+        prefix: String,
+        continuation_token: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListBucketResult, ()> {
         let client = S3Client::new(self.region.clone());
-        let request = ListObjectsV2Request {
+        let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
             prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
             delimiter: Some(self.delimiter.clone()),
+            max_keys: Some(max_keys.get() as i64),
             ..Default::default()
         };
+
+        if let Some(token) = continuation_token {
+            request.continuation_token = Some(token);
+        }
 
         match client.list_objects_v2(request).await {
             Ok(output) => {
@@ -117,6 +128,7 @@ impl Repository for S3Repository {
                     key_count: output.key_count.unwrap_or(0),
                     max_keys: output.max_keys.unwrap_or(0),
                     is_truncated: output.is_truncated.unwrap_or(false),
+                    next_continuation_token: output.next_continuation_token,
                     contents: output
                         .contents
                         .unwrap_or_default()

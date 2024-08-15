@@ -6,6 +6,7 @@ use crate::utils::core::parse_azure_blob_url;
 use crate::utils::repository::get_repository_record;
 use async_trait::async_trait;
 use bytes::Bytes;
+use core::num::NonZeroU32;
 use futures_core::Stream;
 use rusoto_core::Region;
 use serde::Serialize;
@@ -57,7 +58,12 @@ pub trait Repository {
     async fn get_object(&self, key: String, range: Option<String>)
         -> Result<GetObjectResponse, ()>;
     async fn head_object(&self, key: String) -> Result<HeadObjectResponse, ()>;
-    async fn list_objects_v2(&self, prefix: String) -> Result<ListBucketResult, ()>;
+    async fn list_objects_v2(
+        &self,
+        prefix: String,
+        continuation_token: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListBucketResult, ()>;
 }
 
 #[derive(Serialize)]
@@ -76,6 +82,8 @@ pub struct ListBucketResult {
     pub contents: Vec<Content>,
     #[serde(rename = "CommonPrefixes")]
     pub common_prefixes: Vec<CommonPrefix>,
+    #[serde(rename = "NextContinuationToken")]
+    pub next_continuation_token: Option<String>,
 }
 
 #[derive(Serialize)]

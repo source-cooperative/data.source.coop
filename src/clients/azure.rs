@@ -1,9 +1,11 @@
 use actix_web::http::header::RANGE;
 use async_trait::async_trait;
+use azure_core::request_options::NextMarker;
 use azure_storage::StorageCredentials;
 use azure_storage_blobs::container::operations::list_blobs::BlobItem;
 use azure_storage_blobs::prelude::*;
 use bytes::Bytes;
+use core::num::NonZeroU32;
 use futures::StreamExt;
 use futures_core::Stream;
 use reqwest;
@@ -121,7 +123,12 @@ impl Repository for AzureRepository {
         }
     }
 
-    async fn list_objects_v2(&self, prefix: String) -> Result<ListBucketResult, ()> {
+    async fn list_objects_v2(
+        &self,
+        prefix: String,
+        continuation_token: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListBucketResult, ()> {
         let mut result = ListBucketResult {
             name: format!("{}", self.account_id),
             prefix: prefix.clone(),
@@ -130,6 +137,7 @@ impl Repository for AzureRepository {
             is_truncated: false,
             contents: vec![],
             common_prefixes: vec![],
+            next_continuation_token: None,
         };
 
         let delimiter = self.delimiter.clone();
@@ -142,16 +150,34 @@ impl Repository for AzureRepository {
 
         let search_prefix = format!("{}/{}", self.base_prefix, prefix);
 
+        let next_marker = continuation_token.map_or(NextMarker::new("".to_string()), Into::into);
+
         // List blobs
         let mut stream = client
             .list_blobs()
+            .marker(next_marker)
             .prefix(search_prefix)
+            .max_results(max_keys)
             .delimiter(delimiter)
             .into_stream();
 
-        while let Some(blob_result) = stream.next().await {
+        if let Some(blob_result) = stream.next().await {
             match blob_result {
                 Ok(blob) => {
+                    if blob.max_results.is_some() {
+                        result.max_keys = blob.max_results.unwrap() as i64;
+                    }
+
+                    if blob.next_marker.is_some() {
+                        result.is_truncated = true;
+                        result.next_continuation_token = Some(
+                            blob.next_marker
+                                .unwrap_or(NextMarker::new("".to_string()))
+                                .as_str()
+                                .to_string(),
+                        );
+                    }
+
                     for blob_item in blob.blobs.items {
                         match blob_item {
                             BlobItem::Blob(b) => {
