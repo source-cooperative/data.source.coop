@@ -12,12 +12,11 @@ use reqwest;
 use std::pin::Pin;
 use time::format_description::well_known::Rfc2822;
 
-use crate::clients::common::{
+use crate::backends::common::{
     CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
-
-// TODO: Polish ListObjects, Implement Markers, Max Size, etc.
+use crate::utils::errors::{APIError, InternalServerError};
 
 pub struct AzureRepository {
     pub account_id: String,
@@ -34,7 +33,7 @@ impl Repository for AzureRepository {
         &self,
         key: String,
         range: Option<String>,
-    ) -> Result<GetObjectResponse, ()> {
+    ) -> Result<GetObjectResponse, Box<dyn APIError>> {
         let credentials = StorageCredentials::anonymous();
 
         let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
@@ -71,7 +70,9 @@ impl Repository for AzureRepository {
                     Ok(response) => {
                         // Check if the status code is successful
                         if !response.status().is_success() {
-                            return Err(());
+                            return Err(Box::new(InternalServerError {
+                                message: "Internal Server Error".to_string(),
+                            }));
                         }
 
                         // Get the byte stream from the response
@@ -89,14 +90,18 @@ impl Repository for AzureRepository {
                             body: boxed_stream,
                         })
                     }
-                    Err(_) => Err(()),
+                    Err(_) => Err(Box::new(InternalServerError {
+                        message: "Internal Server Error".to_string(),
+                    })),
                 }
             }
-            Err(_) => Err(()),
+            Err(_) => Err(Box::new(InternalServerError {
+                message: "Internal Server Error".to_string(),
+            })),
         }
     }
 
-    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, ()> {
+    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
         let credentials = StorageCredentials::anonymous();
 
         // Create a client for anonymous access
@@ -119,7 +124,9 @@ impl Repository for AzureRepository {
                     .format(&Rfc2822)
                     .unwrap_or_else(|_| String::from("Invalid DateTime")),
             }),
-            Err(_) => Err(()),
+            Err(_) => Err(Box::new(InternalServerError {
+                message: "Internal Server Error".to_string(),
+            })),
         }
     }
 
@@ -128,7 +135,7 @@ impl Repository for AzureRepository {
         prefix: String,
         continuation_token: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, ()> {
+    ) -> Result<ListBucketResult, Box<dyn APIError>> {
         let mut result = ListBucketResult {
             name: format!("{}", self.account_id),
             prefix: prefix.clone(),
@@ -209,7 +216,7 @@ impl Repository for AzureRepository {
                         }
                     }
                 }
-                Err(e) => eprintln!("Error listing blob: {:?}", e),
+                Err(e) => (),
             }
         }
 

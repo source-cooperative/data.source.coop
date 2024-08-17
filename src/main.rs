@@ -1,18 +1,21 @@
-mod clients;
+mod apis;
+mod backends;
 mod utils;
 
-use crate::clients::common::fetch_repository_client;
-use crate::utils::core::{FakeBody, StreamingResponse};
+use crate::utils::core::StreamingResponse;
+use actix_cors::Cors;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
-    get, head, http::header::RANGE, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
+    get, head, http::header::RANGE, middleware, web, App, HttpRequest, HttpResponse, HttpServer,
+    Responder,
 };
+use apis::API;
 use core::num::NonZeroU32;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 
-// TODO: Handdle errors better
+// TODO: Map the APIErrors to HTTP Responses
 
 fn split_at_first_slash(input: String) -> (String, String) {
     match input.find('/') {
@@ -26,6 +29,8 @@ fn split_at_first_slash(input: String) -> (String, String) {
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>) -> impl Responder {
+    let api_client = apis::new_api();
+
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
     let mut range = Some("".to_string());
@@ -36,8 +41,12 @@ async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>)
         }
     }
 
-    match fetch_repository_client(&account_id, &repository_id).await {
-        Ok(repository_client) => match repository_client.get_object(key.clone(), range).await {
+    if let Ok(client) = api_client
+        .get_backend_client(account_id, repository_id)
+        .await
+    {
+        // Found the repository, now try to get the object
+        match client.get_object(key.clone(), range).await {
             Ok(res) => {
                 let stream = res.body.map(|result| {
                     result
@@ -55,27 +64,36 @@ async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>)
                     .body(streaming_response);
             }
             Err(_) => HttpResponse::NotFound().finish(),
-        },
-        Err(_) => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        // Could not find the repository
+        return HttpResponse::NotFound().finish();
     }
 }
 
 #[head("/{account_id}/{repository_id}/{key:.*}")]
 async fn head_object(path: web::Path<(String, String, String)>) -> impl Responder {
+    let api_client = apis::new_api();
+
     let (account_id, repository_id, key) = path.into_inner();
 
-    match fetch_repository_client(&account_id, &repository_id).await {
-        Ok(repository_client) => match repository_client.head_object(key.clone()).await {
+    if let Ok(client) = api_client
+        .get_backend_client(account_id, repository_id)
+        .await
+    {
+        // Found the repository, now make the head request
+        match client.head_object(key.clone()).await {
             Ok(res) => HttpResponse::Ok()
                 .insert_header(("Content-Type", res.content_type))
                 .insert_header(("Last-Modified", res.last_modified))
                 .insert_header(("ETag", res.etag))
-                .body(FakeBody {
-                    size: res.content_length as usize,
-                }),
+                .insert_header(("Content-Length", res.content_length.to_string()))
+                .finish(),
             Err(_) => HttpResponse::NotFound().finish(),
-        },
-        Err(_) => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        // Could not find the repository
+        return HttpResponse::NotFound().finish();
     }
 }
 
@@ -96,6 +114,7 @@ async fn list_objects(
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
 ) -> impl Responder {
+    let api_client = apis::new_api();
     let account_id = path.into_inner();
 
     let (repository_id, prefix) = split_at_first_slash(info.prefix.clone());
@@ -105,8 +124,12 @@ async fn list_objects(
         max_keys = mk;
     }
 
-    match fetch_repository_client(&account_id, &repository_id).await {
-        Ok(repository_client) => match repository_client
+    if let Ok(client) = api_client
+        .get_backend_client(account_id.clone(), repository_id.clone())
+        .await
+    {
+        // Found the repository, now make the list objects request
+        match client
             .list_objects_v2(prefix.clone(), info.continuation_token.clone(), max_keys)
             .await
         {
@@ -120,15 +143,27 @@ async fn list_objects(
                 }
             },
             Err(_) => HttpResponse::NotFound().finish(),
-        },
-        Err(_) => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        // Could not find the repository
+        return HttpResponse::NotFound().finish();
     }
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .wrap(
+                Cors::default()
+                    .allow_any_origin()
+                    .allow_any_method()
+                    .allow_any_header()
+                    .supports_credentials()
+                    .block_on_origin_mismatch(false)
+                    .max_age(3600),
+            )
+            .wrap(middleware::NormalizePath::trim())
             .service(get_object)
             .service(head_object)
             .service(list_objects)

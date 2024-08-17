@@ -1,7 +1,8 @@
-use crate::clients::common::{
+use crate::backends::common::{
     CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
+use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
 use actix_web::http::header::RANGE;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -10,9 +11,9 @@ use core::num::NonZeroU32;
 use futures_core::Stream;
 use reqwest;
 use rusoto_core::Region;
+use rusoto_core::RusotoError;
 use rusoto_s3::{HeadObjectRequest, ListObjectsV2Request, S3Client, S3};
 use std::pin::Pin;
-// TODO: Polish ListObject
 
 pub struct S3Repository {
     pub account_id: String,
@@ -29,7 +30,7 @@ impl Repository for S3Repository {
         &self,
         key: String,
         range: Option<String>,
-    ) -> Result<GetObjectResponse, ()> {
+    ) -> Result<GetObjectResponse, Box<dyn APIError>> {
         match self.head_object(key.clone()).await {
             Ok(head_object_response) => {
                 let client = reqwest::Client::new();
@@ -40,24 +41,17 @@ impl Repository for S3Repository {
                     self.base_prefix,
                     key
                 );
-                dbg!(&url);
                 // Start building the request
                 let mut request = client.get(url);
 
                 // If a range is provided, add it to the headers
                 if let Some(range_value) = range {
-                    dbg!(&range_value);
                     request = request.header(RANGE, range_value);
                 }
 
                 // Send the request and await the response
                 match request.send().await {
                     Ok(response) => {
-                        // Check if the status code is successful
-                        if !response.status().is_success() {
-                            return Err(());
-                        }
-
                         // Get the byte stream from the response
                         let content_length = response.content_length();
                         let stream = response.bytes_stream();
@@ -73,14 +67,32 @@ impl Repository for S3Repository {
                             body: boxed_stream,
                         })
                     }
-                    Err(_) => Err(()),
+                    Err(error) => {
+                        if error.is_status() {
+                            let code = error.status().unwrap().as_u16();
+                            if code == 404 {
+                                return Err(Box::new(ObjectNotFoundError {
+                                    account_id: self.account_id.clone(),
+                                    repository_id: self.repository_id.clone(),
+                                    key,
+                                }));
+                            }
+                        }
+
+                        return Err(Box::new(InternalServerError {
+                            message: "Internal Server Error".to_string(),
+                        }));
+                    }
                 }
             }
-            Err(_) => return Err(()),
+            Err(err) => {
+                // Pass through the error from the head_object call
+                return Err(err);
+            }
         }
     }
 
-    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, ()> {
+    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
         let client = S3Client::new(self.region.clone());
         let request = HeadObjectRequest {
             bucket: self.bucket.clone(),
@@ -97,7 +109,24 @@ impl Repository for S3Repository {
                     .last_modified
                     .unwrap_or_else(|| Utc::now().to_rfc2822()),
             }),
-            Err(_) => Err(()),
+            Err(error) => {
+                match error {
+                    RusotoError::Unknown(response) => {
+                        if response.status.eq(&404) {
+                            return Err(Box::new(ObjectNotFoundError {
+                                account_id: self.account_id.clone(),
+                                repository_id: self.repository_id.clone(),
+                                key,
+                            }));
+                        }
+                    }
+                    _ => (),
+                }
+
+                Err(Box::new(InternalServerError {
+                    message: format!("Internal Server Error"),
+                }))
+            }
         }
     }
 
@@ -106,7 +135,7 @@ impl Repository for S3Repository {
         prefix: String,
         continuation_token: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, ()> {
+    ) -> Result<ListBucketResult, Box<dyn APIError>> {
         let client = S3Client::new(self.region.clone());
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
@@ -124,7 +153,7 @@ impl Repository for S3Repository {
             Ok(output) => {
                 let result = ListBucketResult {
                     name: format!("{}", self.account_id),
-                    prefix,
+                    prefix: format!("{}/{}", self.repository_id, prefix),
                     key_count: output.key_count.unwrap_or(0),
                     max_keys: output.max_keys.unwrap_or(0),
                     is_truncated: output.is_truncated.unwrap_or(false),
@@ -137,7 +166,7 @@ impl Repository for S3Repository {
                             key: replace_first(
                                 item.key.clone().unwrap_or_else(|| "".to_string()),
                                 self.base_prefix.clone(),
-                                format!("{}/", self.repository_id),
+                                format!("{}", self.repository_id),
                             ),
                             last_modified: item
                                 .last_modified
@@ -159,7 +188,7 @@ impl Repository for S3Repository {
                             prefix: replace_first(
                                 item.prefix.clone().unwrap_or_else(|| "".to_string()),
                                 self.base_prefix.clone(),
-                                format!("{}/", self.repository_id),
+                                format!("{}", self.repository_id),
                             ),
                         })
                         .collect(),
@@ -168,7 +197,9 @@ impl Repository for S3Repository {
                 return Ok(result);
             }
             Err(_) => {
-                return Err(());
+                return Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }));
             }
         }
     }
