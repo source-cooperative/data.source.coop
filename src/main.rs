@@ -113,9 +113,9 @@ async fn list_objects(
         max_keys = mk;
     }
 
-    println!(format!("Account ID: {}", &account_id));
-    println!(format!("Repository ID: {}", &repository_id));
-    println!(format!("Prefix: {}", &prefix));
+    println!("{}", format!("Account ID: {}", &account_id));
+    println!("{}", format!("Repository ID: {}", &repository_id));
+    println!("{}", format!("Prefix: {}", &prefix));
 
     if let Ok(client) = api_client
         .get_backend_client(account_id.clone(), repository_id.to_string())
