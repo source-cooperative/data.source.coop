@@ -143,6 +143,11 @@ async fn list_objects(
     }
 }
 
+#[get("/")]
+async fn index() -> impl Responder {
+    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+}
+
 // Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -163,6 +168,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_object)
             .service(head_object)
             .service(list_objects)
+            .service(index)
     })
     .bind("0.0.0.0:8080")?
     .run()
