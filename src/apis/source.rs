@@ -182,6 +182,7 @@ impl SourceAPI {
                 })),
             },
             Err(error) => {
+                dbg!(&error);
                 if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
                     return Err(Box::new(RepositoryNotFoundError {
                         account_id: account_id.to_string(),
