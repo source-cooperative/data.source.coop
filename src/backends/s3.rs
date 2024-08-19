@@ -196,7 +196,8 @@ impl Repository for S3Repository {
 
                 return Ok(result);
             }
-            Err(_) => {
+            Err(error) => {
+                dbg!(&error);
                 return Err(Box::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 }));
