@@ -31,7 +31,13 @@ TASK_DEFINITION_ARN=$(aws ecs list-task-definitions --family-prefix Source-Data-
 
 echo "Updating Service..."
 
-aws ecs update-service --cluster SourceCooperative-Prod --service Source-Data-Proxy --task-definition "$TASK_DEFINITION_ARN" --profile opendata
+if [-z "$(aws ecs update-service --cluster SourceCooperative-Prod --service Source-Data-Proxy --task-definition "$TASK_DEFINITION_ARN" --profile opendata 2> /dev/null)"]; then
+    echo "Failed to update service"
+    echo "Cleaning Up..."
+    rm scripts/task_definition_deploy.json
+    exit 1;
+fi
+
 
 echo "Cleaning Up..."
 rm scripts/task_definition_deploy.json
