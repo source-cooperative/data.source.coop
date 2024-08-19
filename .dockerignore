@@ -1,0 +1,6 @@
+target/
+.github/
+LICENSE
+README.md
+Dockerfile
+scripts/

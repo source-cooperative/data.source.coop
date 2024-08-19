@@ -1,6 +1,6 @@
 [package]
-name = "source-data"
-version = "0.1.0"
+name = "source-nexus"
+version = "3.0.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,9 +18,6 @@ rusoto_core = { version = "0.47", default-features = false, features = [
 rusoto_s3 = { version = "0.47", default-features = false, features = [
     "rustls",
 ] }
-rusoto_dynamodb = { version = "0.47", default-features = false, features = [
-    "rustls",
-] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
@@ -36,10 +33,10 @@ log = "0.4"
 env_logger = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1.81"
-serde_dynamodb = "0.9.0"
 azure_storage_blobs = "0.20.0"
 azure_storage = "0.20.0"
 azure_core = "0.20.0"
 time = { version = "0.3", features = ["formatting"] }
 url = "2.2.2"
-reqwest = { version = "0.11.0", features = ["stream"] }
+reqwest = { version = "0.11.0", features = ["stream", "json"] }
+actix-cors = "0.7.0"

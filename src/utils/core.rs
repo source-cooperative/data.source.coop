@@ -128,3 +128,43 @@ mod tests {
         assert!(parse_azure_blob_url(url).is_err());
     }
 }
+
+/// Splits a string at the first forward slash ('/') character.
+///
+/// This function takes a string as input and returns a tuple of two strings.
+/// The first string in the tuple contains the part of the input before the
+/// first slash, and the second string contains the part after the first slash.
+///
+/// # Arguments
+///
+/// * `input` - A String that may or may not contain a forward slash.
+///
+/// # Returns
+///
+/// A tuple `(String, String)` where:
+/// - The first element is the substring before the first slash.
+/// - The second element is the substring after the first slash.
+///
+/// If there is no slash in the input string, the function returns the entire
+/// input as the first element of the tuple and an empty string as the second element.
+///
+/// # Examples
+///
+/// ```
+/// let (before, after) = split_at_first_slash("path/to/file".to_string());
+/// assert_eq!(before, "path");
+/// assert_eq!(after, "to/file");
+///
+/// let (before, after) = split_at_first_slash("no_slash".to_string());
+/// assert_eq!(before, "no_slash");
+/// assert_eq!(after, "");
+/// ```
+pub fn split_at_first_slash(input: &str) -> (&str, &str) {
+    match input.find('/') {
+        Some(index) => {
+            let (before, after) = input.split_at(index);
+            (before, &after[1..])
+        }
+        None => (input, ""),
+    }
+}

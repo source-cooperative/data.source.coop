@@ -10,6 +10,14 @@ use crate::backends::azure::AzureRepository;
 use crate::backends::s3::S3Repository;
 use crate::utils::core::parse_azure_blob_url;
 
+/// Represents an API client for interacting with source repositories.
+///
+/// This struct provides methods to retrieve repository information and create
+/// backend clients for different storage providers (S3 or Azure).
+///
+/// # Fields
+///
+/// * `endpoint` - The base URL of the source API.
 pub struct SourceAPI {
     pub endpoint: String,
 }
@@ -52,6 +60,20 @@ pub struct SourceRepositoryMirror {
 
 #[async_trait]
 impl API for SourceAPI {
+    /// Creates and returns a backend client for a specific repository.
+    ///
+    /// This method determines the appropriate storage backend (S3 or Azure) based on
+    /// the repository's configuration and returns a boxed `Repository` trait object.
+    ///
+    /// # Arguments
+    ///
+    /// * `account_id` - The ID of the account owning the repository.
+    /// * `repository_id` - The ID of the repository.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing either a boxed `Repository` trait object
+    /// or an empty error `()` if the client creation fails.
     async fn get_backend_client(
         &self,
         account_id: String,
@@ -131,6 +153,17 @@ impl API for SourceAPI {
 }
 
 impl SourceAPI {
+    /// Retrieves the repository record for a given account and repository ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `account_id` - The ID of the account owning the repository.
+    /// * `repository_id` - The ID of the repository.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing either a `SourceRepository` struct with the
+    /// repository information or a boxed `APIError` if the request fails.
     pub async fn get_repository_record(
         &self,
         account_id: &String,

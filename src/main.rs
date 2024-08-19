@@ -2,7 +2,7 @@ mod apis;
 mod backends;
 mod utils;
 
-use crate::utils::core::StreamingResponse;
+use crate::utils::core::{split_at_first_slash, StreamingResponse};
 use actix_cors::Cors;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
@@ -15,17 +15,9 @@ use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 
-// TODO: Map the APIErrors to HTTP Responses
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn split_at_first_slash(input: String) -> (String, String) {
-    match input.find('/') {
-        Some(index) => {
-            let (before, after) = input.split_at(index);
-            (before.to_string(), after[1..].to_string())
-        }
-        None => (input, String::new()),
-    }
-}
+// TODO: Map the APIErrors to HTTP Responses
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>) -> impl Responder {
@@ -77,23 +69,20 @@ async fn head_object(path: web::Path<(String, String, String)>) -> impl Responde
 
     let (account_id, repository_id, key) = path.into_inner();
 
-    if let Ok(client) = api_client
+    match api_client
         .get_backend_client(account_id, repository_id)
         .await
     {
-        // Found the repository, now make the head request
-        match client.head_object(key.clone()).await {
+        Ok(client) => match client.head_object(key.clone()).await {
             Ok(res) => HttpResponse::Ok()
                 .insert_header(("Content-Type", res.content_type))
                 .insert_header(("Last-Modified", res.last_modified))
                 .insert_header(("ETag", res.etag))
                 .insert_header(("Content-Length", res.content_length.to_string()))
                 .finish(),
-            Err(_) => HttpResponse::NotFound().finish(),
-        }
-    } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
+            Err(error) => error.to_response(),
+        },
+        Err(_) => HttpResponse::NotFound().finish(),
     }
 }
 
@@ -117,7 +106,7 @@ async fn list_objects(
     let api_client = apis::new_api();
     let account_id = path.into_inner();
 
-    let (repository_id, prefix) = split_at_first_slash(info.prefix.clone());
+    let (repository_id, prefix) = split_at_first_slash(&info.prefix);
 
     let mut max_keys = NonZeroU32::new(20).unwrap_or(NonZeroU32::new(20).unwrap());
     if let Some(mk) = info.max_keys {
@@ -125,12 +114,16 @@ async fn list_objects(
     }
 
     if let Ok(client) = api_client
-        .get_backend_client(account_id.clone(), repository_id.clone())
+        .get_backend_client(account_id.clone(), repository_id.to_string())
         .await
     {
         // Found the repository, now make the list objects request
         match client
-            .list_objects_v2(prefix.clone(), info.continuation_token.clone(), max_keys)
+            .list_objects_v2(
+                prefix.to_string(),
+                info.continuation_token.clone(),
+                max_keys,
+            )
             .await
         {
             Ok(res) => match to_string_with_root("ListBucketResult", &res) {
@@ -150,11 +143,13 @@ async fn list_objects(
     }
 }
 
+// Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(
+                // Configure CORS
                 Cors::default()
                     .allow_any_origin()
                     .allow_any_method()
@@ -164,6 +159,7 @@ async fn main() -> std::io::Result<()> {
                     .max_age(3600),
             )
             .wrap(middleware::NormalizePath::trim())
+            // Register the endpoints
             .service(get_object)
             .service(head_object)
             .service(list_objects)
