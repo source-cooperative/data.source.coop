@@ -23,7 +23,6 @@ fi
 
 VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
 git add Cargo.toml
-git add Cargo.lock
 git commit -m "Bump version to v$VERSION"
 git tag -a "v$VERSION" -m "v$VERSION"
 git push origin --tags

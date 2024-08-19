@@ -27,5 +27,11 @@ fi
 
 echo "Created Task Definition"
 
+TASK_DEFINITION_ARN=$(aws ecs list-task-definitions --family-prefix Source-Data-Proxy --profile opendata | jq -r '.taskDefinitionArns[-1]')
+
+echo "Updating Service..."
+
+aws ecs update-service --cluster SourceCooperative-Prod --service Source-Data-Proxy --task-definition "$TASK_DEFINITION_ARN" --profile opendata
+
 echo "Cleaning Up..."
 rm scripts/task_definition_deploy.json
