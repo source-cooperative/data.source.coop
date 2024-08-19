@@ -139,9 +139,13 @@ async fn list_objects(
                     HttpResponse::InternalServerError().finish()
                 }
             },
-            Err(_) => HttpResponse::NotFound().finish(),
+            Err(_) => {
+                println!("Could Not List Objects");
+                HttpResponse::NotFound().finish()
+            }
         }
     } else {
+        println!("Could Not Find Repository");
         // Could not find the repository
         return HttpResponse::NotFound().finish();
     }

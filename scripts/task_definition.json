@@ -1,5 +1,5 @@
 {
-    "family": "Source-Data-Proxy",
+    "family": "source-data-proxy",
     "containerDefinitions": [
         {
             "name": "source-data-proxy",
