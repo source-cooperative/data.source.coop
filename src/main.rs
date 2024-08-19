@@ -9,10 +9,14 @@ use actix_web::{
     Responder,
 };
 use apis::API;
+use backends::common::{CommonPrefix, ListBucketResult};
 use core::num::NonZeroU32;
+use env_logger::Env;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
+use quick_xml::se::Serializer;
 use serde::Deserialize;
+use serde::Serialize;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -112,15 +116,45 @@ async fn list_objects(
         max_keys = mk;
     }
 
-    println!("{}", format!("Account ID: {}", &account_id));
-    println!("{}", format!("Repository ID: {}", &repository_id));
-    println!("{}", format!("Prefix: {}", &prefix));
+    if info.prefix.is_empty() {
+        match api_client.get_account(account_id.clone()).await {
+            Ok(account) => {
+                let repositories = account.repositories;
+                let mut common_prefixes = Vec::new();
+                for repository_id in repositories.iter() {
+                    common_prefixes.push(CommonPrefix {
+                        prefix: format!("{}/", repository_id.clone()),
+                    });
+                }
+                let list_response = ListBucketResult {
+                    name: account_id.clone(),
+                    prefix: "/".to_string(),
+                    key_count: 0,
+                    max_keys: 0,
+                    is_truncated: false,
+                    contents: vec![],
+                    common_prefixes,
+                    next_continuation_token: None,
+                };
+
+                match to_string_with_root("ListBucketResult", &list_response) {
+                    Ok(serialized) => {
+                        return HttpResponse::Ok()
+                            .content_type("application/xml")
+                            .body(serialized)
+                    }
+                    Err(_) => return HttpResponse::InternalServerError().finish(),
+                }
+            }
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        }
+    }
 
     if let Ok(client) = api_client
         .get_backend_client(account_id.clone(), repository_id.to_string())
         .await
     {
-        // Found the repository, now make the list objects request
+        // We're listing within a repository, so we need to query the object store backend
         match client
             .list_objects_v2(
                 prefix.to_string(),
@@ -143,6 +177,7 @@ async fn list_objects(
                 HttpResponse::NotFound().finish()
             }
         }
+        // Found the repository, now make the list objects request
     } else {
         println!("Could Not Find Repository");
         // Could not find the repository
@@ -158,6 +193,8 @@ async fn index() -> impl Responder {
 // Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
+
     HttpServer::new(move || {
         App::new()
             .wrap(
@@ -172,6 +209,7 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(middleware::NormalizePath::trim())
             .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
+            .wrap(middleware::Logger::default())
             // Register the endpoints
             .service(get_object)
             .service(head_object)

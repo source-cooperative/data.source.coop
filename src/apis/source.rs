@@ -1,4 +1,4 @@
-use super::API;
+use super::{Account, API};
 use crate::backends::common::{parse_s3_uri, Repository};
 use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
 use async_trait::async_trait;
@@ -56,6 +56,13 @@ pub struct SourceRepositoryMirror {
     pub region: Option<String>,
     pub uri: Option<String>,
     pub delimiter: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SourceRepositoryList {
+    pub repositories: Vec<SourceRepository>,
+    pub next: Option<String>,
+    pub count: u32,
 }
 
 #[async_trait]
@@ -150,6 +157,24 @@ impl API for SourceAPI {
             Err(_) => Err(()),
         }
     }
+
+    async fn get_account(&self, account_id: String) -> Result<Account, ()> {
+        match reqwest::get(format!("{}/repositories/{}", self.endpoint, account_id)).await {
+            Ok(response) => match response.json::<SourceRepositoryList>().await {
+                Ok(repository_list) => {
+                    let mut account = Account::default();
+
+                    for repository in repository_list.repositories {
+                        account.repositories.push(repository.repository_id);
+                    }
+
+                    Ok(account)
+                }
+                Err(_) => Err(()),
+            },
+            Err(_) => Err(()),
+        }
+    }
 }
 
 impl SourceAPI {
@@ -187,6 +212,33 @@ impl SourceAPI {
                     return Err(Box::new(RepositoryNotFoundError {
                         account_id: account_id.to_string(),
                         repository_id: repository_id.to_string(),
+                    }));
+                }
+
+                Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }))
+            }
+        }
+    }
+
+    pub async fn get_repository_list(
+        &self,
+        account_id: &String,
+    ) -> Result<Vec<SourceRepository>, Box<dyn APIError>> {
+        match reqwest::get(format!("{}/repositories/{}", self.endpoint, account_id)).await {
+            Ok(response) => match response.json::<Vec<SourceRepository>>().await {
+                Ok(repositories) => Ok(repositories),
+                Err(_) => Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                })),
+            },
+            Err(error) => {
+                println!("HTTP Request Error");
+                if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
+                    return Err(Box::new(RepositoryNotFoundError {
+                        account_id: account_id.to_string(),
+                        repository_id: "".to_string(),
                     }));
                 }
 
