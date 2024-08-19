@@ -1,7 +1,6 @@
 mod apis;
 mod backends;
 mod utils;
-
 use crate::utils::core::{split_at_first_slash, StreamingResponse};
 use actix_cors::Cors;
 use actix_web::error::ErrorInternalServerError;
@@ -172,6 +171,7 @@ async fn main() -> std::io::Result<()> {
                     .max_age(3600),
             )
             .wrap(middleware::NormalizePath::trim())
+            .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
             // Register the endpoints
             .service(get_object)
             .service(head_object)
