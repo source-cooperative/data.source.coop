@@ -21,7 +21,6 @@ pub struct S3Repository {
     pub region: Region,
     pub bucket: String,
     pub base_prefix: String,
-    pub delimiter: String,
 }
 
 #[async_trait]
@@ -134,13 +133,14 @@ impl Repository for S3Repository {
         &self,
         prefix: String,
         continuation_token: Option<String>,
+        delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>> {
         let client = S3Client::new(self.region.clone());
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
             prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
-            delimiter: Some(self.delimiter.clone()),
+            delimiter,
             max_keys: Some(max_keys.get() as i64),
             ..Default::default()
         };

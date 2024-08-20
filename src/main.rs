@@ -14,9 +14,7 @@ use core::num::NonZeroU32;
 use env_logger::Env;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
-use quick_xml::se::Serializer;
 use serde::Deserialize;
-use serde::Serialize;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -92,11 +90,13 @@ async fn head_object(path: web::Path<(String, String, String)>) -> impl Responde
 #[derive(Deserialize)]
 struct ListObjectsV2Query {
     #[serde(rename = "prefix")]
-    prefix: String,
+    prefix: Option<String>,
     #[serde(rename = "list-type")]
     _list_type: u8,
     #[serde(rename = "max-keys")]
     max_keys: Option<NonZeroU32>,
+    #[serde(rename = "delimiter")]
+    delimiter: Option<String>,
     #[serde(rename = "continuation-token")]
     continuation_token: Option<String>,
 }
@@ -109,14 +109,7 @@ async fn list_objects(
     let api_client = apis::new_api();
     let account_id = path.into_inner();
 
-    let (repository_id, prefix) = split_at_first_slash(&info.prefix);
-
-    let mut max_keys = NonZeroU32::new(20).unwrap_or(NonZeroU32::new(20).unwrap());
-    if let Some(mk) = info.max_keys {
-        max_keys = mk;
-    }
-
-    if info.prefix.is_empty() {
+    if info.prefix.is_none() {
         match api_client.get_account(account_id.clone()).await {
             Ok(account) => {
                 let repositories = account.repositories;
@@ -150,6 +143,15 @@ async fn list_objects(
         }
     }
 
+    let path_prefix = info.prefix.clone().unwrap_or("".to_string());
+
+    let (repository_id, prefix) = split_at_first_slash(&path_prefix);
+
+    let mut max_keys = NonZeroU32::new(20).unwrap_or(NonZeroU32::new(20).unwrap());
+    if let Some(mk) = info.max_keys {
+        max_keys = mk;
+    }
+
     if let Ok(client) = api_client
         .get_backend_client(account_id.clone(), repository_id.to_string())
         .await
@@ -159,6 +161,7 @@ async fn list_objects(
             .list_objects_v2(
                 prefix.to_string(),
                 info.continuation_token.clone(),
+                info.delimiter.clone(),
                 max_keys,
             )
             .await

@@ -121,10 +121,6 @@ impl API for SourceAPI {
                                     region,
                                     bucket,
                                     base_prefix,
-                                    delimiter: repository_data
-                                        .delimiter
-                                        .clone()
-                                        .unwrap_or("/".to_string()),
                                 })),
                                 Err(_) => Err(()),
                             }
@@ -145,7 +141,6 @@ impl API for SourceAPI {
                                 account_name,
                                 container_name,
                                 base_prefix,
-                                delimiter: "/".to_string(),
                             }))
                         }
                     }

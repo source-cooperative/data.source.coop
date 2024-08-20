@@ -59,6 +59,7 @@ pub trait Repository {
         &self,
         prefix: String,
         continuation_token: Option<String>,
+        delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
 }

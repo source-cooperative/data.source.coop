@@ -24,7 +24,6 @@ pub struct AzureRepository {
     pub account_name: String,
     pub container_name: String,
     pub base_prefix: String,
-    pub delimiter: String,
 }
 
 #[async_trait]
@@ -134,6 +133,7 @@ impl Repository for AzureRepository {
         &self,
         prefix: String,
         continuation_token: Option<String>,
+        delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>> {
         let mut result = ListBucketResult {
@@ -147,8 +147,6 @@ impl Repository for AzureRepository {
             next_continuation_token: None,
         };
 
-        let delimiter = self.delimiter.clone();
-
         let credentials = StorageCredentials::anonymous();
 
         // Create a client for anonymous access
@@ -159,13 +157,15 @@ impl Repository for AzureRepository {
 
         let next_marker = continuation_token.map_or(NextMarker::new("".to_string()), Into::into);
 
+        let query_delmiter = delimiter.unwrap_or_else(|| "".to_string());
+
         // List blobs
         let mut stream = client
             .list_blobs()
             .marker(next_marker)
             .prefix(search_prefix)
             .max_results(max_keys)
-            .delimiter(delimiter)
+            .delimiter(query_delmiter)
             .into_stream();
 
         if let Some(blob_result) = stream.next().await {
