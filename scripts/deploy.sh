@@ -27,17 +27,16 @@ fi
 
 echo "Created Task Definition"
 
-TASK_DEFINITION_ARN=$(aws ecs list-task-definitions --family-prefix Source-Data-Proxy --profile opendata | jq -r '.taskDefinitionArns[-1]')
+TASK_DEFINITION_ARN=$(aws ecs list-task-definitions --family-prefix source-data-proxy --status ACTIVE --profile opendata --query "taskDefinitionArns[-1]" --output text)
 
 echo "Updating Service..."
 
-if [-z "$(aws ecs update-service --cluster SourceCooperative-Prod --service Source-Data-Proxy --task-definition "$TASK_DEFINITION_ARN" --profile opendata 2> /dev/null)"]; then
-    echo "Failed to update service"
-    echo "Cleaning Up..."
-    rm scripts/task_definition_deploy.json
-    exit 1;
+if [ -z "$(aws ecs update-service --cluster SourceCooperative-Prod --service source-data-proxy --task-definition $TASK_DEFINITION_ARN --profile opendata 2> /dev/null)" ]; then
+  echo "Failed to update service"
+  echo "Cleaning Up..."
+  rm scripts/task_definition_deploy.json
+  exit 1;
 fi
-
 
 echo "Cleaning Up..."
 rm scripts/task_definition_deploy.json

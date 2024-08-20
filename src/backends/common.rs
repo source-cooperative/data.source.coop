@@ -59,11 +59,12 @@ pub trait Repository {
         &self,
         prefix: String,
         continuation_token: Option<String>,
+        delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ListBucketResult {
     #[serde(rename = "Name")]
     pub name: String,
@@ -83,7 +84,7 @@ pub struct ListBucketResult {
     pub next_continuation_token: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Content {
     #[serde(rename = "Key")]
     pub key: String,
@@ -97,7 +98,7 @@ pub struct Content {
     pub storage_class: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct CommonPrefix {
     #[serde(rename = "Prefix")]
     pub prefix: String,

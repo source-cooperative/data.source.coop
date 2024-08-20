@@ -1,5 +1,5 @@
 {
-    "family": "Source-Data-Proxy",
+    "family": "source-data-proxy",
     "containerDefinitions": [
         {
             "name": "source-data-proxy",
@@ -35,6 +35,7 @@
             "systemControls": []
         }
     ],
+    "taskRoleArn": "arn:aws:iam::417712557820:role/source-data-proxy",
     "executionRoleArn": "arn:aws:iam::417712557820:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
     "requiresCompatibilities": ["FARGATE"],
