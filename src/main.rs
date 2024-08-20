@@ -8,6 +8,7 @@ use actix_web::{
     get, head, http::header::RANGE, middleware, web, App, HttpRequest, HttpResponse, HttpServer,
     Responder,
 };
+use apis::source::SourceAPI;
 use apis::API;
 use backends::common::{CommonPrefix, ListBucketResult};
 use core::num::NonZeroU32;
@@ -21,9 +22,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // TODO: Map the APIErrors to HTTP Responses
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
-async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>) -> impl Responder {
-    let api_client = apis::new_api();
-
+async fn get_object(
+    api_client: web::Data<SourceAPI>,
+    req: HttpRequest,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
     let mut range = Some("".to_string());
@@ -65,9 +68,10 @@ async fn get_object(req: HttpRequest, path: web::Path<(String, String, String)>)
 }
 
 #[head("/{account_id}/{repository_id}/{key:.*}")]
-async fn head_object(path: web::Path<(String, String, String)>) -> impl Responder {
-    let api_client = apis::new_api();
-
+async fn head_object(
+    api_client: web::Data<SourceAPI>,
+    path: web::Path<(String, String, String)>,
+) -> impl Responder {
     let (account_id, repository_id, key) = path.into_inner();
 
     match api_client
@@ -103,10 +107,10 @@ struct ListObjectsV2Query {
 
 #[get("/{account_id}")]
 async fn list_objects(
+    api_client: web::Data<SourceAPI>,
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
 ) -> impl Responder {
-    let api_client = apis::new_api();
     let account_id = path.into_inner();
 
     if info.prefix.is_none() {
@@ -196,10 +200,12 @@ async fn index() -> impl Responder {
 // Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let source_api = web::Data::new(SourceAPI::new("https://api.source.coop".to_string()));
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
+            .app_data(source_api.clone())
             .wrap(
                 // Configure CORS
                 Cors::default()

@@ -4,9 +4,7 @@ use crate::backends::common::Repository;
 use async_trait::async_trait;
 
 pub fn new_api() -> source::SourceAPI {
-    source::SourceAPI {
-        endpoint: "https://api.source.coop".to_string(),
-    }
+    source::SourceAPI::new("https://api.source.coop".to_string())
 }
 
 pub struct Account {

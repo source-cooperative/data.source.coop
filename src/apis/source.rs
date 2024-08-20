@@ -5,10 +5,13 @@ use async_trait::async_trait;
 use rusoto_core::Region;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::backends::azure::AzureRepository;
 use crate::backends::s3::S3Repository;
 use crate::utils::core::parse_azure_blob_url;
+
+use moka::future::Cache;
 
 /// Represents an API client for interacting with source repositories.
 ///
@@ -18,11 +21,13 @@ use crate::utils::core::parse_azure_blob_url;
 /// # Fields
 ///
 /// * `endpoint` - The base URL of the source API.
+#[derive(Clone)]
 pub struct SourceAPI {
     pub endpoint: String,
+    cache: Cache<(String, String), SourceRepository>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRepository {
     pub account_id: String,
     pub repository_id: String,
@@ -34,7 +39,7 @@ pub struct SourceRepository {
     pub data: SourceRepositoryData,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRepositoryMeta {
     pub description: String,
     pub published: String,
@@ -42,14 +47,14 @@ pub struct SourceRepositoryMeta {
     pub tags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRepositoryData {
     pub cdn: String,
     pub primary_mirror: String,
     pub mirrors: HashMap<String, SourceRepositoryMirror>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRepositoryMirror {
     pub name: String,
     pub provider: String,
@@ -58,7 +63,7 @@ pub struct SourceRepositoryMirror {
     pub delimiter: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRepositoryList {
     pub repositories: Vec<SourceRepository>,
     pub next: Option<String>,
@@ -173,6 +178,14 @@ impl API for SourceAPI {
 }
 
 impl SourceAPI {
+    pub fn new(endpoint: String) -> Self {
+        let cache = Cache::builder()
+            .time_to_live(Duration::from_secs(300)) // Cache entries expire after 5 minutes
+            .build();
+
+        SourceAPI { endpoint, cache }
+    }
+
     /// Retrieves the repository record for a given account and repository ID.
     ///
     /// # Arguments
@@ -185,6 +198,27 @@ impl SourceAPI {
     /// Returns a `Result` containing either a `SourceRepository` struct with the
     /// repository information or a boxed `APIError` if the request fails.
     pub async fn get_repository_record(
+        &self,
+        account_id: &String,
+        repository_id: &String,
+    ) -> Result<SourceRepository, Box<dyn APIError>> {
+        let cache_key = (account_id.clone(), repository_id.clone());
+
+        // Try to get the cached value
+        if let Some(cached_repo) = self.cache.get(&cache_key) {
+            return Ok(cached_repo);
+        }
+
+        // If not in cache, fetch from the API
+        let repository = self.fetch_repository(account_id, repository_id).await?;
+
+        // Cache the result before returning
+        self.cache.insert(cache_key, repository.clone()).await;
+
+        Ok(repository)
+    }
+
+    async fn fetch_repository(
         &self,
         account_id: &String,
         repository_id: &String,
