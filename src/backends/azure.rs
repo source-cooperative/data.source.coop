@@ -10,7 +10,7 @@ use futures::StreamExt;
 use futures_core::Stream;
 use reqwest;
 use std::pin::Pin;
-use time::format_description::well_known::Rfc2822;
+use time::format_description::well_known::{Rfc2822, Rfc3339};
 
 use crate::backends::common::{
     CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
@@ -197,7 +197,7 @@ impl Repository for AzureRepository {
                                     last_modified: b
                                         .properties
                                         .last_modified
-                                        .format(&Rfc2822)
+                                        .format(&Rfc3339)
                                         .unwrap_or_else(|_| String::from("Invalid DateTime")),
                                     etag: b.properties.etag.to_string(),
                                     size: b.properties.content_length as i64,
