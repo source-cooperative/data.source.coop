@@ -16,7 +16,7 @@ use crate::backends::common::{
     CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
-use crate::utils::errors::{APIError, InternalServerError};
+use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
 
 pub struct AzureRepository {
     pub account_id: String,
@@ -123,9 +123,19 @@ impl Repository for AzureRepository {
                     .format(&Rfc2822)
                     .unwrap_or_else(|_| String::from("Invalid DateTime")),
             }),
-            Err(_) => Err(Box::new(InternalServerError {
-                message: "Internal Server Error".to_string(),
-            })),
+            Err(e) => {
+                if (e.as_http_error().unwrap().status() == 404) {
+                    return Err(Box::new(ObjectNotFoundError {
+                        account_id: self.account_id.clone(),
+                        repository_id: self.repository_id.clone(),
+                        key,
+                    }));
+                } else {
+                    Err(Box::new(InternalServerError {
+                        message: "Internal Server Error".to_string(),
+                    }))
+                }
+            }
         }
     }
 
