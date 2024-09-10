@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "source-nexus"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "actix-cors",
  "actix-web",

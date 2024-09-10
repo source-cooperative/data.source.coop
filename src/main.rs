@@ -3,6 +3,7 @@ mod backends;
 mod utils;
 use crate::utils::core::{split_at_first_slash, StreamingResponse};
 use actix_cors::Cors;
+use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
     get, head, http::header::RANGE, middleware, web, App, HttpRequest, HttpResponse, HttpServer,
@@ -11,13 +12,35 @@ use actix_web::{
 use apis::source::SourceAPI;
 use apis::API;
 use backends::common::{CommonPrefix, ListBucketResult};
+use bytes::Bytes;
 use core::num::NonZeroU32;
 use env_logger::Env;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+struct FakeBody {
+    size: usize,
+}
+
+impl MessageBody for FakeBody {
+    type Error = actix_web::Error;
+
+    fn size(&self) -> BodySize {
+        BodySize::Sized(self.size as u64)
+    }
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Self::Error>>> {
+        Poll::Ready(None)
+    }
+}
 
 // TODO: Map the APIErrors to HTTP Responses
 
@@ -29,11 +52,23 @@ async fn get_object(
 ) -> impl Responder {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
-    let mut range = Some("".to_string());
+    let mut range = None;
+    let mut range_start = 0;
+    let mut range_end = 0;
+    let mut is_range_request = false;
 
     if let Some(range_header) = headers.get(RANGE) {
         if let Ok(r) = range_header.to_str() {
-            range = Some(r.to_string());
+            if let Some(bytes_range) = r.strip_prefix("bytes=") {
+                if let Some((start, end)) = bytes_range.split_once('-') {
+                    if let (Ok(s), Ok(e)) = (start.parse::<u64>(), end.parse::<u64>()) {
+                        range_start = s;
+                        range_end = e;
+                        range = Some(r.to_string());
+                        is_range_request = true;
+                    }
+                }
+            }
         }
     }
 
@@ -44,6 +79,19 @@ async fn get_object(
         // Found the repository, now try to get the object
         match client.get_object(key.clone(), range).await {
             Ok(res) => {
+                let mut content_length = String::from("*");
+
+                // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
+                // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
+                if is_range_request {
+                    match client.head_object(key.clone()).await {
+                        Ok(head_res) => {
+                            content_length = head_res.content_length.to_string();
+                        }
+                        Err(_) => {}
+                    }
+                }
+
                 let stream = res.body.map(|result| {
                     result
                         .map(web::Bytes::from)
@@ -51,13 +99,26 @@ async fn get_object(
                 });
 
                 let streaming_response = StreamingResponse::new(stream, res.content_length);
+                let mut response = if is_range_request {
+                    HttpResponse::PartialContent()
+                } else {
+                    HttpResponse::Ok()
+                };
 
-                return HttpResponse::Ok()
+                let mut response = response
                     .insert_header(("Content-Type", res.content_type))
                     .insert_header(("Last-Modified", res.last_modified))
                     .insert_header(("Content-Length", res.content_length.to_string()))
-                    .insert_header(("ETag", res.etag))
-                    .body(streaming_response);
+                    .insert_header(("ETag", res.etag));
+
+                if is_range_request {
+                    response = response.insert_header((
+                        "Content-Range",
+                        format!("bytes {}-{}/{}", range_start, range_end, content_length),
+                    ));
+                }
+
+                return response.body(streaming_response);
             }
             Err(_) => HttpResponse::NotFound().finish(),
         }
@@ -83,8 +144,9 @@ async fn head_object(
                 .insert_header(("Content-Type", res.content_type))
                 .insert_header(("Last-Modified", res.last_modified))
                 .insert_header(("ETag", res.etag))
-                .insert_header(("Content-Length", res.content_length.to_string()))
-                .finish(),
+                .body(BoxBody::new(FakeBody {
+                    size: res.content_length as usize,
+                })),
             Err(error) => error.to_response(),
         },
         Err(_) => HttpResponse::NotFound().finish(),
