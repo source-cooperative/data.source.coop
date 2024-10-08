@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "source-nexus"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2546,8 +2546,11 @@ dependencies = [
  "futures",
  "futures-core",
  "futures-util",
+ "hex",
+ "hmac 0.12.1",
  "log",
  "moka",
+ "percent-encoding",
  "pin-project-lite",
  "quick-xml 0.36.1",
  "reqwest 0.11.27",
@@ -2556,6 +2559,7 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "serde_json",
+ "sha2 0.10.8",
  "time",
  "tokio",
  "tokio-util",

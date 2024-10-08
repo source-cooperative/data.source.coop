@@ -20,6 +20,7 @@ use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use utils::auth::{LoadIdentity, RequestContext};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -145,6 +146,7 @@ async fn head_object(
                 .insert_header(("Last-Modified", res.last_modified))
                 .insert_header(("ETag", res.etag))
                 .body(BoxBody::new(FakeBody {
+                    // Using a fake body here as a workaround for actix-web returning a 0 content-length for HEAD requests
                     size: res.content_length as usize,
                 })),
             Err(error) => error.to_response(),
@@ -172,7 +174,20 @@ async fn list_objects(
     api_client: web::Data<SourceAPI>,
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
+    ctx: Option<web::ReqData<RequestContext>>,
 ) -> impl Responder {
+    match ctx {
+        Some(ctx) => {
+            if let Some(user_id) = &ctx.user_id {
+                println!("User: {}", user_id);
+            } else {
+                println!("No user");
+            }
+        }
+        None => {
+            println!("No user");
+        }
+    }
     let account_id = path.into_inner();
 
     if info.prefix.is_none() {
@@ -268,6 +283,11 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(source_api.clone())
+            .app_data(web::Data::new(RequestContext {
+                user_id: None,
+                body: None,
+                body_hash: None,
+            }))
             .wrap(
                 // Configure CORS
                 Cors::default()
@@ -281,6 +301,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::NormalizePath::trim())
             .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
             .wrap(middleware::Logger::default())
+            .wrap(LoadIdentity)
             // Register the endpoints
             .service(get_object)
             .service(head_object)
