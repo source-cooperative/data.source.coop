@@ -20,7 +20,7 @@ use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use utils::auth::{LoadIdentity, RequestContext};
+use utils::auth::{LoadIdentity, UserIdentity};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -174,7 +174,7 @@ async fn list_objects(
     api_client: web::Data<SourceAPI>,
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
-    ctx: Option<web::ReqData<RequestContext>>,
+    ctx: Option<web::ReqData<UserIdentity>>,
 ) -> impl Responder {
     match ctx {
         Some(ctx) => {
@@ -283,11 +283,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(source_api.clone())
-            .app_data(web::Data::new(RequestContext {
-                user_id: None,
-                body: None,
-                body_hash: None,
-            }))
+            .app_data(web::Data::new(UserIdentity { user_id: None }))
             .wrap(
                 // Configure CORS
                 Cors::default()

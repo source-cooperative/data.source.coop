@@ -1,31 +1,31 @@
-use actix_web::dev::{ServiceRequest, ServiceResponse};
-use actix_web::http::header::HeaderMap;
-use actix_web::Error;
-use actix_web::HttpMessage;
-use bytes::Bytes;
-use futures_util::future::{ok, Ready};
+use actix_http::header::HeaderMap;
+use actix_web::{
+    dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
+    web::BytesMut,
+    Error, HttpMessage,
+};
+use futures_util::{future::LocalBoxFuture, stream::StreamExt};
 use hex;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::future::Future;
-use std::pin::Pin;
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    future::{ready, Ready},
+    rc::Rc,
+};
 use url::form_urlencoded;
 
 #[derive(Clone)]
-pub struct RequestContext {
+pub struct UserIdentity {
     pub user_id: Option<String>,
-    pub body: Option<Bytes>,
-    pub body_hash: Option<String>,
-    // Add other fields as needed
 }
 
 pub struct LoadIdentity;
 
-impl<S, B> actix_web::dev::Transform<S, ServiceRequest> for LoadIdentity
+impl<S: 'static, B> Transform<S, ServiceRequest> for LoadIdentity
 where
-    S: actix_web::dev::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
     S::Future: 'static,
     B: 'static,
 {
@@ -36,65 +36,69 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(LoadIdentityMiddleware { service })
+        ready(Ok(LoadIdentityMiddleware {
+            service: Rc::new(service),
+        }))
     }
 }
 
 pub struct LoadIdentityMiddleware<S> {
-    service: S,
+    service: Rc<S>,
 }
 
-impl<S, B> actix_web::dev::Service<ServiceRequest> for LoadIdentityMiddleware<S>
+impl<S, B> Service<ServiceRequest> for LoadIdentityMiddleware<S>
 where
-    S: actix_web::dev::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     S::Future: 'static,
     B: 'static,
 {
     type Response = ServiceResponse<B>;
     type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
-    actix_web::dev::forward_ready!(service);
+    dev::forward_ready!(service);
 
     fn call(&self, mut req: ServiceRequest) -> Self::Future {
-        let identity = match verify_signature(
-            req.method().as_str(),
-            req.path(),
-            req.headers(),
-            req.query_string(),
-        ) {
-            Ok(id) => RequestContext {
-                user_id: Some(id),
-                body: None,
-                body_hash: None,
-            },
-            Err(_) => RequestContext {
-                user_id: None,
-                body: None,
-                body_hash: None,
-            },
-        };
-
-        // Destructure the tuple returned by parts_mut()
-        let (http_request, _payload) = req.parts_mut();
-
-        // Insert the identity into the HttpRequest's extensions
-        http_request.extensions_mut().insert(identity);
-
-        let fut = self.service.call(req);
+        let svc = self.service.clone();
 
         Box::pin(async move {
-            let res = fut.await?;
+            let mut body = BytesMut::new();
+            let mut stream = req.take_payload();
+            while let Some(chunk) = stream.next().await {
+                body.extend_from_slice(&chunk?);
+            }
+
+            let identity = match load_identity(
+                req.method().as_str(),
+                req.path(),
+                req.headers(),
+                req.query_string(),
+                &body,
+            ) {
+                Ok(id) => UserIdentity { user_id: Some(id) },
+                Err(_) => UserIdentity { user_id: None },
+            };
+
+            req.extensions_mut().insert(identity);
+
+            let (_, mut payload) = actix_http::h1::Payload::create(true);
+
+            payload.unread_data(body.into());
+            req.set_payload(payload.into());
+
+            let res = svc.call(req).await?;
+
             Ok(res)
         })
     }
 }
 
-fn verify_signature(
+fn load_identity(
     method: &str,
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
+    body: &BytesMut,
 ) -> Result<String, String> {
     match headers.get("Authorization") {
         Some(auth) => {
@@ -122,7 +126,7 @@ fn verify_signature(
             let service = parts[3];
 
             let canonical_request: String =
-                create_canonical_request(method, path, headers, signed_headers, query_string);
+                create_canonical_request(method, path, headers, signed_headers, query_string, body);
             let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
 
             match headers.get("x-amz-date") {
@@ -145,6 +149,7 @@ fn verify_signature(
                         if calculated_signature != signature {
                             return Err("Signature mismatch".to_string());
                         } else {
+                            println!("Signature Verified");
                             return Ok("Signature verified".to_string());
                         }
                     }
@@ -159,6 +164,7 @@ fn verify_signature(
     }
 }
 
+// TODO: Load the secret_access_key from the API
 fn retrieve_secret_access_key(access_key_id: &str) -> Result<String, String> {
     match access_key_id {
         "" => Ok("".to_string()),
@@ -247,6 +253,7 @@ fn create_canonical_request(
     headers: &HeaderMap,
     signed_headers: Vec<&str>,
     query_string: &str,
+    body: &BytesMut,
 ) -> String {
     format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
@@ -255,7 +262,7 @@ fn create_canonical_request(
         get_canonical_query_string(query_string),
         get_canonical_headers(headers, &signed_headers),
         get_signed_headers(&signed_headers),
-        hash_payload()
+        hash_payload(body)
     )
 }
 
@@ -312,6 +319,6 @@ fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
         .join(";")
 }
 
-fn hash_payload() -> String {
-    hex::encode(Sha256::digest(b""))
+fn hash_payload(body: &BytesMut) -> String {
+    hex::encode(Sha256::digest(body))
 }

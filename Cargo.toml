@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 
 quick-xml = { version = "=0.36.1", features = ["serialize"] }
-actix-web = { version = "4.0", features = [
+actix-web = { version = "^4", features = [
     "rustls",
     "macros",
 ], default-features = false }
@@ -45,3 +45,4 @@ percent-encoding = "2.1.0"
 sha2 = "0.10.6"
 hex = "0.4.3"
 hmac = "0.12"
+actix-http = "^3"
