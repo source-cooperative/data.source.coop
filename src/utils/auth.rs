@@ -156,6 +156,7 @@ async fn load_identity(
                         );
 
                         if calculated_signature != signature {
+                            dbg!(&"Signature mismatch");
                             return Err("Signature mismatch".to_string());
                         } else {
                             return Ok(api_key);
