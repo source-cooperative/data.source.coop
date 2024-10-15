@@ -133,43 +133,56 @@ async fn load_identity(
             let date = parts[1];
             let region = parts[2];
             let service = parts[3];
+            match headers.get("x-amz-content-sha256") {
+                Some(content_hash) => {
+                    let canonical_request: String = create_canonical_request(
+                        method,
+                        path,
+                        headers,
+                        signed_headers,
+                        query_string,
+                        body,
+                        content_hash.to_str().unwrap(),
+                    );
+                    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
 
-            let canonical_request: String =
-                create_canonical_request(method, path, headers, signed_headers, query_string, body);
-            let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+                    match headers.get("x-amz-date") {
+                        Some(datetime) => {
+                            match source_api.get_api_key(access_key_id.to_string()).await {
+                                Ok(api_key) => {
+                                    let string_to_sign = create_string_to_sign(
+                                        &canonical_request,
+                                        &datetime.to_str().unwrap(),
+                                        &credential_scope,
+                                    );
 
-            match headers.get("x-amz-date") {
-                Some(datetime) => match source_api.get_api_key(access_key_id.to_string()).await {
-                    Ok(api_key) => {
-                        let string_to_sign = create_string_to_sign(
-                            &canonical_request,
-                            &datetime.to_str().unwrap(),
-                            &credential_scope,
-                        );
+                                    dbg!(&string_to_sign);
+                                    dbg!(&canonical_request);
 
-                        dbg!(&string_to_sign);
-                        dbg!(&canonical_request);
+                                    let calculated_signature: String = calculate_signature(
+                                        api_key.secret_access_key.as_str(),
+                                        date,
+                                        region,
+                                        service,
+                                        &string_to_sign,
+                                    );
 
-                        let calculated_signature: String = calculate_signature(
-                            api_key.secret_access_key.as_str(),
-                            date,
-                            region,
-                            service,
-                            &string_to_sign,
-                        );
-
-                        if calculated_signature != signature {
-                            dbg!(&"Signature mismatch");
-                            return Err("Signature mismatch".to_string());
-                        } else {
-                            return Ok(api_key);
+                                    if calculated_signature != signature {
+                                        dbg!(&"Signature mismatch");
+                                        return Err("Signature mismatch".to_string());
+                                    } else {
+                                        return Ok(api_key);
+                                    }
+                                }
+                                Err(_) => return Err("Error".to_string()),
+                            }
+                        }
+                        None => {
+                            return Err("No x-amz-date header found".to_string());
                         }
                     }
-                    Err(_) => return Err("Error".to_string()),
-                },
-                None => {
-                    return Err("No x-amz-date header found".to_string());
                 }
+                None => Err("No x-amz-content-sha256 header found".to_string()),
             }
         }
         None => Err("No Authorization header found".to_string()),
@@ -258,7 +271,20 @@ fn create_canonical_request(
     signed_headers: Vec<&str>,
     query_string: &str,
     body: &BytesMut,
+    content_hash: &str,
 ) -> String {
+    if content_hash == "UNSIGNED-PAYLOAD" {
+        return format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method,
+            uri_encode(path, false),
+            get_canonical_query_string(query_string),
+            get_canonical_headers(headers, &signed_headers),
+            get_signed_headers(&signed_headers),
+            content_hash
+        );
+    }
+
     format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
         method,
