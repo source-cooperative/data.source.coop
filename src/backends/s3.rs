@@ -1,5 +1,6 @@
 use crate::backends::common::{
-    CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
+    CommonPrefix, CompleteMultipartUploadResponse, Content, CreateMultipartUploadResponse,
+    GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
 use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
@@ -12,8 +13,14 @@ use futures_core::Stream;
 use reqwest;
 use rusoto_core::Region;
 use rusoto_core::RusotoError;
-use rusoto_s3::{HeadObjectRequest, ListObjectsV2Request, S3Client, S3};
+use rusoto_s3::{
+    AbortMultipartUploadRequest, CompleteMultipartUploadRequest, CompletedMultipartUpload,
+    CompletedPart, CreateMultipartUploadRequest, DeleteObjectRequest, HeadObjectRequest,
+    ListObjectsV2Request, PutObjectRequest, S3Client, UploadPartRequest, S3,
+};
 use std::pin::Pin;
+
+use super::common::{MultipartPart, UploadPartResponse};
 
 pub struct S3Repository {
     pub account_id: String,
@@ -21,6 +28,8 @@ pub struct S3Repository {
     pub region: Region,
     pub bucket: String,
     pub base_prefix: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
 }
 
 #[async_trait]
@@ -91,8 +100,229 @@ impl Repository for S3Repository {
         }
     }
 
+    async fn put_object(
+        &self,
+        key: String,
+        bytes: Bytes,
+        content_type: Option<String>,
+    ) -> Result<(), Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+        //let byte_stream = ByteStream::new(once(futures::future::ok::<Bytes, IoError>(bytes)));
+
+        let request = PutObjectRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            body: Some(bytes.to_vec().into()),
+            content_type,
+            ..Default::default()
+        };
+
+        match client.put_object(request).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                dbg!(e);
+                Err(Box::new(InternalServerError {
+                    message: format!("Internal Server Error"),
+                }))
+            }
+        }
+    }
+
+    async fn create_multipart_upload(
+        &self,
+        key: String,
+        content_type: Option<String>,
+    ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+
+        let request = CreateMultipartUploadRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            content_type,
+            ..Default::default()
+        };
+
+        match client.create_multipart_upload(request).await {
+            Ok(result) => Ok(CreateMultipartUploadResponse {
+                bucket: self.account_id.clone(),
+                key: key.clone(),
+                upload_id: result.upload_id.unwrap(),
+            }),
+            Err(e) => {
+                dbg!(e);
+                Err(Box::new(InternalServerError {
+                    message: format!("Internal Server Error"),
+                }))
+            }
+        }
+    }
+
+    async fn abort_multipart_upload(
+        &self,
+        key: String,
+        upload_id: String,
+    ) -> Result<(), Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+
+        let request = AbortMultipartUploadRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            upload_id,
+            ..Default::default()
+        };
+
+        match client.abort_multipart_upload(request).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
+        }
+    }
+
+    async fn complete_multipart_upload(
+        &self,
+        key: String,
+        upload_id: String,
+        parts: Vec<MultipartPart>,
+    ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+
+        let request = CompleteMultipartUploadRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            upload_id,
+            multipart_upload: Some(CompletedMultipartUpload {
+                parts: Some(
+                    parts
+                        .iter()
+                        .map(|part| CompletedPart {
+                            e_tag: Some(part.etag.clone()),
+                            part_number: Some(part.part_number),
+                        })
+                        .collect(),
+                ),
+            }),
+            ..Default::default()
+        };
+
+        match client.complete_multipart_upload(request).await {
+            Ok(result) => Ok(CompleteMultipartUploadResponse {
+                location: "".to_string(),
+                bucket: self.account_id.clone(),
+                key: key.clone(),
+                etag: result.e_tag.unwrap(),
+            }),
+            Err(e) => {
+                dbg!(e);
+                Err(Box::new(InternalServerError {
+                    message: format!("Internal Server Error"),
+                }))
+            }
+        }
+    }
+
+    async fn upload_multipart_part(
+        &self,
+        key: String,
+        upload_id: String,
+        part_number: String,
+        bytes: Bytes,
+    ) -> Result<UploadPartResponse, Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+
+        let request = UploadPartRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            upload_id,
+            part_number: part_number.parse().unwrap(),
+            body: Some(bytes.to_vec().into()),
+            ..Default::default()
+        };
+
+        match client.upload_part(request).await {
+            Ok(result) => Ok(UploadPartResponse {
+                etag: result.e_tag.unwrap(),
+            }),
+            Err(_) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
+        }
+    }
+
+    async fn delete_object(&self, key: String) -> Result<(), Box<dyn APIError>> {
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
+        let request = DeleteObjectRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}/{}", self.base_prefix, key),
+            ..Default::default()
+        };
+
+        match client.delete_object(request).await {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
+        }
+    }
+
     async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
-        let client = S3Client::new(self.region.clone());
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
         let request = HeadObjectRequest {
             bucket: self.bucket.clone(),
             key: format!("{}/{}", self.base_prefix, key),
@@ -136,7 +366,15 @@ impl Repository for S3Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>> {
-        let client = S3Client::new(self.region.clone());
+        let credentials = rusoto_credential::StaticProvider::new_minimal(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+        );
+        let client = S3Client::new_with(
+            rusoto_core::request::HttpClient::new().unwrap(),
+            credentials,
+            self.region.clone(),
+        );
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
             prefix: Some(format!("{}/{}", self.base_prefix, prefix)),

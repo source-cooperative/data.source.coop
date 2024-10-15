@@ -1,6 +1,7 @@
 use actix_http::header::HeaderMap;
 use actix_web::{
     dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
+    web,
     web::BytesMut,
     Error, HttpMessage,
 };
@@ -16,9 +17,11 @@ use std::{
 };
 use url::form_urlencoded;
 
+use crate::apis::source::{APIKey, SourceAPI};
+
 #[derive(Clone)]
 pub struct UserIdentity {
-    pub user_id: Option<String>,
+    pub api_key: Option<APIKey>,
 }
 
 pub struct LoadIdentity;
@@ -69,14 +72,19 @@ where
             }
 
             let identity = match load_identity(
+                req.app_data::<web::Data<SourceAPI>>().unwrap(),
                 req.method().as_str(),
                 req.path(),
                 req.headers(),
                 req.query_string(),
                 &body,
-            ) {
-                Ok(id) => UserIdentity { user_id: Some(id) },
-                Err(_) => UserIdentity { user_id: None },
+            )
+            .await
+            {
+                Ok(api_key) => UserIdentity {
+                    api_key: Some(api_key),
+                },
+                Err(_) => UserIdentity { api_key: None },
             };
 
             req.extensions_mut().insert(identity);
@@ -93,13 +101,14 @@ where
     }
 }
 
-fn load_identity(
+async fn load_identity(
+    source_api: &web::Data<SourceAPI>,
     method: &str,
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
     body: &BytesMut,
-) -> Result<String, String> {
+) -> Result<APIKey, String> {
     match headers.get("Authorization") {
         Some(auth) => {
             let authorization_header: &str = auth.to_str().unwrap();
@@ -130,8 +139,8 @@ fn load_identity(
             let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
 
             match headers.get("x-amz-date") {
-                Some(datetime) => match retrieve_secret_access_key(access_key_id) {
-                    Ok(secret_access_key) => {
+                Some(datetime) => match source_api.get_api_key(access_key_id.to_string()).await {
+                    Ok(api_key) => {
                         let string_to_sign = create_string_to_sign(
                             &canonical_request,
                             &datetime.to_str().unwrap(),
@@ -139,7 +148,7 @@ fn load_identity(
                         );
 
                         let calculated_signature: String = calculate_signature(
-                            secret_access_key.as_str(),
+                            api_key.secret_access_key.as_str(),
                             date,
                             region,
                             service,
@@ -149,11 +158,10 @@ fn load_identity(
                         if calculated_signature != signature {
                             return Err("Signature mismatch".to_string());
                         } else {
-                            println!("Signature Verified");
-                            return Ok("Signature verified".to_string());
+                            return Ok(api_key);
                         }
                     }
-                    Err(e) => return Err(e),
+                    Err(_) => return Err("Error".to_string()),
                 },
                 None => {
                     return Err("No x-amz-date header found".to_string());
@@ -161,14 +169,6 @@ fn load_identity(
             }
         }
         None => Err("No Authorization header found".to_string()),
-    }
-}
-
-// TODO: Load the secret_access_key from the API
-fn retrieve_secret_access_key(access_key_id: &str) -> Result<String, String> {
-    match access_key_id {
-        "" => Ok("".to_string()),
-        _ => Err("API key not found".to_string()),
     }
 }
 

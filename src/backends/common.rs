@@ -3,34 +3,12 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use core::num::NonZeroU32;
 use futures_core::Stream;
+use serde::Deserialize;
 use serde::Serialize;
 use std::pin::Pin;
 
 use reqwest::Error as ReqwestError;
 type BoxedReqwestStream = Pin<Box<dyn Stream<Item = Result<Bytes, ReqwestError>> + Send>>;
-
-pub fn parse_s3_uri(uri: &str) -> Result<(String, String), &'static str> {
-    // Check if the URI starts with "s3://"
-    if !uri.starts_with("s3://") {
-        return Err("Invalid S3 URI: must start with 's3://'");
-    }
-
-    // Remove the "s3://" prefix
-    let uri = &uri[5..];
-
-    // Find the first '/' after the bucket name
-    match uri.find('/') {
-        Some(slash_index) => {
-            let (bucket, prefix) = uri.split_at(slash_index);
-            // Remove the leading '/' from the prefix
-            Ok((bucket.to_string(), prefix[1..].to_string()))
-        }
-        None => {
-            // If there's no '/', the entire string is the bucket name
-            Ok((uri.to_string(), String::new()))
-        }
-    }
-}
 
 pub struct GetObjectResponse {
     pub content_length: u64,
@@ -47,8 +25,50 @@ pub struct HeadObjectResponse {
     pub etag: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CompleteMultipartUploadResponse {
+    #[serde(rename = "Location")]
+    pub location: String,
+    #[serde(rename = "Bucket")]
+    pub bucket: String,
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "ETag")]
+    pub etag: String,
+}
+
 #[async_trait]
 pub trait Repository {
+    async fn delete_object(&self, key: String) -> Result<(), Box<dyn APIError>>;
+    async fn create_multipart_upload(
+        &self,
+        key: String,
+        content_type: Option<String>,
+    ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>>;
+    async fn abort_multipart_upload(
+        &self,
+        key: String,
+        upload_id: String,
+    ) -> Result<(), Box<dyn APIError>>;
+    async fn complete_multipart_upload(
+        &self,
+        key: String,
+        upload_id: String,
+        parts: Vec<MultipartPart>,
+    ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>>;
+    async fn upload_multipart_part(
+        &self,
+        key: String,
+        upload_id: String,
+        part_number: String,
+        bytes: Bytes,
+    ) -> Result<UploadPartResponse, Box<dyn APIError>>;
+    async fn put_object(
+        &self,
+        key: String,
+        bytes: Bytes,
+        content_type: Option<String>,
+    ) -> Result<(), Box<dyn APIError>>;
     async fn get_object(
         &self,
         key: String,
@@ -102,4 +122,43 @@ pub struct Content {
 pub struct CommonPrefix {
     #[serde(rename = "Prefix")]
     pub prefix: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateMultipartUploadResponse {
+    #[serde(rename = "Bucket")]
+    pub bucket: String,
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "UploadId")]
+    pub upload_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UploadPartResponse {
+    #[serde(rename = "ETag")]
+    pub etag: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MultipartPart {
+    #[serde(rename = "PartNumber")]
+    pub part_number: i64,
+    #[serde(rename = "ETag")]
+    pub etag: String,
+    #[serde(rename = "ChecksumCRC32")]
+    pub checksum_crc32: Option<String>,
+    #[serde(rename = "ChecksumCRC32C")]
+    pub checksum_crc32c: Option<String>,
+    #[serde(rename = "ChecksumSHA1")]
+    pub checksum_sha1: Option<String>,
+    #[serde(rename = "ChecksumSHA256")]
+    pub checksum_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "CompleteMultipartUpload")]
+pub struct CompleteMultipartUpload {
+    #[serde(rename = "Part")]
+    pub parts: Vec<MultipartPart>,
 }

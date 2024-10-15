@@ -13,10 +13,13 @@ use std::pin::Pin;
 use time::format_description::well_known::{Rfc2822, Rfc3339};
 
 use crate::backends::common::{
-    CommonPrefix, Content, GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
+    CommonPrefix, CompleteMultipartUploadResponse, Content, CreateMultipartUploadResponse,
+    GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
 use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
+
+use super::common::{MultipartPart, UploadPartResponse};
 
 pub struct AzureRepository {
     pub account_id: String,
@@ -100,6 +103,66 @@ impl Repository for AzureRepository {
         }
     }
 
+    async fn delete_object(&self, _key: String) -> Result<(), Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: "Internal Server Error".to_string(),
+        }))
+    }
+
+    async fn create_multipart_upload(
+        &self,
+        _key: String,
+        _content_type: Option<String>,
+    ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: format!("Internal Server Error"),
+        }))
+    }
+
+    async fn abort_multipart_upload(
+        &self,
+        _key: String,
+        _upload_id: String,
+    ) -> Result<(), Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: format!("Internal Server Error"),
+        }))
+    }
+
+    async fn complete_multipart_upload(
+        &self,
+        _key: String,
+        _upload_id: String,
+        _parts: Vec<MultipartPart>,
+    ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: format!("Internal Server Error"),
+        }))
+    }
+
+    async fn upload_multipart_part(
+        &self,
+        _key: String,
+        _upload_id: String,
+        _part_number: String,
+        _bytes: Bytes,
+    ) -> Result<UploadPartResponse, Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: format!("Internal Server Error"),
+        }))
+    }
+
+    async fn put_object(
+        &self,
+        _key: String,
+        _bytes: Bytes,
+        _content_type: Option<String>,
+    ) -> Result<(), Box<dyn APIError>> {
+        Err(Box::new(InternalServerError {
+            message: "Internal Server Error".to_string(),
+        }))
+    }
+
     async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
         let credentials = StorageCredentials::anonymous();
 
@@ -124,7 +187,7 @@ impl Repository for AzureRepository {
                     .unwrap_or_else(|_| String::from("Invalid DateTime")),
             }),
             Err(e) => {
-                if (e.as_http_error().unwrap().status() == 404) {
+                if e.as_http_error().unwrap().status() == 404 {
                     return Err(Box::new(ObjectNotFoundError {
                         account_id: self.account_id.clone(),
                         repository_id: self.repository_id.clone(),
@@ -226,7 +289,7 @@ impl Repository for AzureRepository {
                         }
                     }
                 }
-                Err(e) => (),
+                Err(_) => (),
             }
         }
 
