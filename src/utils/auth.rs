@@ -141,6 +141,7 @@ async fn load_identity(
             match headers.get("x-amz-date") {
                 Some(datetime) => match source_api.get_api_key(access_key_id.to_string()).await {
                     Ok(api_key) => {
+                        dbg!(&api_key);
                         let string_to_sign = create_string_to_sign(
                             &canonical_request,
                             &datetime.to_str().unwrap(),
