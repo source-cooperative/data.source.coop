@@ -19,6 +19,10 @@
                 {
                     "name": "SOURCE_KEY",
                     "value": "{SOURCE_KEY_VALUE_HERE}"
+                },
+                {
+                    "name": "SOURCE_API_URL",
+                    "value": "{SOURCE_API_URL}"
                 }
             ],
             "environmentFiles": [],

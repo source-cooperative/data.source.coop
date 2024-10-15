@@ -206,7 +206,6 @@ impl API for SourceAPI {
                                         .container_name
                                         .clone()
                                         .unwrap_or_default();
-
                                     let base_prefix: String = data_connection
                                         .details
                                         .base_prefix
@@ -218,7 +217,10 @@ impl API for SourceAPI {
                                         repository_id: repository_id.to_string(),
                                         account_name,
                                         container_name,
-                                        base_prefix,
+                                        base_prefix: format!(
+                                            "{}{}",
+                                            base_prefix, repository_data.prefix
+                                        ),
                                     }))
                                 } else {
                                     Err(())
@@ -519,6 +521,8 @@ impl SourceAPI {
             let api_key = user_identity.clone().api_key.unwrap();
             cache_key = format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id);
         }
+
+        dbg!(&cache_key);
 
         if let Some(cache_permissions) = self.permissions_cache.get(&cache_key).await {
             return Ok(cache_permissions.contains(&permission));

@@ -220,13 +220,14 @@ impl Repository for AzureRepository {
             next_continuation_token: None,
         };
 
+        dbg!(&self.base_prefix);
+
         let credentials = StorageCredentials::anonymous();
 
         // Create a client for anonymous access
         let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
             .container_client(&self.container_name);
-
-        let search_prefix = format!("{}/{}", self.base_prefix, prefix);
+        let search_prefix = format!("{}/{}", self.base_prefix.trim_end_matches('/'), prefix);
 
         let next_marker = continuation_token.map_or(NextMarker::new("".to_string()), Into::into);
 
@@ -264,7 +265,7 @@ impl Repository for AzureRepository {
                                 result.contents.push(Content {
                                     key: replace_first(
                                         b.name,
-                                        self.base_prefix.clone(),
+                                        self.base_prefix.clone().trim_end_matches('/').to_string(),
                                         format!("{}", self.repository_id),
                                     ),
                                     last_modified: b
@@ -281,7 +282,7 @@ impl Repository for AzureRepository {
                                 result.common_prefixes.push(CommonPrefix {
                                     prefix: replace_first(
                                         bp.name,
-                                        self.base_prefix.clone(),
+                                        self.base_prefix.clone().trim_end_matches('/').to_string(),
                                         format!("{}", self.repository_id),
                                     ),
                                 });
