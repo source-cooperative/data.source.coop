@@ -41,7 +41,11 @@ impl Repository for AzureRepository {
         let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
             .container_client(&self.container_name);
 
-        let blob_client = client.blob_client(format!("{}/{}", self.base_prefix, key));
+        let blob_client = client.blob_client(format!(
+            "{}/{}",
+            self.base_prefix.trim_end_matches('/').to_string(),
+            key
+        ));
 
         match blob_client.get_properties().await {
             Ok(blob) => {
@@ -59,7 +63,10 @@ impl Repository for AzureRepository {
                 // Start building the request
                 let mut request = client.get(format!(
                     "https://{}.blob.core.windows.net/{}/{}/{}",
-                    self.account_name, self.container_name, self.base_prefix, key
+                    self.account_name,
+                    self.container_name,
+                    self.base_prefix.trim_end_matches('/').to_string(),
+                    key
                 ));
 
                 // If a range is provided, add it to the headers

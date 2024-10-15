@@ -148,6 +148,7 @@ async fn load_identity(
                         );
 
                         dbg!(&string_to_sign);
+                        dbg!(&canonical_request);
 
                         let calculated_signature: String = calculate_signature(
                             api_key.secret_access_key.as_str(),
