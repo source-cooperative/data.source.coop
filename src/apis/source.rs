@@ -360,7 +360,6 @@ impl SourceAPI {
                 })),
             },
             Err(error) => {
-                println!("HTTP Request Error");
                 if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
                     return Err(Box::new(InternalServerError {
                         message: "Data Connection Not Found".to_string(),
@@ -470,7 +469,6 @@ impl SourceAPI {
         account_id: &String,
         repository_id: &String,
     ) -> Result<SourceRepository, Box<dyn APIError>> {
-        dbg!("Fetching Repository");
         match reqwest::get(format!(
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
@@ -484,7 +482,6 @@ impl SourceAPI {
                 })),
             },
             Err(error) => {
-                println!("HTTP Request Error");
                 if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
                     return Err(Box::new(RepositoryNotFoundError {
                         account_id: account_id.to_string(),
@@ -521,8 +518,6 @@ impl SourceAPI {
             let api_key = user_identity.clone().api_key.unwrap();
             cache_key = format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id);
         }
-
-        dbg!(&cache_key);
 
         if let Some(cache_permissions) = self.permissions_cache.get(&cache_key).await {
             return Ok(cache_permissions.contains(&permission));

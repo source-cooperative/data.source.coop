@@ -127,12 +127,9 @@ impl Repository for S3Repository {
 
         match client.put_object(request).await {
             Ok(_) => Ok(()),
-            Err(e) => {
-                dbg!(e);
-                Err(Box::new(InternalServerError {
-                    message: format!("Internal Server Error"),
-                }))
-            }
+            Err(e) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
         }
     }
 
@@ -164,12 +161,9 @@ impl Repository for S3Repository {
                 key: key.clone(),
                 upload_id: result.upload_id.unwrap(),
             }),
-            Err(e) => {
-                dbg!(e);
-                Err(Box::new(InternalServerError {
-                    message: format!("Internal Server Error"),
-                }))
-            }
+            Err(e) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
         }
     }
 
@@ -244,12 +238,9 @@ impl Repository for S3Repository {
                 key: key.clone(),
                 etag: result.e_tag.unwrap(),
             }),
-            Err(e) => {
-                dbg!(e);
-                Err(Box::new(InternalServerError {
-                    message: format!("Internal Server Error"),
-                }))
-            }
+            Err(e) => Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            })),
         }
     }
 
@@ -435,7 +426,6 @@ impl Repository for S3Repository {
                 return Ok(result);
             }
             Err(error) => {
-                dbg!(&error);
                 return Err(Box::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 }));

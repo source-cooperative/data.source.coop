@@ -156,9 +156,6 @@ async fn load_identity(
                                         &credential_scope,
                                     );
 
-                                    dbg!(&string_to_sign);
-                                    dbg!(&canonical_request);
-
                                     let calculated_signature: String = calculate_signature(
                                         api_key.secret_access_key.as_str(),
                                         date,
@@ -168,7 +165,6 @@ async fn load_identity(
                                     );
 
                                     if calculated_signature != signature {
-                                        dbg!(&"Signature mismatch");
                                         return Err("Signature mismatch".to_string());
                                     } else {
                                         return Ok(api_key);

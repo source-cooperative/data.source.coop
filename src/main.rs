@@ -553,19 +553,12 @@ async fn list_objects(
                 Ok(serialized) => HttpResponse::Ok()
                     .content_type("application/xml")
                     .body(serialized),
-                Err(e) => {
-                    eprintln!("Serialization error: {:?}", e);
-                    HttpResponse::InternalServerError().finish()
-                }
+                Err(e) => HttpResponse::InternalServerError().finish(),
             },
-            Err(_) => {
-                println!("Could Not List Objects");
-                HttpResponse::NotFound().finish()
-            }
+            Err(_) => HttpResponse::NotFound().finish(),
         }
         // Found the repository, now make the list objects request
     } else {
-        println!("Could Not Find Repository");
         // Could not find the repository
         return HttpResponse::NotFound().finish();
     }

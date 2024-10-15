@@ -227,8 +227,6 @@ impl Repository for AzureRepository {
             next_continuation_token: None,
         };
 
-        dbg!(&self.base_prefix);
-
         let credentials = StorageCredentials::anonymous();
 
         // Create a client for anonymous access
