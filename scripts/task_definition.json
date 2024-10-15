@@ -15,7 +15,12 @@
                 }
             ],
             "essential": true,
-            "environment": [],
+            "environment": [
+                {
+                    "name": "SOURCE_KEY",
+                    "value": "{SOURCE_KEY_VALUE_HERE}"
+                }
+            ],
             "environmentFiles": [],
             "mountPoints": [],
             "volumesFrom": [],
