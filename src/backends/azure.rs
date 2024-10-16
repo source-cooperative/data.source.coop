@@ -29,6 +29,23 @@ pub struct AzureRepository {
     pub base_prefix: String,
 }
 
+use chrono::format::strftime::StrftimeItems;
+use chrono::{DateTime, FixedOffset};
+
+fn rfc2822_to_rfc7231(rfc2822_date: &str) -> Result<String, chrono::ParseError> {
+    // Parse the RFC2822 date string
+    let datetime = DateTime::parse_from_rfc2822(rfc2822_date)?;
+
+    // Define the format string for RFC7231
+    let format = StrftimeItems::new("%a, %d %b %Y %H:%M:%S GMT");
+
+    // Convert to UTC and format as RFC7231
+    Ok(datetime
+        .with_timezone(&FixedOffset::east_opt(0).unwrap())
+        .format_with_items(format.clone())
+        .to_string())
+}
+
 #[async_trait]
 impl Repository for AzureRepository {
     async fn get_object(
@@ -51,12 +68,15 @@ impl Repository for AzureRepository {
             Ok(blob) => {
                 let content_type = blob.blob.properties.content_type.to_string();
                 let etag = blob.blob.properties.etag.to_string();
-                let last_modified = blob
-                    .blob
-                    .properties
-                    .last_modified
-                    .format(&Rfc2822)
-                    .unwrap_or_else(|_| String::from("Invalid DateTime"));
+                let last_modified = rfc2822_to_rfc7231(
+                    blob.blob
+                        .properties
+                        .last_modified
+                        .format(&Rfc2822)
+                        .unwrap_or_else(|_| String::from("Invalid DateTime"))
+                        .as_str(),
+                )
+                .unwrap_or_else(|_| String::from("Invalid DateTime"));
 
                 let client = reqwest::Client::new();
 
@@ -190,12 +210,15 @@ impl Repository for AzureRepository {
                 content_length: blob.blob.properties.content_length,
                 content_type: blob.blob.properties.content_type.to_string(),
                 etag: blob.blob.properties.etag.to_string(),
-                last_modified: blob
-                    .blob
-                    .properties
-                    .last_modified
-                    .format(&Rfc2822)
-                    .unwrap_or_else(|_| String::from("Invalid DateTime")),
+                last_modified: rfc2822_to_rfc7231(
+                    blob.blob
+                        .properties
+                        .last_modified
+                        .format(&Rfc2822)
+                        .unwrap_or_else(|_| String::from("Invalid DateTime"))
+                        .as_str(),
+                )
+                .unwrap_or_else(|_| String::from("Invalid DateTime")),
             }),
             Err(e) => {
                 if e.as_http_error().unwrap().status() == 404 {
