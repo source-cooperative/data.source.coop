@@ -1,5 +1,5 @@
 [package]
-name = "source-nexus"
+name = "source-data-proxy"
 version = "0.1.12"
 edition = "2021"
 

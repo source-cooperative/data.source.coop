@@ -2324,8 +2324,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "source-nexus"
-version = "0.1.11"
+name = "source-data-proxy"
+version = "0.1.12"
 dependencies = [
  "actix-cors",
  "actix-http",

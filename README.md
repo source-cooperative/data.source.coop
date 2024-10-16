@@ -1,63 +1,59 @@
-# Source Cooperative Nexus
-This project implements an S3-compatible API that acts as a proxy for various object store backends, including Amazon S3 and Azure Blob Storage. It dynamically routes requests to the appropriate backend based on the Source Cooperative repository being accessed. This allows clients to interact with different storage systems using a consistent S3-like interface, simplifying access to diverse data sources within the Source Cooperative ecosystem.
+# Source Cooperative Data Proxy
 
-## Features
+This repository contains the rust application which hosts the Source Cooperative Data Proxy.
 
-- Get object content from repositories
-- Head object to retrieve metadata
-- List objects in repositories
-- Support for S3 and Azure Blob Storage backends
-- CORS support
-- Streaming responses for large objects
+## Getting Started
 
-## Prerequisites
+### Prerequisites
+ - Cargo installed on your local machine
+ - The AWS CLI installed on your local machine
 
-- Rust (latest stable version)
-- Cargo (comes with Rust)
+### Run Locally
 
-## Installation
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/source-data-api.git
-   cd source-data-api
-   ```
-
-2. Build the project:
-   ```
-   cargo build --release
-   ```
-
-## Configuration
-
-- TODO: Add configuration instructions
-
-## Running the Server
-
-To start the server, run:
+To run the data proxy locally, run the following command:
 
 ```
-cargo run --release
+./scripts/run.sh
 ```
 
-The server will start on `0.0.0.0:8080` by default.
+## Deployment
 
-## API Endpoints
+Before you begin the deployment process, ensure that you have the `SOURCE_KEY` environment variable set with the production key.
 
-- `GET /{account_id}/{repository_id}/{key}`: Retrieve an object
-- `HEAD /{account_id}/{repository_id}/{key}`: Get object metadata
-- `GET /{account_id}?prefix={repository_id}/{prefix}&list-type=2`: List objects in a repository
+### Tagging Release
 
-## Project Structure
+After committing your changes, tag the release and bump the version with the following command:
 
-- `src/main.rs`: Entry point and API route definitions
-- `src/clients/`: Backend-specific implementations (S3, Azure)
-- `src/utils/`: Utility functions and shared code
+```
+./scripts/tag-release.sh
+```
 
-## Contributing
+### Building and Pushing Image
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+To build and push the docker image to ECR, run the following command:
 
-## License
+```
+./scripts/build-push.sh
+```
 
-This project is licensed under the [MIT License](LICENSE).
+### Deploying to ECS
+
+To deploy the image to ECS, run the following command:
+
+```
+./scripts/deploy.sh
+```
+
+### Rolling Back a Deployment
+
+To roll back a deployment, first checkout the code for the version that you want to roll back to. For example:
+
+```
+git checkout v0.1.12
+```
+
+Next, deploy the version to ECS:
+
+```
+./scripts/deploy.sh
+```
