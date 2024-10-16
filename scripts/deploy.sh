@@ -1,4 +1,5 @@
 VERSION=$(git tag --points-at HEAD)
+SOURCE_API_URL="https://source.coop"
 
 # Check if the current commit is a release commit
 if [ -z "$VERSION" ]; then
@@ -12,10 +13,14 @@ if [ -z "$(aws ecr describe-images --repository-name source-data-proxy --image-i
   exit 1;
 fi
 
+if [ -z "${SOURCE_KEY}" ]; then
+    echo "The SOURCE_KEY environment variable is not set"
+    exit 1;
+fi
+
 echo "Deploying $VERSION..."
 
-contents="$(jq ".containerDefinitions[0].image = \"417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:$VERSION\"" scripts/task_definition.json)" && \
-echo "${contents}" > scripts/task_definition_deploy.json
+jq --arg api_url "$SOURCE_API_URL" --arg image "417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:$VERSION" --arg source_key "$SOURCE_KEY" '(.containerDefinitions[0].environment |= [{"name":"SOURCE_KEY", "value": $source_key},{"name":"SOURCE_API_URL", "value": $api_url}]) | (.containerDefinitions[0].image |= $image)' scripts/task_definition.json > scripts/task_definition_deploy.json
 
 # Register the task definition
 if [ -z "$(aws ecs register-task-definition --cli-input-json "file://scripts/task_definition_deploy.json" --profile opendata --no-cli-auto-prompt 2> /dev/null)" ]; then
