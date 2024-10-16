@@ -409,14 +409,29 @@ impl SourceAPI {
         match self.fetch_api_key(access_key_id).await {
             Ok(secret) => {
                 // Cache the successful result
-                self.api_key_cache.insert(cache_key, secret.clone()).await;
-                Ok(secret)
+                match secret {
+                    Some(secret) => {
+                        self.api_key_cache.insert(cache_key, secret.clone()).await;
+                        Ok(secret)
+                    }
+                    None => {
+                        let secret = APIKey {
+                            access_key_id: "".to_string(),
+                            secret_access_key: "".to_string(),
+                        };
+                        self.api_key_cache.insert(cache_key, secret.clone()).await;
+                        Ok(secret)
+                    }
+                }
             }
             Err(e) => Err(e),
         }
     }
 
-    async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, Box<dyn APIError>> {
+    async fn fetch_api_key(
+        &self,
+        access_key_id: String,
+    ) -> Result<Option<APIKey>, Box<dyn APIError>> {
         let client = reqwest::Client::new();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
@@ -443,16 +458,19 @@ impl SourceAPI {
                             let json: Value = serde_json::from_str(&text).unwrap();
                             let secret_access_key = json["secret_access_key"].as_str().unwrap();
 
-                            return Ok(APIKey {
+                            return Ok(Some(APIKey {
                                 access_key_id,
                                 secret_access_key: secret_access_key.to_string(),
-                            });
+                            }));
                         }
                         Err(_) => Err(Box::new(InternalServerError {
                             message: "Internal Server Error".to_string(),
                         })),
                     }
                 } else {
+                    if response.status().is_client_error() {
+                        return Ok(None);
+                    }
                     Err(Box::new(InternalServerError {
                         message: "Internal Server Error".to_string(),
                     }))
