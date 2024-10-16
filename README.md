@@ -7,6 +7,7 @@ This repository contains the rust application which hosts the Source Cooperative
 ### Prerequisites
  - Cargo installed on your local machine
  - The AWS CLI installed on your local machine
+ - An AWS Credentials profile with the name `opendata` which has permissions to push to the ECR repository and deploy to ECS
 
 ### Run Locally
 
