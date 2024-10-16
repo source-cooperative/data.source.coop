@@ -178,7 +178,11 @@ impl Repository for AzureRepository {
             .container_client(&self.container_name);
 
         match client
-            .blob_client(format!("{}/{}", self.base_prefix, key))
+            .blob_client(format!(
+                "{}/{}",
+                self.base_prefix.trim_end_matches('/').to_string(),
+                key
+            ))
             .get_properties()
             .await
         {
