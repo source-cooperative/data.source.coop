@@ -578,7 +578,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(web::PayloadConfig::new(1024 * 1024 * 50))
+            .app_data(web::PayloadConfig::new(1024 * 1024 * 1024))
             .app_data(source_api.clone())
             .app_data(web::Data::new(UserIdentity { api_key: None }))
             .wrap(
