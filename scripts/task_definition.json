@@ -44,7 +44,7 @@
             "systemControls": []
         }
     ],
-    "taskRoleArn": "arn:aws:iam::417712557820:role/source-data-proxy",
+    "taskRoleArn": "arn:aws:iam::417712557820:role/SourceCooperative",
     "executionRoleArn": "arn:aws:iam::417712557820:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
     "requiresCompatibilities": ["FARGATE"],
