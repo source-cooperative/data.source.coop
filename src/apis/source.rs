@@ -181,18 +181,21 @@ impl API for SourceAPI {
                                         region,
                                         bucket,
                                         base_prefix: prefix,
+                                        auth_method: data_connection
+                                            .authentication
+                                            .clone()
+                                            .unwrap()
+                                            .auth_type,
                                         access_key_id: data_connection
                                             .authentication
                                             .clone()
                                             .unwrap()
-                                            .access_key_id
-                                            .unwrap(),
+                                            .access_key_id,
                                         secret_access_key: data_connection
                                             .authentication
                                             .clone()
                                             .unwrap()
-                                            .secret_access_key
-                                            .unwrap(),
+                                            .secret_access_key,
                                     }))
                                 } else if data_connection.details.provider == "az" {
                                     let account_name: String = data_connection

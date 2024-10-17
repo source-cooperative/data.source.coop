@@ -28,8 +28,9 @@ pub struct S3Repository {
     pub region: Region,
     pub bucket: String,
     pub base_prefix: String,
-    pub access_key_id: String,
-    pub secret_access_key: String,
+    pub auth_method: String,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
 }
 
 #[async_trait]
@@ -106,16 +107,30 @@ impl Repository for S3Repository {
         bytes: Bytes,
         content_type: Option<String>,
     ) -> Result<(), Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
-        //let byte_stream = ByteStream::new(once(futures::future::ok::<Bytes, IoError>(bytes)));
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
 
         let request = PutObjectRequest {
             bucket: self.bucket.clone(),
@@ -138,15 +153,30 @@ impl Repository for S3Repository {
         key: String,
         content_type: Option<String>,
     ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
 
         let request = CreateMultipartUploadRequest {
             bucket: self.bucket.clone(),
@@ -172,15 +202,30 @@ impl Repository for S3Repository {
         key: String,
         upload_id: String,
     ) -> Result<(), Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
 
         let request = AbortMultipartUploadRequest {
             bucket: self.bucket.clone(),
@@ -203,15 +248,30 @@ impl Repository for S3Repository {
         upload_id: String,
         parts: Vec<MultipartPart>,
     ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
 
         let request = CompleteMultipartUploadRequest {
             bucket: self.bucket.clone(),
@@ -251,15 +311,30 @@ impl Repository for S3Repository {
         part_number: String,
         bytes: Bytes,
     ) -> Result<UploadPartResponse, Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
 
         let request = UploadPartRequest {
             bucket: self.bucket.clone(),
@@ -281,15 +356,30 @@ impl Repository for S3Repository {
     }
 
     async fn delete_object(&self, key: String) -> Result<(), Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
         let request = DeleteObjectRequest {
             bucket: self.bucket.clone(),
             key: format!("{}/{}", self.base_prefix, key),
@@ -305,15 +395,30 @@ impl Repository for S3Repository {
     }
 
     async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
         let request = HeadObjectRequest {
             bucket: self.bucket.clone(),
             key: format!("{}/{}", self.base_prefix, key),
@@ -357,15 +462,30 @@ impl Repository for S3Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>> {
-        let credentials = rusoto_credential::StaticProvider::new_minimal(
-            self.access_key_id.clone(),
-            self.secret_access_key.clone(),
-        );
-        let client = S3Client::new_with(
-            rusoto_core::request::HttpClient::new().unwrap(),
-            credentials,
-            self.region.clone(),
-        );
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
             prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
