@@ -43,13 +43,22 @@ impl Repository for S3Repository {
         match self.head_object(key.clone()).await {
             Ok(head_object_response) => {
                 let client = reqwest::Client::new();
-                let url = format!(
-                    "https://s3.{}.amazonaws.com/{}/{}/{}",
-                    self.region.name(),
-                    self.bucket,
-                    self.base_prefix,
-                    key
-                );
+                let url: String;
+
+                if self.auth_method == "s3_local" {
+                    url = format!(
+                        "http://localhost:5050/{}/{}/{}",
+                        self.bucket, self.base_prefix, key
+                    )
+                } else {
+                    url = format!(
+                        "https://s3.{}.amazonaws.com/{}/{}/{}",
+                        self.region.name(),
+                        self.bucket,
+                        self.base_prefix,
+                        key
+                    );
+                }
                 // Start building the request
                 let mut request = client.get(url);
 
@@ -126,6 +135,13 @@ impl Repository for S3Repository {
                 credentials,
                 self.region.clone(),
             );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
         } else {
             return Err(Box::new(InternalServerError {
                 message: format!("Internal Server Error"),
@@ -167,6 +183,13 @@ impl Repository for S3Repository {
             );
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
             client = S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
@@ -221,6 +244,13 @@ impl Repository for S3Repository {
                 credentials,
                 self.region.clone(),
             );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
         } else {
             return Err(Box::new(InternalServerError {
                 message: format!("Internal Server Error"),
@@ -262,6 +292,13 @@ impl Repository for S3Repository {
             );
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
             client = S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
@@ -330,6 +367,13 @@ impl Repository for S3Repository {
                 credentials,
                 self.region.clone(),
             );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
         } else {
             return Err(Box::new(InternalServerError {
                 message: format!("Internal Server Error"),
@@ -375,6 +419,13 @@ impl Repository for S3Repository {
                 credentials,
                 self.region.clone(),
             );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
         } else {
             return Err(Box::new(InternalServerError {
                 message: format!("Internal Server Error"),
@@ -409,6 +460,13 @@ impl Repository for S3Repository {
             );
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
             client = S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
@@ -476,6 +534,13 @@ impl Repository for S3Repository {
             );
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
             client = S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,

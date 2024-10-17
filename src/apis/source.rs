@@ -142,21 +142,36 @@ impl API for SourceAPI {
                         match self.get_data_connection(&data_connection_id).await {
                             Ok(data_connection) => {
                                 if data_connection.details.provider == "s3" {
-                                    let region: Region = Region::Custom {
-                                        name: data_connection
-                                            .details
-                                            .region
-                                            .clone()
-                                            .unwrap_or("us-east-1".to_string()),
-                                        endpoint: format!(
-                                            "https://s3.{}.amazonaws.com",
-                                            data_connection
+                                    let region: Region;
+
+                                    if data_connection.authentication.clone().unwrap().auth_type
+                                        == "s3_local"
+                                    {
+                                        region = Region::Custom {
+                                            name: data_connection
                                                 .details
                                                 .region
                                                 .clone()
-                                                .unwrap_or("us-east-1".to_string())
-                                        ),
-                                    };
+                                                .unwrap_or("us-west-2".to_string()),
+                                            endpoint: format!("http://localhost:5050"),
+                                        };
+                                    } else {
+                                        region = Region::Custom {
+                                            name: data_connection
+                                                .details
+                                                .region
+                                                .clone()
+                                                .unwrap_or("us-east-1".to_string()),
+                                            endpoint: format!(
+                                                "https://s3.{}.amazonaws.com",
+                                                data_connection
+                                                    .details
+                                                    .region
+                                                    .clone()
+                                                    .unwrap_or("us-east-1".to_string())
+                                            ),
+                                        };
+                                    }
 
                                     let bucket: String =
                                         data_connection.details.bucket.clone().unwrap_or_default();
