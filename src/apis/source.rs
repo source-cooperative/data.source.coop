@@ -5,6 +5,7 @@ use crate::backends::s3::S3Repository;
 use crate::utils::auth::UserIdentity;
 use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
 use async_trait::async_trait;
+use log::debug;
 use moka::future::Cache;
 use rusoto_core::Region;
 use serde::{Deserialize, Serialize};
@@ -460,17 +461,20 @@ impl SourceAPI {
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
         );
-        match client
+        let request = client
             .get(format!(
                 "{}/api/v1/api-keys/{}/auth",
                 source_api_url, access_key_id
             ))
             .headers(headers)
-            .send()
-            .await
-        {
+            .build()
+            .unwrap();
+        // Log the request details
+        debug!("request for api-keys: {:?}", request);
+        match client.execute(request).await {
             Ok(response) => {
                 if response.status().is_success() {
+                    debug!("Received success response for api-keys: {:?}", response);
                     match response.text().await {
                         Ok(text) => {
                             let json: Value = serde_json::from_str(&text).unwrap();
@@ -486,6 +490,7 @@ impl SourceAPI {
                         })),
                     }
                 } else {
+                    debug!("Received error response for api-keys: {:?}", response);
                     if response.status().is_client_error() {
                         return Ok(None);
                     }
