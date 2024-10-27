@@ -1,9 +1,16 @@
 mod apis;
 mod backends;
+mod guards;
+mod route_handlers;
 mod utils;
+
+use crate::guards::GetObjectGuard;
+use crate::route_handlers::get_object;
+use crate::utils::context::LoadContext;
+
 use crate::utils::core::{split_at_first_slash, StreamingResponse};
 use actix_cors::Cors;
-use actix_web::body::{BodySize, BoxBody, MessageBody};
+use actix_web::body::BoxBody;
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
     delete, get, head, http::header::CONTENT_TYPE, http::header::RANGE, middleware, post, put, web,
@@ -21,34 +28,13 @@ use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
 use std::env;
-use std::pin::Pin;
 use std::str::from_utf8;
-use std::task::{Context, Poll};
-use utils::auth::{LoadIdentity, UserIdentity};
+use utils::FakeBody;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-struct FakeBody {
-    size: usize,
-}
-
-impl MessageBody for FakeBody {
-    type Error = actix_web::Error;
-
-    fn size(&self) -> BodySize {
-        BodySize::Sized(self.size as u64)
-    }
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<Bytes, Self::Error>>> {
-        Poll::Ready(None)
-    }
-}
-
 // TODO: Map the APIErrors to HTTP Responses
-
+/*
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(
     api_client: web::Data<SourceAPI>,
@@ -473,6 +459,7 @@ async fn list_objects(
     path: web::Path<String>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> impl Responder {
+    dbg!(&path);
     let account_id = path.into_inner();
 
     if info.prefix.is_none() {
@@ -563,7 +550,7 @@ async fn list_objects(
         return HttpResponse::NotFound().finish();
     }
 }
-
+ */
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
@@ -580,7 +567,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::PayloadConfig::new(1024 * 1024 * 50))
             .app_data(source_api.clone())
-            .app_data(web::Data::new(UserIdentity { api_key: None }))
             .wrap(
                 // Configure CORS
                 Cors::default()
@@ -594,14 +580,11 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::NormalizePath::trim())
             .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
             .wrap(middleware::Logger::default())
-            .wrap(LoadIdentity)
+            .wrap(LoadContext)
             // Register the endpoints
-            .service(get_object)
-            .service(delete_object)
-            .service(post_handler)
-            .service(put_object)
-            .service(head_object)
-            .service(list_objects)
+            .service(
+                web::resource("/{path:.*}").route(web::get().guard(GetObjectGuard).to(get_object)),
+            )
             .service(index)
     })
     .bind("0.0.0.0:8080")?

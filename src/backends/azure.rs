@@ -9,6 +9,7 @@ use core::num::NonZeroU32;
 use futures::StreamExt;
 use futures_core::Stream;
 use reqwest;
+use std::fmt;
 use std::pin::Pin;
 use time::format_description::well_known::{Rfc2822, Rfc3339};
 
@@ -327,5 +328,17 @@ impl Repository for AzureRepository {
         }
 
         Ok(result)
+    }
+}
+
+impl fmt::Debug for AzureRepository {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AzureRepository")
+            .field("account_id", &self.account_id)
+            .field("repository_id", &self.repository_id)
+            .field("account_name", &self.account_name)
+            .field("container_name", &self.container_name)
+            .field("base_prefix", &self.base_prefix)
+            .finish()
     }
 }

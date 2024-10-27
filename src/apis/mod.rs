@@ -1,7 +1,9 @@
 pub mod source;
 
 use crate::backends::common::Repository;
+use crate::utils::context::RequestContext;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 pub struct Account {
     pub repositories: Vec<String>,
@@ -17,11 +19,7 @@ impl Account {
 
 #[async_trait]
 pub trait API {
-    async fn get_backend_client(
-        &self,
-        account_id: &String,
-        repository_id: &String,
-    ) -> Result<Box<dyn Repository>, ()>;
+    async fn get_backend_client(&self, ctx: &RequestContext) -> Result<Arc<dyn Repository>, ()>;
 
     async fn get_account(&self, account_id: String) -> Result<Account, ()>;
 }

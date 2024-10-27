@@ -1,107 +1,14 @@
 use actix_http::header::HeaderMap;
-use actix_web::{
-    dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
-    web,
-    web::BytesMut,
-    Error, HttpMessage,
-};
-use futures_util::{future::LocalBoxFuture, stream::StreamExt};
+use actix_web::{web, web::BytesMut};
 use hex;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
-use std::{
-    borrow::Cow,
-    collections::BTreeMap,
-    future::{ready, Ready},
-    rc::Rc,
-};
+use std::{borrow::Cow, collections::BTreeMap};
 use url::form_urlencoded;
 
 use crate::apis::source::{APIKey, SourceAPI};
 
-#[derive(Clone)]
-pub struct UserIdentity {
-    pub api_key: Option<APIKey>,
-}
-
-pub struct LoadIdentity;
-
-impl<S: 'static, B> Transform<S, ServiceRequest> for LoadIdentity
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type InitError = ();
-    type Transform = LoadIdentityMiddleware<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(LoadIdentityMiddleware {
-            service: Rc::new(service),
-        }))
-    }
-}
-
-pub struct LoadIdentityMiddleware<S> {
-    service: Rc<S>,
-}
-
-impl<S, B> Service<ServiceRequest> for LoadIdentityMiddleware<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    dev::forward_ready!(service);
-
-    fn call(&self, mut req: ServiceRequest) -> Self::Future {
-        let svc = self.service.clone();
-
-        Box::pin(async move {
-            let mut body = BytesMut::new();
-            let mut stream = req.take_payload();
-            while let Some(chunk) = stream.next().await {
-                body.extend_from_slice(&chunk?);
-            }
-
-            let identity = match load_identity(
-                req.app_data::<web::Data<SourceAPI>>().unwrap(),
-                req.method().as_str(),
-                req.path(),
-                req.headers(),
-                req.query_string(),
-                &body,
-            )
-            .await
-            {
-                Ok(api_key) => UserIdentity {
-                    api_key: Some(api_key),
-                },
-                Err(_) => UserIdentity { api_key: None },
-            };
-
-            req.extensions_mut().insert(identity);
-
-            let (_, mut payload) = actix_http::h1::Payload::create(true);
-
-            payload.unread_data(body.into());
-            req.set_payload(payload.into());
-
-            let res = svc.call(req).await?;
-
-            Ok(res)
-        })
-    }
-}
-
-async fn load_identity(
+pub async fn load_identity(
     source_api: &web::Data<SourceAPI>,
     method: &str,
     path: &str,

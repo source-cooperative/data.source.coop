@@ -18,6 +18,7 @@ use rusoto_s3::{
     CompletedPart, CreateMultipartUploadRequest, DeleteObjectRequest, HeadObjectRequest,
     ListObjectsV2Request, PutObjectRequest, S3Client, UploadPartRequest, S3,
 };
+use std::fmt;
 use std::pin::Pin;
 
 use super::common::{MultipartPart, UploadPartResponse};
@@ -616,5 +617,26 @@ impl Repository for S3Repository {
                 }));
             }
         }
+    }
+}
+
+impl fmt::Debug for S3Repository {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("S3Repository")
+            .field("account_id", &self.account_id)
+            .field("repository_id", &self.repository_id)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("base_prefix", &self.base_prefix)
+            .field("auth_method", &self.auth_method)
+            .field(
+                "access_key_id",
+                &self.access_key_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
     }
 }

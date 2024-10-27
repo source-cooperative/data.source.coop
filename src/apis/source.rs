@@ -2,7 +2,7 @@ use super::{Account, API};
 use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
-use crate::utils::auth::UserIdentity;
+use crate::utils::context::RequestContext;
 use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
 use async_trait::async_trait;
 use moka::future::Cache;
@@ -14,7 +14,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceAPI {
     pub endpoint: String,
     repository_cache: Arc<Cache<String, SourceRepository>>,
@@ -122,15 +122,11 @@ impl API for SourceAPI {
     ///
     /// Returns a `Result` containing either a boxed `Repository` trait object
     /// or an empty error `()` if the client creation fails.
-    async fn get_backend_client(
-        &self,
-        account_id: &String,
-        repository_id: &String,
-    ) -> Result<Box<dyn Repository>, ()> {
-        match self
-            .get_repository_record(&account_id, &repository_id)
-            .await
-        {
+    async fn get_backend_client(&self, ctx: &RequestContext) -> Result<Arc<dyn Repository>, ()> {
+        let account_id: &String = &ctx.account_id.as_ref().unwrap();
+        let repository_id: &String = &ctx.repository_id.as_ref().unwrap();
+
+        match self.get_repository_record(account_id, repository_id).await {
             Ok(repository) => {
                 match repository
                     .data
@@ -190,9 +186,9 @@ impl API for SourceAPI {
                                         prefix
                                     };
 
-                                    Ok(Box::new(S3Repository {
-                                        account_id: account_id.to_string(),
-                                        repository_id: repository_id.to_string(),
+                                    Ok(Arc::new(S3Repository {
+                                        account_id: account_id.clone(),
+                                        repository_id: repository_id.clone(),
                                         region,
                                         bucket,
                                         base_prefix: prefix,
@@ -230,7 +226,7 @@ impl API for SourceAPI {
                                         .clone()
                                         .unwrap_or_default();
 
-                                    Ok(Box::new(AzureRepository {
+                                    Ok(Arc::new(AzureRepository {
                                         account_id: account_id.to_string(),
                                         repository_id: repository_id.to_string(),
                                         account_name,
@@ -419,7 +415,10 @@ impl SourceAPI {
         // Try to get the cached value
         let cache_key = format!("{}", access_key_id);
 
+        dbg!(&cache_key);
+
         if let Some(cached_secret) = self.api_key_cache.get(&cache_key).await {
+            dbg!("Cache hit");
             return Ok(cached_secret);
         }
 
@@ -450,6 +449,10 @@ impl SourceAPI {
         &self,
         access_key_id: String,
     ) -> Result<Option<APIKey>, Box<dyn APIError>> {
+        if access_key_id.is_empty() {
+            return Ok(None);
+        }
+
         let client = reqwest::Client::new();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
@@ -534,25 +537,30 @@ impl SourceAPI {
 
     pub async fn is_authorized(
         &self,
-        user_identity: UserIdentity,
-        account_id: &String,
-        repository_id: &String,
+        ctx: &RequestContext,
         permission: RepositoryPermission,
     ) -> Result<bool, Box<dyn APIError>> {
         let anon: bool;
-        if user_identity.api_key.is_none() {
+        if ctx.identity.is_none() {
             anon = true;
         } else {
             anon = false;
         }
+
+        let account_id: &String = &ctx.account_id.as_ref().unwrap();
+        let repository_id: &String = &ctx.repository_id.as_ref().unwrap();
 
         // Try to get the cached value
         let cache_key: String;
         if anon {
             cache_key = format!("{}/{}", account_id, repository_id);
         } else {
-            let api_key = user_identity.clone().api_key.unwrap();
-            cache_key = format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id);
+            cache_key = format!(
+                "{}/{}/{}",
+                account_id,
+                repository_id,
+                ctx.identity.as_ref().unwrap().access_key_id
+            );
         }
 
         if let Some(cache_permissions) = self.permissions_cache.get(&cache_key).await {
@@ -560,10 +568,7 @@ impl SourceAPI {
         }
 
         // If not in cache, fetch it
-        match self
-            .fetch_permission(user_identity.clone(), &account_id, &repository_id)
-            .await
-        {
+        match self.fetch_permission(ctx).await {
             Ok(permissions) => {
                 // Cache the successful result
                 self.permissions_cache
@@ -577,17 +582,15 @@ impl SourceAPI {
 
     async fn fetch_permission(
         &self,
-        user_identity: UserIdentity,
-        account_id: &String,
-        repository_id: &String,
+        ctx: &RequestContext,
     ) -> Result<Vec<RepositoryPermission>, Box<dyn APIError>> {
         let client = reqwest::Client::new();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
         let mut headers = reqwest::header::HeaderMap::new();
-        if user_identity.api_key.is_some() {
-            let api_key = user_identity.api_key.unwrap();
+        if ctx.identity.is_some() {
+            let api_key = ctx.identity.as_ref().unwrap();
             headers.insert(
                 reqwest::header::AUTHORIZATION,
                 reqwest::header::HeaderValue::from_str(
@@ -596,6 +599,9 @@ impl SourceAPI {
                 .unwrap(),
             );
         }
+
+        let account_id: &String = &ctx.account_id.as_ref().unwrap();
+        let repository_id: &String = &ctx.repository_id.as_ref().unwrap();
 
         match client
             .get(format!(

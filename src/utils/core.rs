@@ -4,8 +4,10 @@ use actix_web::{
 };
 use futures::Stream;
 use pin_project_lite::pin_project;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use url::form_urlencoded;
 
 pin_project! {
     pub struct StreamingResponse<S> {
@@ -13,6 +15,12 @@ pin_project! {
         inner: S,
         size: u64,
     }
+}
+
+pub fn get_query_params(query: &str) -> HashMap<String, String> {
+    form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect()
 }
 
 impl<S> StreamingResponse<S> {

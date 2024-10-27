@@ -5,6 +5,7 @@ use core::num::NonZeroU32;
 use futures_core::Stream;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt::Debug;
 use std::pin::Pin;
 
 use reqwest::Error as ReqwestError;
@@ -37,8 +38,20 @@ pub struct CompleteMultipartUploadResponse {
     pub etag: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct S3ErrorResponse {
+    #[serde(rename = "Code")]
+    pub code: String,
+    #[serde(rename = "Message")]
+    pub message: String,
+    #[serde(rename = "Resource")]
+    pub resource: String,
+    #[serde(rename = "RequestId")]
+    pub request_id: String,
+}
+
 #[async_trait]
-pub trait Repository {
+pub trait Repository: Send + Sync + Debug {
     async fn delete_object(&self, key: String) -> Result<(), Box<dyn APIError>>;
     async fn create_multipart_upload(
         &self,
