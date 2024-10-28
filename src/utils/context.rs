@@ -3,20 +3,17 @@ use crate::apis::API;
 use crate::utils::auth::load_identity;
 use crate::utils::core::get_query_params;
 use crate::{apis::source::APIKey, backends::common::Repository};
+use actix_web::body::EitherBody;
+use actix_web::dev::ServiceResponse;
 use actix_web::web;
 use actix_web::{
-    dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
+    dev::{self, Service, ServiceRequest, Transform},
     web::BytesMut,
     Error, HttpMessage,
 };
+use futures_util::future::{ok, Ready};
 use futures_util::{future::LocalBoxFuture, stream::StreamExt};
-use std::{
-    collections::HashMap,
-    fmt,
-    future::{ready, Ready},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct RequestContext {
@@ -37,16 +34,16 @@ where
     S::Future: 'static,
     B: 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     type InitError = ();
     type Transform = LoadContextMiddleware<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(LoadContextMiddleware {
+        ok(LoadContextMiddleware {
             service: Rc::new(service),
-        }))
+        })
     }
 }
 
@@ -60,7 +57,7 @@ where
     S::Future: 'static,
     B: 'static,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -106,6 +103,13 @@ where
             ctx.repository_id = repository_id;
             ctx.key = key;
 
+            // Check if the object in question is a virtual object
+            if let Some(key) = &ctx.key {
+                if key.starts_with(".source/") {
+                    ctx.is_virtual_object = true;
+                }
+            }
+
             // Load the identity from the request
             match load_identity(
                 source_api,
@@ -118,10 +122,10 @@ where
             .await
             {
                 Ok(identity) => {
-                    ctx.identity = Some(identity);
+                    ctx.identity = identity;
                 }
-                Err(_) => {
-                    ctx.identity = None;
+                Err(e) => {
+                    return Ok(req.into_response(e.to_response()).map_into_right_body());
                 }
             }
 
@@ -129,20 +133,17 @@ where
                 Ok(client) => {
                     ctx.client = Some(client);
                 }
-                Err(_) => {
-                    println!("Error loading client.");
-                    ctx.client = None;
+                Err(e) => {
+                    return Ok(req.into_response(e.to_response()).map_into_right_body());
                 }
             }
-
-            dbg!(&ctx);
 
             // Insert the context into the request extensions
             req.extensions_mut().insert(ctx);
 
             let res = svc.call(req).await?;
 
-            Ok(res)
+            Ok(res.map_into_left_body())
         })
     }
 }

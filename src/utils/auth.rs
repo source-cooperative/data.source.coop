@@ -3,10 +3,12 @@ use actix_web::{web, web::BytesMut};
 use hex;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
-use std::{borrow::Cow, collections::BTreeMap};
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 use url::form_urlencoded;
 
 use crate::apis::source::{APIKey, SourceAPI};
+
+use super::errors::{APIError, BadRequestError};
 
 pub async fn load_identity(
     source_api: &web::Data<SourceAPI>,
@@ -15,14 +17,16 @@ pub async fn load_identity(
     headers: &HeaderMap,
     query_string: &str,
     body: &BytesMut,
-) -> Result<APIKey, String> {
+) -> Result<Option<APIKey>, Arc<dyn APIError>> {
     match headers.get("Authorization") {
         Some(auth) => {
             let authorization_header: &str = auth.to_str().unwrap();
             let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
 
             if signature_method != "AWS4-HMAC-SHA256" {
-                return Err("Invalid Signature Algorithm".to_string());
+                return Err(Arc::new(BadRequestError {
+                    message: "Invalid Signature Algorithm".to_string(),
+                }));
             }
 
             let parts: Vec<&str> = authorization_header.split(", ").collect();
@@ -72,23 +76,31 @@ pub async fn load_identity(
                                     );
 
                                     if calculated_signature != signature {
-                                        return Err("Signature mismatch".to_string());
+                                        return Err(Arc::new(BadRequestError {
+                                            message: "Request Signature Mismatch".to_string(),
+                                        }));
                                     } else {
-                                        return Ok(api_key);
+                                        return Ok(Some(api_key));
                                     }
                                 }
-                                Err(_) => return Err("Error".to_string()),
+                                Err(e) => return Err(e),
                             }
                         }
                         None => {
-                            return Err("No x-amz-date header found".to_string());
+                            return Err(Arc::new(BadRequestError {
+                                message: "No x-amz-date header found".to_string(),
+                            }));
                         }
                     }
                 }
-                None => Err("No x-amz-content-sha256 header found".to_string()),
+                None => {
+                    return Err(Arc::new(BadRequestError {
+                        message: "No x-amz-content-sha256 header found".to_string(),
+                    }))
+                }
             }
         }
-        None => Err("No Authorization header found".to_string()),
+        None => Ok(None),
     }
 }
 

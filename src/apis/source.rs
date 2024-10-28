@@ -3,7 +3,9 @@ use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
 use crate::utils::context::RequestContext;
-use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
+use crate::utils::errors::{
+    APIError, BadRequestError, InternalServerError, RepositoryNotFoundError,
+};
 use async_trait::async_trait;
 use moka::future::Cache;
 use rusoto_core::Region;
@@ -122,7 +124,10 @@ impl API for SourceAPI {
     ///
     /// Returns a `Result` containing either a boxed `Repository` trait object
     /// or an empty error `()` if the client creation fails.
-    async fn get_backend_client(&self, ctx: &RequestContext) -> Result<Arc<dyn Repository>, ()> {
+    async fn get_backend_client(
+        &self,
+        ctx: &RequestContext,
+    ) -> Result<Arc<dyn Repository>, Arc<dyn APIError>> {
         let account_id: &String = &ctx.account_id.as_ref().unwrap();
         let repository_id: &String = &ctx.repository_id.as_ref().unwrap();
 
@@ -237,18 +242,22 @@ impl API for SourceAPI {
                                         ),
                                     }))
                                 } else {
-                                    Err(())
+                                    Err(Arc::new(BadRequestError {
+                                        message: "Invalid data connection provider".to_string(),
+                                    }))
                                 }
                             }
-                            Err(_) => return Err(()),
+                            Err(e) => return Err(e),
                         }
                     }
                     None => {
-                        return Err(());
+                        return Err(Arc::new(BadRequestError {
+                            message: "Invalid Mirror ID".to_string(),
+                        }))
                     }
                 }
             }
-            Err(_) => Err(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -326,7 +335,7 @@ impl SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<SourceRepository, Box<dyn APIError>> {
+    ) -> Result<SourceRepository, Arc<dyn APIError>> {
         // Try to get the cached value
         let cache_key = format!("{}/{}", account_id, repository_id);
 
@@ -350,7 +359,7 @@ impl SourceAPI {
     async fn fetch_data_connection(
         &self,
         data_connection_id: &String,
-    ) -> Result<DataConnection, Box<dyn APIError>> {
+    ) -> Result<DataConnection, Arc<dyn APIError>> {
         let source_key = env::var("SOURCE_KEY").unwrap();
         let client = reqwest::Client::new();
         let mut headers = reqwest::header::HeaderMap::new();
@@ -369,18 +378,18 @@ impl SourceAPI {
         {
             Ok(response) => match response.json::<DataConnection>().await {
                 Ok(data_connection) => Ok(data_connection),
-                Err(_) => Err(Box::new(InternalServerError {
+                Err(_) => Err(Arc::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 })),
             },
             Err(error) => {
                 if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                    return Err(Box::new(InternalServerError {
+                    return Err(Arc::new(InternalServerError {
                         message: "Data Connection Not Found".to_string(),
                     }));
                 }
 
-                Err(Box::new(InternalServerError {
+                Err(Arc::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 }))
             }
@@ -390,7 +399,7 @@ impl SourceAPI {
     async fn get_data_connection(
         &self,
         data_connection_id: &String,
-    ) -> Result<DataConnection, Box<dyn APIError>> {
+    ) -> Result<DataConnection, Arc<dyn APIError>> {
         // Try to get the cached value
         let cache_key = format!("{}", data_connection_id);
 
@@ -411,7 +420,7 @@ impl SourceAPI {
         }
     }
 
-    pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, Box<dyn APIError>> {
+    pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, Arc<dyn APIError>> {
         // Try to get the cached value
         let cache_key = format!("{}", access_key_id);
 
@@ -448,7 +457,7 @@ impl SourceAPI {
     async fn fetch_api_key(
         &self,
         access_key_id: String,
-    ) -> Result<Option<APIKey>, Box<dyn APIError>> {
+    ) -> Result<Option<APIKey>, Arc<dyn APIError>> {
         if access_key_id.is_empty() {
             return Ok(None);
         }
@@ -484,7 +493,7 @@ impl SourceAPI {
                                 secret_access_key: secret_access_key.to_string(),
                             }));
                         }
-                        Err(_) => Err(Box::new(InternalServerError {
+                        Err(_) => Err(Arc::new(InternalServerError {
                             message: "Internal Server Error".to_string(),
                         })),
                     }
@@ -492,12 +501,12 @@ impl SourceAPI {
                     if response.status().is_client_error() {
                         return Ok(None);
                     }
-                    Err(Box::new(InternalServerError {
+                    Err(Arc::new(InternalServerError {
                         message: "Internal Server Error".to_string(),
                     }))
                 }
             }
-            Err(_) => Err(Box::new(InternalServerError {
+            Err(_) => Err(Arc::new(InternalServerError {
                 message: "Internal Server Error".to_string(),
             })),
         }
@@ -507,7 +516,7 @@ impl SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<SourceRepository, Box<dyn APIError>> {
+    ) -> Result<SourceRepository, Arc<dyn APIError>> {
         match reqwest::get(format!(
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
@@ -516,19 +525,19 @@ impl SourceAPI {
         {
             Ok(response) => match response.json::<SourceRepository>().await {
                 Ok(repository) => Ok(repository),
-                Err(_) => Err(Box::new(InternalServerError {
+                Err(_) => Err(Arc::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 })),
             },
             Err(error) => {
                 if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                    return Err(Box::new(RepositoryNotFoundError {
+                    return Err(Arc::new(RepositoryNotFoundError {
                         account_id: account_id.to_string(),
                         repository_id: repository_id.to_string(),
                     }));
                 }
 
-                Err(Box::new(InternalServerError {
+                Err(Arc::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 }))
             }
@@ -539,7 +548,7 @@ impl SourceAPI {
         &self,
         ctx: &RequestContext,
         permission: RepositoryPermission,
-    ) -> Result<bool, Box<dyn APIError>> {
+    ) -> Result<bool, Arc<dyn APIError>> {
         let anon: bool;
         if ctx.identity.is_none() {
             anon = true;
@@ -583,7 +592,7 @@ impl SourceAPI {
     async fn fetch_permission(
         &self,
         ctx: &RequestContext,
-    ) -> Result<Vec<RepositoryPermission>, Box<dyn APIError>> {
+    ) -> Result<Vec<RepositoryPermission>, Arc<dyn APIError>> {
         let client = reqwest::Client::new();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
@@ -614,11 +623,11 @@ impl SourceAPI {
         {
             Ok(response) => match response.json::<Vec<RepositoryPermission>>().await {
                 Ok(permissions) => Ok(permissions),
-                Err(_) => Err(Box::new(InternalServerError {
+                Err(_) => Err(Arc::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 })),
             },
-            Err(_) => Err(Box::new(InternalServerError {
+            Err(_) => Err(Arc::new(InternalServerError {
                 message: "Internal Server Error".to_string(),
             })),
         }
