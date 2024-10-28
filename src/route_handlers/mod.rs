@@ -1,18 +1,21 @@
 mod query_params;
 use query_params::GetObjectQuery;
 
+use crate::utils::core::StreamingResponse;
 use crate::utils::errors::{APIError, BadRequestError};
 use crate::{
     apis::source::{RepositoryPermission, SourceAPI},
     utils::context::RequestContext,
 };
+use actix_web::web::Bytes;
+use futures_util::StreamExt;
 
 use actix_web::{http::header, web, HttpRequest, HttpResponse, Responder};
 
 pub async fn get_object(
     req: HttpRequest,
-    query: web::Query<GetObjectQuery>,
-    path: web::Path<(String, String, String)>,
+    _query: web::Query<GetObjectQuery>,
+    _path: web::Path<String>,
     api_client: web::Data<SourceAPI>,
     ctx: web::ReqData<RequestContext>,
 ) -> impl Responder {
@@ -55,14 +58,17 @@ pub async fn get_object(
         Err(e) => return e.to_response(),
     }
 
-    match client.get_object(ctx.key.unwrap().clone(), range).await {
+    match client
+        .get_object(ctx.key.as_ref().unwrap().clone(), range)
+        .await
+    {
         Ok(res) => {
             let mut content_length = String::from("*");
 
             // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
             // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
             if is_range_request {
-                match client.head_object(ctx.key.unwrap().clone()).await {
+                match client.head_object(ctx.key.as_ref().unwrap().clone()).await {
                     Ok(head_res) => {
                         content_length = head_res.content_length.to_string();
                     }
@@ -72,8 +78,10 @@ pub async fn get_object(
 
             let stream = res.body.map(|result| {
                 result
-                    .map(web::Bytes::from)
-                    .map_err(|e| ErrorInternalServerError(e.to_string()))
+                    .map(|bytes| Ok::<_, actix_web::Error>(Bytes::from(bytes)))
+                    .unwrap_or_else(|e| {
+                        Err(actix_web::error::ErrorInternalServerError(e.to_string()))
+                    })
             });
 
             let streaming_response = StreamingResponse::new(stream, res.content_length);
@@ -98,6 +106,6 @@ pub async fn get_object(
 
             return response.body(streaming_response);
         }
-        Err(_) => HttpResponse::NotFound().finish(),
+        Err(e) => e.to_response(),
     }
 }

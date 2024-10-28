@@ -1,22 +1,21 @@
+use crate::utils::core::GenericByteStream;
 use crate::utils::errors::APIError;
 use async_trait::async_trait;
 use bytes::Bytes;
 use core::num::NonZeroU32;
 use futures_core::Stream;
+use rusoto_core::ByteStream;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Debug;
 use std::pin::Pin;
-
-use reqwest::Error as ReqwestError;
-type BoxedReqwestStream = Pin<Box<dyn Stream<Item = Result<Bytes, ReqwestError>> + Send>>;
 
 pub struct GetObjectResponse {
     pub content_length: u64,
     pub content_type: String,
     pub last_modified: String,
     pub etag: String,
-    pub body: BoxedReqwestStream,
+    pub body: GenericByteStream,
 }
 
 pub struct HeadObjectResponse {

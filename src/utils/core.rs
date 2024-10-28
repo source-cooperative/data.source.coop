@@ -2,9 +2,12 @@ use actix_web::{
     body::{BodySize, MessageBody},
     web, Error as ActixError,
 };
+use bytes::Bytes;
 use futures::Stream;
 use pin_project_lite::pin_project;
+use rusoto_core::ByteStream;
 use std::collections::HashMap;
+use std::io::Read;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use url::form_urlencoded;
@@ -123,3 +126,49 @@ pub fn split_at_first_slash(input: &str) -> (&str, &str) {
         None => (input, ""),
     }
 }
+
+pin_project! {
+    pub struct GenericByteStream<T> {
+        #[pin]
+        inner: T,
+    }
+}
+
+impl<T> GenericByteStream<T> {
+    pub fn new(inner: T) -> Self {
+        GenericByteStream { inner }
+    }
+}
+
+impl<T: Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> + Unpin> Stream
+    for GenericByteStream<T>
+{
+    type Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.project().inner.poll_next(cx)
+    }
+}
+
+// Implement From for Rusoto ByteStream
+impl From<rusoto_core::ByteStream> for GenericByteStream<rusoto_core::ByteStream> {
+    fn from(stream: rusoto_core::ByteStream) -> Self {
+        GenericByteStream::new(stream)
+    }
+}
+
+// Implement From for reqwest::Response bytes_stream
+impl From<reqwest::Response>
+    for GenericByteStream<Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>>
+{
+    fn from(response: reqwest::Response) -> Self {
+        let stream = response.bytes_stream();
+        GenericByteStream::new(Box::pin(stream))
+    }
+}
+
+use reqwest::Error as ReqwestError;
+type BoxedReqwestStream = Pin<Box<dyn Stream<Item = Result<Bytes, ReqwestError>> + Send>>;

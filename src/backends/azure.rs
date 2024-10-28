@@ -17,7 +17,7 @@ use crate::backends::common::{
     CommonPrefix, CompleteMultipartUploadResponse, Content, CreateMultipartUploadResponse,
     GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
-use crate::utils::core::replace_first;
+use crate::utils::core::{replace_first, GenericByteStream};
 use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
 
 use super::common::{MultipartPart, UploadPartResponse};
@@ -107,17 +107,14 @@ impl Repository for AzureRepository {
 
                         // Get the byte stream from the response
                         let content_length = response.content_length();
-                        let stream = response.bytes_stream();
-                        let boxed_stream: Pin<
-                            Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>,
-                        > = Box::pin(stream);
+                        let generic_stream = GenericByteStream::from(response);
 
                         Ok(GetObjectResponse {
                             content_length: content_length.unwrap_or(0) as u64,
                             content_type,
                             etag,
                             last_modified,
-                            body: boxed_stream,
+                            body: generic_stream,
                         })
                     }
                     Err(_) => Err(Box::new(InternalServerError {
