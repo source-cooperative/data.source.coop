@@ -67,11 +67,12 @@ async fn get_object(
         if let Ok(r) = range_header.to_str() {
             if let Some(bytes_range) = r.strip_prefix("bytes=") {
                 if let Some((start, end)) = bytes_range.split_once('-') {
-                    if let (Ok(s), Ok(e)) = (start.parse::<u64>(), end.parse::<u64>()) {
+                    if let Ok(s) = start.parse::<u64>() {
                         range_start = s;
-                        range_end = e;
-                        range = Some(r.to_string());
-                        is_range_request = true;
+                        if end.is_empty() || end.parse::<u64>().is_ok() {
+                            range = Some(r.to_string());
+                            is_range_request = true;
+                        }
                     }
                 }
             }
@@ -137,7 +138,12 @@ async fn get_object(
                 if is_range_request {
                     response = response.insert_header((
                         "Content-Range",
-                        format!("bytes {}-{}/{}", range_start, range_end, content_length),
+                        format!(
+                            "bytes {}-{}/{}",
+                            range_start,
+                            range_start + res.content_length - 1,
+                            content_length
+                        ),
                     ));
                 }
 
