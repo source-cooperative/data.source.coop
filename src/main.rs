@@ -72,7 +72,6 @@ async fn get_object(
                         if end.is_empty() || end.parse::<u64>().is_ok() {
                             range = Some(r.to_string());
                             is_range_request = true;
-                            range_end = end.parse::<u64>().unwrap_or(u64::MAX);
                         }
                     }
                 }
@@ -139,7 +138,12 @@ async fn get_object(
                 if is_range_request {
                     response = response.insert_header((
                         "Content-Range",
-                        format!("bytes {}-{}/{}", range_start, range_end, content_length),
+                        format!(
+                            "bytes {}-{}/{}",
+                            range_start,
+                            range_start + res.content_length - 1,
+                            content_length
+                        ),
                     ));
                 }
 
