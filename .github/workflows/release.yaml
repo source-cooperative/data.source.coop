@@ -1,0 +1,29 @@
+name: Release build
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Set up Rust
+        uses: actions-rs/toolchain@8e603f32c5c6eeca5b1b2d9d1e7464d926082f1d # v1.0.0
+        with:
+          toolchain: stable
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build with Cargo
+        shell: bash
+        run: cargo build --release
+      - name: Run release-please
+        id: release
+        uses: google-github-actions/release-please-action@e4dc86ba9405554aeba3c6bb2d169500e7d3b4ee # v4
+        with:
+          release-type: rust
+          token: ${{ secrets.GITHUB_TOKEN }}
