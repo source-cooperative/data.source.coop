@@ -8,6 +8,7 @@ use actix_web::{
 use futures_util::{future::LocalBoxFuture, stream::StreamExt};
 use hex;
 use hmac::{Hmac, Mac};
+use percent_encoding::percent_decode_str;
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
@@ -269,22 +270,22 @@ fn create_canonical_request(
     body: &BytesMut,
     content_hash: &str,
 ) -> String {
+    let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
     if content_hash == "UNSIGNED-PAYLOAD" {
         return format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
             method,
-            uri_encode(path, false),
+            uri_encode(decoded_path.as_ref(), false),
             get_canonical_query_string(query_string),
             get_canonical_headers(headers, &signed_headers),
             get_signed_headers(&signed_headers),
             content_hash
         );
     }
-
     format!(
         "{}\n{}\n{}\n{}\n{}\n{}",
         method,
-        uri_encode(path, false),
+        uri_encode(decoded_path.as_ref(), false),
         get_canonical_query_string(query_string),
         get_canonical_headers(headers, &signed_headers),
         get_signed_headers(&signed_headers),

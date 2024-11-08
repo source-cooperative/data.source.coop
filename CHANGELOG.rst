@@ -1,6 +1,10 @@
 Changelog
 =========
 
+Version 0.1.17
+--------------
+* Fixed the issue in request authorization. Decoded the request path before its encoded again. Not sure if the request path is originally encoded.
+
 Version 0.1.16
 -------------
 
