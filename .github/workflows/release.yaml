@@ -1,9 +1,8 @@
 name: Release build
 on:
-  pull_request:
+  push:
     branches:
       - main
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 jobs:
@@ -30,8 +29,7 @@ jobs:
         run: cargo build --release
       - name: Run release-please
         id: release
-        uses: google-github-actions/release-please-action@e4dc86ba9405554aeba3c6bb2d169500e7d3b4ee # v4
+        uses: googleapis/release-please-action@078b9b8dda7799db29972b379561ff8e19b08e82 # v4
         with:
           release-type: rust
           token: ${{ steps.app-token.outputs.token }}
-          skip-github-pull-request: true
