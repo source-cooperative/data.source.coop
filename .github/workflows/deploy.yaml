@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  deploy_release:
+    runs-on: ubuntu-latest
+    steps:
+      - id: latest
+        uses: thebritican/fetch-latest-release@v1.0.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ steps.latest.outputs.tag_name }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-west-2
+          role-to-assume: arn:aws:iam::417712557820:role/PublishECRImages
+      - name: Docker login
+        shell: bash
+        run: |
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 417712557820.dkr.ecr.us-east-1.amazonaws.com
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          platforms: linux/arm64
+          tags: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
