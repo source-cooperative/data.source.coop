@@ -1,8 +1,9 @@
 name: Release build
 on:
-  push:
+  pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 jobs:
@@ -33,3 +34,4 @@ jobs:
         with:
           release-type: rust
           token: ${{ steps.app-token.outputs.token }}
+          skip-github-pull-request: true
