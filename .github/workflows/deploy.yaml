@@ -8,6 +8,9 @@ on:
 jobs:
   deploy_release:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - id: latest
         uses: thebritican/fetch-latest-release@v1.0.3
