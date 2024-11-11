@@ -13,10 +13,10 @@ jobs:
       contents: read
     steps:
       - id: latest
-        uses: thebritican/fetch-latest-release@v1.0.3
+        uses: thebritican/fetch-latest-release@a36ee8ee464da77ba3e499ed6b75e3530e10f9bc # v2.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
         with:
           ref: ${{ steps.latest.outputs.tag_name }}
       - name: Set up QEMU
