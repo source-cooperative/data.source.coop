@@ -37,4 +37,4 @@ jobs:
         with:
           push: true
           platforms: linux/arm64
-          tags: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
+          tags: 417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
