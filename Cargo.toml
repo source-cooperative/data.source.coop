@@ -1,5 +1,6 @@
 [package]
 name = "source-data-proxy"
+
 version = "0.1.17"
 edition = "2021"
 
