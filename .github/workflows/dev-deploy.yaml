@@ -47,7 +47,7 @@ jobs:
         with:
           task-definition-family: source-data-proxy
           container-name: source-data-proxy
-          image: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
+          image: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ github.sha }}
       - name: Deploy to Amazon ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
