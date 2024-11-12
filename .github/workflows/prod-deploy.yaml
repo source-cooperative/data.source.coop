@@ -44,8 +44,7 @@ jobs:
           REPOSITORY: source-data-proxy
           IMAGE_TAG: ${{ steps.latest.outputs.tag_name }}
         run: |
-          docker buildx build --platform linux/arm64 -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
-          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker buildx build --platform linux/arm64 -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --push .
       - name: Render Amazon ECS task definition
         id: render-data-proxy-container
         uses: aws-actions/amazon-ecs-render-task-definition@v1
