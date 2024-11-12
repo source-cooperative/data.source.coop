@@ -5,12 +5,14 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy_release:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+
     steps:
       - id: latest
         uses: thebritican/fetch-latest-release@a36ee8ee464da77ba3e499ed6b75e3530e10f9bc # v2.0.0
@@ -33,17 +35,17 @@ jobs:
         with:
           aws-region: us-west-2
           role-to-assume: arn:aws:iam::417712557820:role/PublishECRImages
-      - name: Docker login
-        shell: bash
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build, tag, and push docker image to Amazon ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: source-data-proxy
+          IMAGE_TAG: ${{ steps.latest.outputs.tag_name }}
         run: |
-          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 417712557820.dkr.ecr.us-west-2.amazonaws.com
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          push: true
-          platforms: linux/arm64
-          tags: 417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
-
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
       - name: Render Amazon ECS task definition
         id: render-data-proxy-container
         uses: aws-actions/amazon-ecs-render-task-definition@v1
