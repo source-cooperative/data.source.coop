@@ -38,3 +38,16 @@ jobs:
           push: true
           platforms: linux/arm64
           tags: 417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
+      - name: Render Amazon ECS task definition
+        id: render-data-proxy-container
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition-family: source-data-proxy
+          container-name: source-data-proxy
+          image: 417712557820.dkr.ecr.us-west-2.amazonaws.com/source-data-proxy:${{ steps.latest.outputs.tag_name }}
+      - name: Deploy to Amazon ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-data-proxy-container.outputs.task-definition }}
+          service: source-data-proxy
+          cluster: SourceCooperative-Prod
