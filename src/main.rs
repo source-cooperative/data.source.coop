@@ -60,7 +60,6 @@ async fn get_object(
     let headers = req.headers();
     let mut range = None;
     let mut range_start = 0;
-    let mut range_end = 0;
     let mut is_range_request = false;
 
     if let Some(range_header) = headers.get(RANGE) {
