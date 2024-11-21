@@ -450,6 +450,9 @@ impl SourceAPI {
         &self,
         access_key_id: String,
     ) -> Result<Option<APIKey>, Box<dyn APIError>> {
+        if access_key_id.is_empty() {
+            return Ok(None);
+        }
         let client = reqwest::Client::new();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
