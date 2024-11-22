@@ -13,10 +13,12 @@ permissions:
 
 jobs:
   deploy_release:
-    runs-on: linux-arm
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -24,6 +26,7 @@ jobs:
         with:
           workspaces: .
           shared-key: "shared"
+          key: "shared"
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
