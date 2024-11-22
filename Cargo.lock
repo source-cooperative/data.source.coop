@@ -2325,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "source-data-proxy"
-version = "0.1.14"
+version = "0.1.17"
 dependencies = [
  "actix-cors",
  "actix-http",
