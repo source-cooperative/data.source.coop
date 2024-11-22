@@ -37,7 +37,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker buildx build \
-          --cache-to=type=registry,ref=$REGISTRY/$REGISTRY_CACHE_REPOSITORY:latest,mode=max \
+          --cache-to=type=registry,image-manifest=true,ref=$REGISTRY/$REGISTRY_CACHE_REPOSITORY:latest,mode=max \
           --cache-from=type=registry,ref=REGISTRY/$REGISTRY_CACHE_REPOSITORY:latest \
           --platform linux/arm64 \
           -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
