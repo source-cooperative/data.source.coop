@@ -13,3 +13,15 @@
 ### Bug Fixes
 
 * Fixed the issue in request authorization. Decoded the request path before its encoded again. ([#20](https://github.com/source-cooperative/data.source.coop/issues/20)) ([dc9eb84](https://github.com/source-cooperative/data.source.coop/commit/dc9eb84009eead0dbecd0990886f69811ca93abd))
+
+Version 0.1.16
+-------------
+* Handled the boto3 download object with range request pattern `start-` which is a valid request to fetch the bytes from start till the total bytes. 
+
+Version 0.1.15
+--------------
+* Added `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.rst`, Github issue templates, and Github pull request template.
+
+Version 0.1.14
+--------------
+* Released initial open-source version of the project.
