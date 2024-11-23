@@ -2,7 +2,7 @@
 FROM rust:1.80.1 as builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --locked
 
 # Final stage
 FROM debian:bullseye-slim
