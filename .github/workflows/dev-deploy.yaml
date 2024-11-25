@@ -17,6 +17,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
+        # Set up Rust
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.80.1
+          target: aarch64-unknown-linux-gnu
         # Cache Rust dependencies
       - name: Cache Cargo registry and index
         uses: actions/cache@v3
@@ -48,8 +54,7 @@ jobs:
       - name: Cargo Build - aarch64-unknown-linux-gnu
         shell: bash
         run: |
-          rustup target add aarch64-unknown-linux-gnu
-          cargo build --release --locked --target=aarch64-unknown-linux-gnu
+          cargo build --release --locked
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
