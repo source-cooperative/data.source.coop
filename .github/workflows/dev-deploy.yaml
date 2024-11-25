@@ -23,6 +23,7 @@ jobs:
         with:
           toolchain: 1.80.1
           target: aarch64-unknown-linux-gnu
+
         # Cache Rust dependencies
       - name: Cache Cargo registry and index
         uses: actions/cache@v3
@@ -55,6 +56,7 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked
+          ls -la ./target/release/
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -81,7 +83,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/arm64
+          platforms: linux/arm64/v8
           secrets: |
             "github_token=${{ secrets.GITHUB_TOKEN }}"
       - name: Render Amazon ECS task definition
