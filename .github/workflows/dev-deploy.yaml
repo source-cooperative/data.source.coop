@@ -48,12 +48,13 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked
+          ls -la ./target
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3.2.0
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: arm64
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
