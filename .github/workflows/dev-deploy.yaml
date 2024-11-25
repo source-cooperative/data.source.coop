@@ -47,6 +47,7 @@ jobs:
       - name: Cargo Build - aarch64-unknown-linux-gnu
         shell: bash
         run: |
+          rustup target add aarch64-unknown-linux-gnu
           cargo build --release --locked --target aarch64-unknown-linux-gnu
           ls -la ./target
       - name: Set up Docker Buildx
