@@ -17,6 +17,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
+        # Cache Rust dependencies
+      - name: Cache Cargo registry and index
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Cache build folder (target)
+      - name: Cache target directory
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Configure AWS Credentials
@@ -24,6 +44,12 @@ jobs:
         with:
           aws-region: us-east-1
           role-to-assume: arn:aws:iam::417712557820:role/GithubDeployRole
+        # Build the project
+      - name: Cargo Build - aarch64-unknown-linux-gnu
+        shell: bash
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          cargo build --release --locked --target=aarch64-unknown-linux-gnu
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
