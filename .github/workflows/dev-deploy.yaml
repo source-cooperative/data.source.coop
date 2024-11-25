@@ -56,7 +56,6 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked
-          ls -la ./target/release/
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -66,12 +65,6 @@ jobs:
         with:
           images: ${{ steps.login-ecr.outputs.registry }}/source-data-proxy
           tags: |
-            type=schedule
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=sha
       - name: Build and push
         id: docker_push
@@ -92,7 +85,7 @@ jobs:
         with:
           task-definition-family: source-data-proxy
           container-name: source-data-proxy
-          image: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ github.sha }}
+          image: ${{ steps.meta.outputs.tags }}
       - name: Deploy to Amazon ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
