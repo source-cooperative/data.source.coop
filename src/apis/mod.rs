@@ -1,6 +1,6 @@
 pub mod source;
 
-use crate::backends::common::Repository;
+use crate::{backends::common::Repository, utils::auth::UserIdentity};
 use async_trait::async_trait;
 
 pub struct Account {
@@ -23,5 +23,9 @@ pub trait API {
         repository_id: &String,
     ) -> Result<Box<dyn Repository>, ()>;
 
-    async fn get_account(&self, account_id: String) -> Result<Account, ()>;
+    async fn get_account(
+        &self,
+        account_id: String,
+        user_identity: UserIdentity,
+    ) -> Result<Account, ()>;
 }
