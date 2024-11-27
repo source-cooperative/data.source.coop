@@ -480,8 +480,11 @@ async fn list_objects(
 ) -> impl Responder {
     let account_id = path.into_inner();
 
-    if info.prefix.is_none() {
-        match api_client.get_account(account_id.clone()).await {
+    if info.prefix.clone().is_some_and(|s| s.is_empty()) || info.prefix.is_none() {
+        match api_client
+            .get_account(account_id.clone(), (*user_identity).clone())
+            .await
+        {
             Ok(account) => {
                 let repositories = account.repositories;
                 let mut common_prefixes = Vec::new();
