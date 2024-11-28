@@ -103,7 +103,6 @@ pub struct SourceRepositoryMirror {
 pub struct SourceRepositoryList {
     pub repositories: Vec<SourceRepository>,
     pub next: Option<String>,
-    pub count: u32,
 }
 
 #[async_trait]
@@ -256,12 +255,33 @@ impl API for SourceAPI {
         }
     }
 
-    async fn get_account(&self, account_id: String) -> Result<Account, ()> {
-        match reqwest::get(format!(
-            "{}/api/v1/repositories/{}",
-            self.endpoint, account_id
-        ))
-        .await
+    async fn get_account(
+        &self,
+        account_id: String,
+        user_identity: UserIdentity,
+    ) -> Result<Account, ()> {
+        let client = reqwest::Client::new();
+        // Create headers
+        let mut headers = reqwest::header::HeaderMap::new();
+        if user_identity.api_key.is_some() {
+            let api_key = user_identity.api_key.unwrap();
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                reqwest::header::HeaderValue::from_str(
+                    format!("{} {}", api_key.access_key_id, api_key.secret_access_key).as_str(),
+                )
+                .unwrap(),
+            );
+        }
+
+        match client
+            .get(format!(
+                "{}/api/v1/repositories/{}",
+                self.endpoint, account_id
+            ))
+            .headers(headers)
+            .send()
+            .await
         {
             Ok(response) => match response.json::<SourceRepositoryList>().await {
                 Ok(repository_list) => {
