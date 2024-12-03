@@ -521,7 +521,7 @@ async fn list_objects(
 
     let (repository_id, prefix) = split_at_first_slash(&path_prefix);
 
-    let mut max_keys = NonZeroU32::new(1000).unwrap_or(NonZeroU32::new(1000).unwrap());
+    let mut max_keys = NonZeroU32::new(1000).unwrap();
     if let Some(mk) = info.max_keys {
         max_keys = mk;
     }
