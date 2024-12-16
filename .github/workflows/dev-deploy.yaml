@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   deploy_release:
+    strategy:
+      matrix:
+        region: ["us-east-1", "us-west-1"]
     runs-on: ubuntu-latest
 
     steps:
@@ -21,7 +24,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: us-east-1
+          aws-region: ${{ matrix.region }}
           role-to-assume: arn:aws:iam::417712557820:role/GithubDeployRole
       - name: Login to Amazon ECR
         id: login-ecr
@@ -39,7 +42,7 @@ jobs:
         with:
           task-definition-family: source-data-proxy
           container-name: source-data-proxy
-          image: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ github.sha }}
+          image: ${{ steps.login-ecr.outputs.registry }}/source-data-proxy:${{ github.sha }}
       - name: Deploy to Amazon ECS service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
