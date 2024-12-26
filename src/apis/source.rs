@@ -35,6 +35,7 @@ pub enum RepositoryPermission {
 pub struct APIKey {
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub account_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -454,6 +455,7 @@ impl SourceAPI {
                     }
                     None => {
                         let secret = APIKey {
+                            account_id: "".to_string(),
                             access_key_id: "".to_string(),
                             secret_access_key: "".to_string(),
                         };
@@ -498,10 +500,12 @@ impl SourceAPI {
                         Ok(text) => {
                             let json: Value = serde_json::from_str(&text).unwrap();
                             let secret_access_key = json["secret_access_key"].as_str().unwrap();
+                            let account_id = json["account_id"].as_str().unwrap();
 
                             return Ok(Some(APIKey {
                                 access_key_id,
                                 secret_access_key: secret_access_key.to_string(),
+                                account_id: account_id.to_string(),
                             }));
                         }
                         Err(_) => Err(Box::new(InternalServerError {

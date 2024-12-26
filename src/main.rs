@@ -15,8 +15,9 @@ use apis::API;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
 use core::num::NonZeroU32;
-use env_logger::Env;
+
 use futures_util::StreamExt;
+
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
@@ -604,7 +605,7 @@ async fn main() -> std::io::Result<()> {
             )
             .wrap(middleware::NormalizePath::trim())
             .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
-            .wrap(middleware::Logger::default())
+            .wrap(utils::apache_logger::ApacheLogger)
             .wrap(LoadIdentity)
             // Register the endpoints
             .service(get_object)
