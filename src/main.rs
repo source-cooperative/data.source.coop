@@ -586,6 +586,7 @@ async fn main() -> std::io::Result<()> {
     json_env_logger::builder()
         .target(json_env_logger::env_logger::Target::Stdout)
         .init();
+    // env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
