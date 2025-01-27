@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use core::num::NonZeroU32;
 use futures_core::Stream;
+use rusoto_s3::Bucket;
 use serde::Deserialize;
 use serde::Serialize;
 use std::pin::Pin;
@@ -82,6 +83,7 @@ pub trait Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
+    async fn list_buckets(&self) -> Result<Vec<Bucket>, Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +105,14 @@ pub struct ListBucketResult {
     #[serde(rename = "NextContinuationToken")]
     pub next_continuation_token: Option<String>,
 }
+
+// #[derive(Debug, Serialize)]
+// pub struct ShowBucketsLatResult {
+//     #[serde(rename = "Name")]
+//     pub name: String,
+//     #[serde(rename = "Contents")]
+//     pub contents: Vec<Content>,
+// }
 
 #[derive(Debug, Serialize)]
 pub struct Content {

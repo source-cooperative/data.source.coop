@@ -14,7 +14,7 @@ use reqwest;
 use rusoto_core::Region;
 use rusoto_core::RusotoError;
 use rusoto_s3::{
-    AbortMultipartUploadRequest, CompleteMultipartUploadRequest, CompletedMultipartUpload,
+    AbortMultipartUploadRequest, Bucket, CompleteMultipartUploadRequest, CompletedMultipartUpload,
     CompletedPart, CreateMultipartUploadRequest, DeleteObjectRequest, HeadObjectRequest,
     ListObjectsV2Request, PutObjectRequest, S3Client, UploadPartRequest, S3,
 };
@@ -553,7 +553,7 @@ impl Repository for S3Repository {
         }
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
-            prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
+            // prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
             delimiter,
             max_keys: Some(max_keys.get() as i64),
             ..Default::default()
@@ -562,6 +562,13 @@ impl Repository for S3Repository {
         if let Some(token) = continuation_token {
             request.continuation_token = Some(token);
         }
+
+        println!("self accId{}", self.account_id);
+        println!("self RepoId{}", self.repository_id);
+        println!("self bucket{}", self.bucket);
+        println!("self base_prefix{}", self.base_prefix);
+        println!("prefix{}", prefix);
+        println!("requestPrefix{:?}", request.prefix);
 
         match client.list_objects_v2(request).await {
             Ok(output) => {
@@ -608,9 +615,164 @@ impl Repository for S3Repository {
                         .collect(),
                 };
 
+                println!("list objects result{:?}", result);
+
                 return Ok(result);
             }
             Err(error) => {
+                return Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }));
+            }
+        }
+    }
+
+    // async fn list_objects_at_root(
+    //     &self,
+    //     prefix: String,
+    //     continuation_token: Option<String>,
+    //     delimiter: Option<String>,
+    //     max_keys: NonZeroU32,
+    // ) -> Result<ListBucketResult, Box<dyn APIError>> {
+    //     let client: S3Client;
+
+    //     if self.auth_method == "s3_access_key" {
+    //         let credentials = rusoto_credential::StaticProvider::new_minimal(
+    //             self.access_key_id.clone().unwrap(),
+    //             self.secret_access_key.clone().unwrap(),
+    //         );
+    //         client = S3Client::new_with(
+    //             rusoto_core::request::HttpClient::new().unwrap(),
+    //             credentials,
+    //             self.region.clone(),
+    //         );
+    //     } else if self.auth_method == "s3_ecs_task_role" {
+    //         let credentials = rusoto_credential::ContainerProvider::new();
+    //         client = S3Client::new_with(
+    //             rusoto_core::request::HttpClient::new().unwrap(),
+    //             credentials,
+    //             self.region.clone(),
+    //         );
+    //     } else if self.auth_method == "s3_local" {
+    //         let credentials = rusoto_credential::ChainProvider::new();
+    //         client = S3Client::new_with(
+    //             rusoto_core::request::HttpClient::new().unwrap(),
+    //             credentials,
+    //             self.region.clone(),
+    //         );
+    //     } else {
+    //         return Err(Box::new(InternalServerError {
+    //             message: format!("Internal Server Error"),
+    //         }));
+    //     }
+    //     let mut request = ListObjectsV2Request {
+    //         bucket: self.bucket.clone(),
+    //         prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
+    //         delimiter,
+    //         max_keys: Some(max_keys.get() as i64),
+    //         ..Default::default()
+    //     };
+
+    //     if let Some(token) = continuation_token {
+    //         request.continuation_token = Some(token);
+    //     }
+
+    //     match client.list_objects_v2(request).await {
+    //         Ok(output) => {
+    //             let result = ListBucketResult {
+    //                 name: format!("{}", self.account_id),
+    //                 prefix: format!("{}/{}", self.repository_id, prefix),
+    //                 key_count: output.key_count.unwrap_or(0),
+    //                 max_keys: output.max_keys.unwrap_or(0),
+    //                 is_truncated: output.is_truncated.unwrap_or(false),
+    //                 next_continuation_token: output.next_continuation_token,
+    //                 contents: output
+    //                     .contents
+    //                     .unwrap_or_default()
+    //                     .iter()
+    //                     .map(|item| Content {
+    //                         key: replace_first(
+    //                             item.key.clone().unwrap_or_else(|| "".to_string()),
+    //                             self.base_prefix.clone(),
+    //                             format!("{}", self.repository_id),
+    //                         ),
+    //                         last_modified: item
+    //                             .last_modified
+    //                             .clone()
+    //                             .unwrap_or_else(|| Utc::now().to_rfc2822()),
+    //                         etag: item.e_tag.clone().unwrap_or_else(|| "".to_string()),
+    //                         size: item.size.unwrap_or(0),
+    //                         storage_class: item
+    //                             .storage_class
+    //                             .clone()
+    //                             .unwrap_or_else(|| "".to_string()),
+    //                     })
+    //                     .collect(),
+    //                 common_prefixes: output
+    //                     .common_prefixes
+    //                     .unwrap_or_default()
+    //                     .iter()
+    //                     .map(|item| CommonPrefix {
+    //                         prefix: replace_first(
+    //                             item.prefix.clone().unwrap_or_else(|| "".to_string()),
+    //                             self.base_prefix.clone(),
+    //                             format!("{}", self.repository_id),
+    //                         ),
+    //                     })
+    //                     .collect(),
+    //             };
+
+    //             return Ok(result);
+    //         }
+    //         Err(error) => {
+    //             return Err(Box::new(InternalServerError {
+    //                 message: "Internal Server Error".to_string(),
+    //             }));
+    //         }
+    //     }
+    // }
+
+    async fn list_buckets(&self) -> Result<Vec<Bucket>, Box<dyn APIError>> {
+        let client: S3Client;
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
+
+        match client.list_buckets().await {
+            Ok(output) => {
+                println!("{:?}", output);
+                let result = output.buckets.clone().unwrap_or_default().to_vec();
+                println!("{:?}", result);
+                return Ok(result);
+            }
+            Err(error) => {
+                println!("{}", error);
                 return Err(Box::new(InternalServerError {
                     message: "Internal Server Error".to_string(),
                 }));

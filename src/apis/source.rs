@@ -1,10 +1,11 @@
 use super::{Account, API};
-use crate::backends::azure::AzureRepository;
+// use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
 use crate::utils::auth::UserIdentity;
 use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
 use async_trait::async_trait;
+use log::info;
 use moka::future::Cache;
 use rusoto_core::Region;
 use serde::{Deserialize, Serialize};
@@ -126,7 +127,10 @@ impl API for SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
+        qwerty_func_name: &str,
     ) -> Result<Box<dyn Repository>, ()> {
+        println!("Line 130{}", qwerty_func_name);
+        info!("Line 130 info{}", qwerty_func_name);
         match self
             .get_repository_record(&account_id, &repository_id)
             .await
@@ -212,35 +216,37 @@ impl API for SourceAPI {
                                             .unwrap()
                                             .secret_access_key,
                                     }))
-                                } else if data_connection.details.provider == "az" {
-                                    let account_name: String = data_connection
-                                        .details
-                                        .account_name
-                                        .clone()
-                                        .unwrap_or_default();
+                                }
+                                // else if data_connection.details.provider == "az" {
+                                //     let account_name: String = data_connection
+                                //         .details
+                                //         .account_name
+                                //         .clone()
+                                //         .unwrap_or_default();
 
-                                    let container_name: String = data_connection
-                                        .details
-                                        .container_name
-                                        .clone()
-                                        .unwrap_or_default();
-                                    let base_prefix: String = data_connection
-                                        .details
-                                        .base_prefix
-                                        .clone()
-                                        .unwrap_or_default();
+                                //     let container_name: String = data_connection
+                                //         .details
+                                //         .container_name
+                                //         .clone()
+                                //         .unwrap_or_default();
+                                //     let base_prefix: String = data_connection
+                                //         .details
+                                //         .base_prefix
+                                //         .clone()
+                                //         .unwrap_or_default();
 
-                                    Ok(Box::new(AzureRepository {
-                                        account_id: account_id.to_string(),
-                                        repository_id: repository_id.to_string(),
-                                        account_name,
-                                        container_name,
-                                        base_prefix: format!(
-                                            "{}{}",
-                                            base_prefix, repository_data.prefix
-                                        ),
-                                    }))
-                                } else {
+                                //     Ok(Box::new(AzureRepository {
+                                //         account_id: account_id.to_string(),
+                                //         repository_id: repository_id.to_string(),
+                                //         account_name,
+                                //         container_name,
+                                //         base_prefix: format!(
+                                //             "{}{}",
+                                //             base_prefix, repository_data.prefix
+                                //         ),
+                                //     }))
+                                // }
+                                else {
                                     Err(())
                                 }
                             }
@@ -369,6 +375,23 @@ impl SourceAPI {
                 Ok(repository)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    pub async fn get_repo_records(&self) -> Result<SourceRepository, Box<dyn APIError>> {
+        match self.fetch_root_repository().await {
+            Ok(repository) => {
+                // Cache the successful result
+                // self.repository_cache
+                //     .insert(cache_key, repository.clone())
+                //     .await;
+                println!(" get repo records 1 {:?}", repository);
+                Ok(repository)
+            }
+            Err(e) => {
+                println!(" get repo error 232: {:?}", e);
+                return Err(e);
+            }
         }
     }
 
@@ -559,6 +582,55 @@ impl SourceAPI {
         }
     }
 
+    async fn fetch_root_repository(&self) -> Result<SourceRepository, Box<dyn APIError>> {
+        match reqwest::get(format!("{}/api/v1/repositories", self.endpoint)).await {
+            Ok(response) => match response.json::<SourceRepository>().await {
+                Ok(repository) => Ok(repository),
+                Err(_) => Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                })),
+            },
+            Err(error) => {
+                if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
+                    return Err(Box::new(RepositoryNotFoundError {
+                        account_id: "1234".to_string(),
+                        repository_id: "4556".to_string(),
+                    }));
+                }
+
+                Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }))
+            }
+        }
+    }
+
+    pub async fn fetch_repo_buckets(&self) -> Result<SourceRepository, Box<dyn APIError>> {
+        println!("fetch_repo_buckets");
+        match reqwest::get(format!("{}/api/v1/repositories", self.endpoint)).await {
+            Ok(response) => match response.json::<SourceRepository>().await {
+                Ok(repository) => return Ok(repository),
+                Err(_) => Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                })),
+            },
+            Err(error) => {
+                // if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
+                //     return Err(Box::new(RepositoryNotFoundError {
+                //         account_id: account_id.to_string(),
+                //         repository_id: repository_id.to_string(),
+                //     }));
+                // }
+
+                println!("{}", error);
+
+                Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }))
+            }
+        }
+    }
+
     pub async fn is_authorized(
         &self,
         user_identity: UserIdentity,
@@ -644,4 +716,32 @@ impl SourceAPI {
             })),
         }
     }
+
+    // async fn fetch_accounts(&self) -> Result<SourceRepository, Box<dyn APIError>> {
+    //     match reqwest::get(format!(
+    //         "{}/api/v1/repositories",
+    //         self.endpoint
+    //     ))
+    //     .await
+    //     {
+    //         Ok(response) => match response.json::<SourceRepository>().await {
+    //             Ok(repository) => Ok(repository),
+    //             Err(_) => Err(Box::new(InternalServerError {
+    //                 message: "Internal Server Error".to_string(),
+    //             })),
+    //         },
+    //         Err(error) => {
+    //             if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
+    //                 return Err(Box::new(RepositoryNotFoundError {
+    //                     account_id: account_id.to_string(),
+    //                     repository_id: repository_id.to_string(),
+    //                 }));
+    //             }
+
+    //             Err(Box::new(InternalServerError {
+    //                 message: "Internal Server Error".to_string(),
+    //             }))
+    //         }
+    //     }
+    // }
 }
