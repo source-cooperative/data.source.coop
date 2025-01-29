@@ -89,7 +89,7 @@ async fn get_object(
     }
 
     if let Ok(client) = api_client
-        .get_backend_client(&account_id, &repository_id, "get57")
+        .get_backend_client(&account_id, &repository_id)
         .await
     {
         match api_client
@@ -182,7 +182,7 @@ async fn delete_object(
     let (account_id, repository_id, key) = path.into_inner();
 
     if let Ok(client) = api_client
-        .get_backend_client(&account_id, &repository_id, "del172")
+        .get_backend_client(&account_id, &repository_id)
         .await
     {
         match api_client
@@ -250,7 +250,7 @@ async fn put_object(
     let headers = req.headers();
 
     if let Ok(client) = api_client
-        .get_backend_client(&account_id, &repository_id, "put235")
+        .get_backend_client(&account_id, &repository_id)
         .await
     {
         match api_client
@@ -334,7 +334,7 @@ async fn post_handler(
     let headers = req.headers();
 
     if let Ok(client) = api_client
-        .get_backend_client(&account_id, &repository_id, "post319")
+        .get_backend_client(&account_id, &repository_id)
         .await
     {
         match api_client
@@ -437,7 +437,7 @@ async fn head_object(
     let (account_id, repository_id, key) = path.into_inner();
 
     match api_client
-        .get_backend_client(&account_id, &repository_id, "head426")
+        .get_backend_client(&account_id, &repository_id)
         .await
     {
         Ok(client) => {
@@ -544,7 +544,7 @@ async fn list_objects(
     }
 
     if let Ok(client) = api_client
-        .get_backend_client(&account_id, &repository_id.to_string(), "get487acc")
+        .get_backend_client(&account_id, &repository_id.to_string())
         .await
     {
         match api_client
@@ -599,349 +599,10 @@ async fn list_objects(
 }
 
 #[get("/")]
-async fn index(
-    api_client: web::Data<SourceAPI>,
-    // info: web::Query<ListObjectsV2Query>,
-) -> impl Responder {
+async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
     println!("qwerty get main");
-    info!("Line qwerty get main info");
-
-    let region = Region::Custom {
-        name: "us-west-2".to_string(),
-        endpoint: format!("http://localhost:5050"),
-    };
-
-    let client = S3Client::new(region);
-
-    // if self.auth_method == "s3_access_key" {
-    //     let credentials = rusoto_credential::StaticProvider::new_minimal(
-    //         self.access_key_id.clone().unwrap(),
-    //         self.secret_access_key.clone().unwrap(),
-    //     );
-    //     client = S3Client::new_with(
-    //         rusoto_core::request::HttpClient::new().unwrap(),
-    //         credentials,
-    //         self.region.clone(),
-    //     );
-    // } else if self.auth_method == "s3_ecs_task_role" {
-    //     let credentials = rusoto_credential::ContainerProvider::new();
-    //     client = S3Client::new_with(
-    //         rusoto_core::request::HttpClient::new().unwrap(),
-    //         credentials,
-    //         self.region.clone(),
-    //     );
-    // } else if self.auth_method == "s3_local" {
-    //     let credentials = rusoto_credential::ChainProvider::new();
-    //     client = S3Client::new_with(
-    //         rusoto_core::request::HttpClient::new().unwrap(),
-    //         credentials,
-    //         self.region.clone(),
-    //     );
-    // } else {
-    //     return Err(Box::new(InternalServerError {
-    //         message: format!("Internal Server Error"),
-    //     }));
-    // }
-    // let mut max_keys = NonZeroU32::new(1000).unwrap();
-    // if let Some(mk) = info.max_keys {
-    //     max_keys = mk;
-    // }
-
-    let mut request = ListObjectsV2Request {
-        bucket: "source-cooperative".to_string(),
-        // prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
-        // delimiter: info.delimiter.clone(),
-        // max_keys: Some(max_keys.get() as i64),
-        ..Default::default()
-    };
-
-    // if let Some(token) = info.continuation_token.clone() {
-    //     request.continuation_token = Some(token);
-    // }
-
-    // println!("self accId{}", self.account_id);
-    // println!("self RepoId{}", self.repository_id);
-    // println!("self bucket{}", self.bucket);
-    // println!("self base_prefix{}", self.base_prefix);
-    // println!("prefix{}", prefix);
-    // println!("requestPrefix{:?}", request.prefix);
-
-    match client.list_objects_v2(request).await {
-        Ok(output) => {
-            println!("list objects{:?}", output);
-            let result = ListBucketResult {
-                name: "".to_string(),
-                // name: format!("{}", self.account_id),
-                prefix: "".to_string(),
-                // prefix: format!("{}/{}", self.repository_id, prefix),
-                key_count: output.key_count.unwrap_or(0),
-                max_keys: output.max_keys.unwrap_or(0),
-                is_truncated: output.is_truncated.unwrap_or(false),
-                next_continuation_token: output.next_continuation_token,
-                contents: output
-                    .contents
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|item| Content {
-                        key: item.key.clone().unwrap_or_default(),
-                        last_modified: item
-                            .last_modified
-                            .clone()
-                            .unwrap_or_else(|| Utc::now().to_rfc2822()),
-                        etag: item.e_tag.clone().unwrap_or_else(|| "".to_string()),
-                        size: item.size.unwrap_or(0),
-                        storage_class: item.storage_class.clone().unwrap_or_else(|| "".to_string()),
-                    })
-                    .collect(),
-                common_prefixes: output
-                    .common_prefixes
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|item| CommonPrefix {
-                        prefix: item.prefix.clone().unwrap_or_else(|| "".to_string()),
-                    })
-                    .collect(),
-            };
-            println!("list objects result{:?}", result);
-            return match to_string_with_root("ListBucketResult", &result) {
-                Ok(serialized) => {
-                    println!("serialized{}", serialized);
-
-                    return HttpResponse::Ok()
-                        .content_type("application/xml")
-                        .body(serialized);
-                }
-                Err(e) => HttpResponse::InternalServerError().finish(),
-                // return HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION));
-                // return Ok(result);
-            };
-        }
-        Err(error) => {
-            println!("list objects err{}", error);
-            return HttpResponse::NotFound().finish();
-
-            // return Err(Box::new(InternalServerError {
-            //     message: "Internal Server Error".to_string(),
-            // }));
-        }
-    }
-
-    // HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
 }
-
-// #[get("/")]
-// async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
-//     println!("qwerty get main");
-//     HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
-
-//     // match api_client.get_repo_records();
-// }
-
-// #[get("/{account_id}")]
-// async fn list_main_repos(
-//     api_client: web::Data<SourceAPI>,
-//     info: web::Query<ListObjectsV2Query>,
-//     path: web::Path<String>,
-//     user_identity: web::ReqData<UserIdentity>,
-// ) -> impl Responder {
-//     let account_id = path.into_inner();
-
-//     if info.prefix.clone().is_some_and(|s| s.is_empty()) || info.prefix.is_none() {
-//         match api_client
-//             .get_account(account_id.clone(), (*user_identity).clone())
-//             .await
-//         {
-//             Ok(account) => {
-//                 let repositories = account.repositories;
-//                 let mut common_prefixes = Vec::new();
-//                 for repository_id in repositories.iter() {
-//                     common_prefixes.push(CommonPrefix {
-//                         prefix: format!("{}/", repository_id.clone()),
-//                     });
-//                 }
-//                 let list_response = ListBucketResult {
-//                     name: account_id.clone(),
-//                     prefix: "/".to_string(),
-//                     key_count: 0,
-//                     max_keys: 0,
-//                     is_truncated: false,
-//                     contents: vec![],
-//                     common_prefixes,
-//                     next_continuation_token: None,
-//                 };
-
-//                 match to_string_with_root("ListBucketResult", &list_response) {
-//                     Ok(serialized) => {
-//                         return HttpResponse::Ok()
-//                             .content_type("application/xml")
-//                             .body(serialized)
-//                     }
-//                     Err(_) => return HttpResponse::InternalServerError().finish(),
-//                 }
-//             }
-//             Err(_) => return HttpResponse::InternalServerError().finish(),
-//         }
-//     }
-
-//     let path_prefix = info.prefix.clone().unwrap_or("".to_string());
-
-//     let (repository_id, prefix) = split_at_first_slash(&path_prefix);
-
-//     let mut max_keys = NonZeroU32::new(1000).unwrap();
-//     if let Some(mk) = info.max_keys {
-//         max_keys = mk;
-//     }
-
-//     if let Ok(client) = api_client
-//         .get_backend_client(&account_id, &repository_id.to_string())
-//         .await
-//     {
-//         match api_client
-//             .is_authorized(
-//                 user_identity.into_inner(),
-//                 &account_id,
-//                 &repository_id.to_string(),
-//                 RepositoryPermission::Read,
-//             )
-//             .await
-//         {
-//             Ok(authorized) => {
-//                 if !authorized {
-//                     return HttpResponse::Unauthorized().finish();
-//                 }
-//             }
-//             Err(_) => return HttpResponse::InternalServerError().finish(),
-//         }
-
-//         // We're listing within a repository, so we need to query the object store backend
-//         match client.list_buckets().await {
-//             Ok(res) => match to_string_with_root("ListBucketResult", &res) {
-//                 Ok(serialized) => HttpResponse::Ok()
-//                     .content_type("application/xml")
-//                     .body(serialized),
-//                 Err(e) => HttpResponse::InternalServerError().finish(),
-//             },
-//             Err(_) => HttpResponse::NotFound().finish(),
-//         }
-//         // Found the repository, now make the list objects request
-//     } else {
-//         // Could not find the repository
-//         return HttpResponse::NotFound().finish();
-//     }
-// }
-
-// #[get("/repositories")]
-// async fn list_buckets(
-//     api_client: web::Data<SourceAPI>,
-//     info: web::Query<ListObjectsV2Query>,
-//     path: web::Path<String>,
-//     user_identity: web::ReqData<UserIdentity>,
-// ) -> impl Responder {
-//     let account_id = path.into_inner();
-
-//     if info.prefix.clone().is_some_and(|s| s.is_empty()) || info.prefix.is_none() {
-//         match api_client
-//             .get_account(account_id.clone(), (*user_identity).clone())
-//             .await
-//         {
-//             Ok(account) => {
-//                 let repositories = account.repositories;
-//                 let mut common_prefixes = Vec::new();
-//                 for repository_id in repositories.iter() {
-//                     common_prefixes.push(CommonPrefix {
-//                         prefix: format!("{}/", repository_id.clone()),
-//                     });
-//                 }
-//                 let list_response = ListBucketResult {
-//                     name: account_id.clone(),
-//                     prefix: "/".to_string(),
-//                     key_count: 0,
-//                     max_keys: 0,
-//                     is_truncated: false,
-//                     contents: vec![],
-//                     common_prefixes,
-//                     next_continuation_token: None,
-//                 };
-
-//                 match to_string_with_root("ListBucketResult", &list_response) {
-//                     Ok(serialized) => {
-//                         return HttpResponse::Ok()
-//                             .content_type("application/xml")
-//                             .body(serialized)
-//                     }
-//                     Err(_) => return HttpResponse::InternalServerError().finish(),
-//                 }
-//             }
-//             Err(_) => return HttpResponse::InternalServerError().finish(),
-//         }
-//     }
-
-//     let path_prefix = info.prefix.clone().unwrap_or("".to_string());
-
-//     let (repository_id, prefix) = split_at_first_slash(&path_prefix);
-
-//     let mut max_keys = NonZeroU32::new(1000).unwrap();
-//     if let Some(mk) = info.max_keys {
-//         max_keys = mk;
-//     }
-
-//     if let Ok(client) = api_client
-//         .get_backend_client(&account_id, &repository_id.to_string())
-//         .await
-//     {
-//         match api_client
-//             .is_authorized(
-//                 user_identity.into_inner(),
-//                 &account_id,
-//                 &repository_id.to_string(),
-//                 RepositoryPermission::Read,
-//             )
-//             .await
-//         {
-//             Ok(authorized) => {
-//                 if !authorized {
-//                     return HttpResponse::Unauthorized().finish();
-//                 }
-//             }
-//             Err(_) => return HttpResponse::InternalServerError().finish(),
-//         }
-
-//         // We're listing within a repository, so we need to query the object store backend
-//         match client.list_buckets().await {
-//             // Ok(res) => match to_string_with_root("ListBucketResult", &res) {
-//             Ok(res) => HttpResponse::Ok()
-//                 .content_type("application/xml")
-//                 .body(res.map(|x| {
-//                     let myfile = x.unwrap();
-//                     let bucket_name = myfile.path().to_str().unwrap().to_string();
-//                     Box::new(Link { attr: href }) as Box<dyn Speak>
-
-//                 }).collect());
-
-//             Err(e) => HttpResponse::InternalServerError().finish(),
-//             // },
-//             Err(_) => HttpResponse::NotFound().finish(),
-//         }
-//         // Found the repository, now make the list objects request
-//     } else {
-//         // Could not find the repository
-//         return HttpResponse::NotFound().finish();
-//     }
-// }
-
-// #[get("/")]
-// async fn index() -> impl Responder {
-//     match .fetch_repo_buckets().await {
-//         Ok(response) => {
-//             return response.account_id;
-//         }
-//         Err(err) => {
-//             println!("Error 593");
-//             return err.to_string();
-//         }
-//     }
-//     HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
-// }
 
 // Main function to set up and run the HTTP server
 #[actix_web::main]

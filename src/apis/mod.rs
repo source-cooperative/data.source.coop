@@ -21,7 +21,6 @@ pub trait API {
         &self,
         account_id: &String,
         repository_id: &String,
-        qwerty_func_name: &str,
     ) -> Result<Box<dyn Repository>, ()>;
 
     async fn get_account(

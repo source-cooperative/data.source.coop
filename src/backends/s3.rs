@@ -553,7 +553,7 @@ impl Repository for S3Repository {
         }
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
-            // prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
+            prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
             delimiter,
             max_keys: Some(max_keys.get() as i64),
             ..Default::default()
@@ -562,13 +562,6 @@ impl Repository for S3Repository {
         if let Some(token) = continuation_token {
             request.continuation_token = Some(token);
         }
-
-        println!("self accId{}", self.account_id);
-        println!("self RepoId{}", self.repository_id);
-        println!("self bucket{}", self.bucket);
-        println!("self base_prefix{}", self.base_prefix);
-        println!("prefix{}", prefix);
-        println!("requestPrefix{:?}", request.prefix);
 
         match client.list_objects_v2(request).await {
             Ok(output) => {
@@ -615,8 +608,6 @@ impl Repository for S3Repository {
                         .collect(),
                 };
 
-                println!("list objects result{:?}", result);
-
                 return Ok(result);
             }
             Err(error) => {
@@ -627,7 +618,7 @@ impl Repository for S3Repository {
         }
     }
 
-    // async fn list_objects_at_root(
+    // async fn list_objects_v2(
     //     &self,
     //     prefix: String,
     //     continuation_token: Option<String>,
@@ -667,7 +658,7 @@ impl Repository for S3Repository {
     //     }
     //     let mut request = ListObjectsV2Request {
     //         bucket: self.bucket.clone(),
-    //         prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
+    //         // prefix: Some(format!("{}/{}", self.base_prefix, prefix)),
     //         delimiter,
     //         max_keys: Some(max_keys.get() as i64),
     //         ..Default::default()
@@ -676,6 +667,13 @@ impl Repository for S3Repository {
     //     if let Some(token) = continuation_token {
     //         request.continuation_token = Some(token);
     //     }
+
+    //     println!("self accId{}", self.account_id);
+    //     println!("self RepoId{}", self.repository_id);
+    //     println!("self bucket{}", self.bucket);
+    //     println!("self base_prefix{}", self.base_prefix);
+    //     println!("prefix{}", prefix);
+    //     println!("requestPrefix{:?}", request.prefix);
 
     //     match client.list_objects_v2(request).await {
     //         Ok(output) => {
@@ -721,6 +719,8 @@ impl Repository for S3Repository {
     //                     })
     //                     .collect(),
     //             };
+
+    //             println!("list objects result{:?}", result);
 
     //             return Ok(result);
     //         }

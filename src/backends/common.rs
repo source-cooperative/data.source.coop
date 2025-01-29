@@ -106,14 +106,6 @@ pub struct ListBucketResult {
     pub next_continuation_token: Option<String>,
 }
 
-// #[derive(Debug, Serialize)]
-// pub struct ShowBucketsLatResult {
-//     #[serde(rename = "Name")]
-//     pub name: String,
-//     #[serde(rename = "Contents")]
-//     pub contents: Vec<Content>,
-// }
-
 #[derive(Debug, Serialize)]
 pub struct Content {
     #[serde(rename = "Key")]
