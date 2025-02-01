@@ -83,7 +83,13 @@ pub trait Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
-    async fn list_buckets(&self) -> Result<Vec<Bucket>, Box<dyn APIError>>;
+    async fn list_buckets_accounts(
+        &self,
+        prefix: String,
+        continuation_token: Option<String>,
+        delimiter: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListBucketResult, Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
@@ -119,6 +125,20 @@ pub struct Content {
     #[serde(rename = "StorageClass")]
     pub storage_class: String,
 }
+
+// #[derive(Debug, Serialize)]
+// pub struct ContentRootAccount {
+//     #[serde(rename = "Key")]
+//     pub key: String,
+//     #[serde(rename = "LastModified")]
+//     pub last_modified: String,
+//     #[serde(rename = "ETag")]
+//     pub etag: String,
+//     #[serde(rename = "Size")]
+//     pub size: i64,
+//     #[serde(rename = "StorageClass")]
+//     pub storage_class: String,
+// }
 
 #[derive(Debug, Serialize)]
 pub struct CommonPrefix {

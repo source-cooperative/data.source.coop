@@ -598,9 +598,47 @@ async fn list_objects(
     }
 }
 
+#[get("/list_accs")]
+async fn list_accs(api_client: web::Data<SourceAPI>) -> impl Responder {
+    println!("In the main get call");
+
+    // Change to existing default accId & repoId
+    let account_id = String::from("adarsh");
+    let repository_id = String::from("adarsh-dev");
+
+    if let Ok(client) = api_client
+        .get_backend_client(&account_id, &repository_id.to_string())
+        .await
+    {
+        match client
+            .list_buckets_accounts(
+                "".to_string(),
+                None,
+                Some("/".to_string()),
+                NonZeroU32::new(1000).unwrap(),
+            )
+            .await
+        {
+            Ok(res) => match to_string_with_root("ListBucketResult", &res) {
+                Ok(serialized) => {
+                    println!("serialized{}", serialized);
+
+                    return HttpResponse::Ok()
+                        .content_type("application/xml")
+                        .body(serialized);
+                }
+                Err(e) => HttpResponse::InternalServerError().finish(),
+            },
+            Err(_) => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        // Could not find the repository
+        return HttpResponse::NotFound().finish();
+    }
+}
+
 #[get("/")]
 async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
-    println!("qwerty get main");
     HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
 }
 
@@ -639,6 +677,7 @@ async fn main() -> std::io::Result<()> {
             .service(post_handler)
             .service(put_object)
             .service(head_object)
+            .service(list_accs)
             .service(list_objects)
             .service(index)
     })
