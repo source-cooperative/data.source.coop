@@ -64,8 +64,6 @@ async fn get_object(
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> impl Responder {
-    println!("Line 6311");
-    info!("Line 6311 info");
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
     let mut range = None;
@@ -244,8 +242,6 @@ async fn put_object(
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> impl Responder {
-    println!("Line 242");
-    info!("Line 242 info");
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
 
@@ -328,8 +324,6 @@ async fn post_handler(
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> impl Responder {
-    println!("Line 325");
-    info!("Line 325 info");
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
 
@@ -432,8 +426,6 @@ async fn head_object(
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> impl Responder {
-    println!("Line 325 111");
-    info!("Line 325 111 info");
     let (account_id, repository_id, key) = path.into_inner();
 
     match api_client
@@ -534,9 +526,8 @@ async fn list_objects(
     }
 
     let path_prefix = info.prefix.clone().unwrap_or("".to_string());
-    println!("path_prefix{}", path_prefix);
+
     let (repository_id, prefix) = split_at_first_slash(&path_prefix);
-    println!("repo_id prefix{}{}", repository_id, prefix);
 
     let mut max_keys = NonZeroU32::new(1000).unwrap();
     if let Some(mk) = info.max_keys {
@@ -566,7 +557,6 @@ async fn list_objects(
 
         // We're listing within a repository, so we need to query the object store backend
         match client
-            // .list_buckets()
             .list_objects_v2(
                 prefix.to_string(),
                 info.continuation_token.clone(),
@@ -575,18 +565,10 @@ async fn list_objects(
             )
             .await
         {
-            // Ok(res) => {
-            //     println!("qwerty main res check{:?}", res);
-            //     return HttpResponse::Ok().body("");
-            // }
             Ok(res) => match to_string_with_root("ListBucketResult", &res) {
-                Ok(serialized) => {
-                    println!("serialized{}", serialized);
-
-                    return HttpResponse::Ok()
-                        .content_type("application/xml")
-                        .body(serialized);
-                }
+                Ok(serialized) => HttpResponse::Ok()
+                    .content_type("application/xml")
+                    .body(serialized),
                 Err(e) => HttpResponse::InternalServerError().finish(),
             },
             Err(_) => HttpResponse::NotFound().finish(),
@@ -598,11 +580,9 @@ async fn list_objects(
     }
 }
 
-#[get("/list_accs")]
-async fn list_accs(api_client: web::Data<SourceAPI>) -> impl Responder {
-    println!("In the main get call");
-
-    // Change to existing default accId & repoId
+#[get("/list_accounts")]
+async fn list_accounts(api_client: web::Data<SourceAPI>) -> impl Responder {
+    // TODO: Change to some existing default accId & repoId
     let account_id = String::from("adarsh");
     let repository_id = String::from("adarsh-dev");
 
@@ -611,6 +591,7 @@ async fn list_accs(api_client: web::Data<SourceAPI>) -> impl Responder {
         .await
     {
         match client
+            // Pass default static values
             .list_buckets_accounts(
                 "".to_string(),
                 None,
@@ -620,13 +601,9 @@ async fn list_accs(api_client: web::Data<SourceAPI>) -> impl Responder {
             .await
         {
             Ok(res) => match to_string_with_root("ListBucketResult", &res) {
-                Ok(serialized) => {
-                    println!("serialized{}", serialized);
-
-                    return HttpResponse::Ok()
-                        .content_type("application/xml")
-                        .body(serialized);
-                }
+                Ok(serialized) => HttpResponse::Ok()
+                    .content_type("application/xml")
+                    .body(serialized),
                 Err(e) => HttpResponse::InternalServerError().finish(),
             },
             Err(_) => HttpResponse::NotFound().finish(),
@@ -677,7 +654,7 @@ async fn main() -> std::io::Result<()> {
             .service(post_handler)
             .service(put_object)
             .service(head_object)
-            .service(list_accs)
+            .service(list_accounts)
             .service(list_objects)
             .service(index)
     })

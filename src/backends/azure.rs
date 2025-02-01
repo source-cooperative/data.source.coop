@@ -422,32 +422,4 @@ impl Repository for AzureRepository {
 
         Ok(result)
     }
-
-    // async fn list_buckets_accounts(&self) -> Result<Vec<Bucket>, Box<dyn APIError>> {
-    //     let x = Bucket {
-    //         creation_date: todo!(),
-    //         name: todo!(),
-    //     };
-    //     let mut vx = Vec::new();
-    //     vx.push(x);
-
-    //     // let x = ListBucketResult {
-    //     //     name: todo!(),
-    //     //     prefix: todo!(),
-    //     //     key_count: todo!(),
-    //     //     max_keys: todo!(),
-    //     //     is_truncated: false,
-    //     //     contents: todo!(),
-    //     //     common_prefixes: todo!(),
-    //     //     next_continuation_token: todo!(),
-    //     // };
-
-    //     // if x.is_truncated {
-
-    //     // }
-    //     return Ok(vx);
-    //     // return Err(Box::new(InternalServerError {
-    //     //     message: "Internal Server Error".to_string(),
-    //     // }));
-    // }
 }

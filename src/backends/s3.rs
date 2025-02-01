@@ -626,6 +626,7 @@ impl Repository for S3Repository {
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>> {
         let client: S3Client;
+
         if self.auth_method == "s3_access_key" {
             let credentials = rusoto_credential::StaticProvider::new_minimal(
                 self.access_key_id.clone().unwrap(),
@@ -655,6 +656,7 @@ impl Repository for S3Repository {
                 message: format!("Internal Server Error"),
             }));
         }
+
         let mut request = ListObjectsV2Request {
             bucket: self.bucket.clone(),
             delimiter,
@@ -668,8 +670,6 @@ impl Repository for S3Repository {
 
         match client.list_objects_v2(request).await {
             Ok(output) => {
-                println!("Output is {:?} ", output);
-
                 let result = ListBucketResult {
                     name: format!("{}", self.account_id),
                     prefix: format!("{}/{}", self.repository_id, prefix),
@@ -687,10 +687,10 @@ impl Repository for S3Repository {
                                 "/".to_string(),
                                 "".to_string(),
                             ),
-                            last_modified: "2025-01-31T05:05:20.000Z".to_string(),
-                            etag: "\"7fd71beff2e35e4212aaf95800e17ac4\"".to_string(),
-                            size: 1351,
-                            storage_class: "STANDARD".to_string(),
+                            last_modified: Utc::now().to_rfc2822(),
+                            etag: "".to_string(),
+                            size: 1131,
+                            storage_class: "".to_string(),
                         })
                         .collect(),
                     common_prefixes: vec![],

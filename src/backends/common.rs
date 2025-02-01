@@ -90,6 +90,7 @@ pub trait Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
+    // ) -> Result<ListBucketAccountResult, Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
@@ -112,6 +113,12 @@ pub struct ListBucketResult {
     pub next_continuation_token: Option<String>,
 }
 
+// #[derive(Debug, Serialize)]
+// pub struct ListBucketAccountResult {
+//     #[serde(rename = "Contents")]
+//     pub contents: Vec<ContentAccount>,
+// }
+
 #[derive(Debug, Serialize)]
 pub struct Content {
     #[serde(rename = "Key")]
@@ -127,17 +134,9 @@ pub struct Content {
 }
 
 // #[derive(Debug, Serialize)]
-// pub struct ContentRootAccount {
+// pub struct ContentAccount {
 //     #[serde(rename = "Key")]
 //     pub key: String,
-//     #[serde(rename = "LastModified")]
-//     pub last_modified: String,
-//     #[serde(rename = "ETag")]
-//     pub etag: String,
-//     #[serde(rename = "Size")]
-//     pub size: i64,
-//     #[serde(rename = "StorageClass")]
-//     pub storage_class: String,
 // }
 
 #[derive(Debug, Serialize)]

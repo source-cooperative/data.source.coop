@@ -372,19 +372,6 @@ impl SourceAPI {
         }
     }
 
-    pub async fn get_repo_records(&self) -> Result<SourceRepository, Box<dyn APIError>> {
-        match self.fetch_root_repository().await {
-            Ok(repository) => {
-                println!(" get repo records 1 {:?}", repository);
-                Ok(repository)
-            }
-            Err(e) => {
-                println!(" get repo error 232: {:?}", e);
-                return Err(e);
-            }
-        }
-    }
-
     async fn fetch_data_connection(
         &self,
         data_connection_id: &String,
@@ -572,55 +559,6 @@ impl SourceAPI {
         }
     }
 
-    async fn fetch_root_repository(&self) -> Result<SourceRepository, Box<dyn APIError>> {
-        match reqwest::get(format!("{}/api/v1/repositories", self.endpoint)).await {
-            Ok(response) => match response.json::<SourceRepository>().await {
-                Ok(repository) => Ok(repository),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(error) => {
-                if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                    return Err(Box::new(RepositoryNotFoundError {
-                        account_id: "1234".to_string(),
-                        repository_id: "4556".to_string(),
-                    }));
-                }
-
-                Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                }))
-            }
-        }
-    }
-
-    pub async fn fetch_repo_buckets(&self) -> Result<SourceRepository, Box<dyn APIError>> {
-        println!("fetch_repo_buckets");
-        match reqwest::get(format!("{}/api/v1/repositories", self.endpoint)).await {
-            Ok(response) => match response.json::<SourceRepository>().await {
-                Ok(repository) => return Ok(repository),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(error) => {
-                // if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                //     return Err(Box::new(RepositoryNotFoundError {
-                //         account_id: account_id.to_string(),
-                //         repository_id: repository_id.to_string(),
-                //     }));
-                // }
-
-                println!("{}", error);
-
-                Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                }))
-            }
-        }
-    }
-
     pub async fn is_authorized(
         &self,
         user_identity: UserIdentity,
@@ -706,32 +644,4 @@ impl SourceAPI {
             })),
         }
     }
-
-    // async fn fetch_accounts(&self) -> Result<SourceRepository, Box<dyn APIError>> {
-    //     match reqwest::get(format!(
-    //         "{}/api/v1/repositories",
-    //         self.endpoint
-    //     ))
-    //     .await
-    //     {
-    //         Ok(response) => match response.json::<SourceRepository>().await {
-    //             Ok(repository) => Ok(repository),
-    //             Err(_) => Err(Box::new(InternalServerError {
-    //                 message: "Internal Server Error".to_string(),
-    //             })),
-    //         },
-    //         Err(error) => {
-    //             if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-    //                 return Err(Box::new(RepositoryNotFoundError {
-    //                     account_id: account_id.to_string(),
-    //                     repository_id: repository_id.to_string(),
-    //                 }));
-    //             }
-
-    //             Err(Box::new(InternalServerError {
-    //                 message: "Internal Server Error".to_string(),
-    //             }))
-    //         }
-    //     }
-    // }
 }
