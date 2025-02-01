@@ -82,6 +82,13 @@ pub trait Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListBucketResult, Box<dyn APIError>>;
+    async fn list_buckets_accounts(
+        &self,
+        prefix: String,
+        continuation_token: Option<String>,
+        delimiter: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListBucketResult, Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
