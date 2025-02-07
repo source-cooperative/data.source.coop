@@ -88,7 +88,7 @@ pub trait Repository {
         continuation_token: Option<String>,
         delimiter: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, Box<dyn APIError>>;
+    ) -> Result<ListAllBucketsResult, Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +129,24 @@ pub struct Content {
 pub struct CommonPrefix {
     #[serde(rename = "Prefix")]
     pub prefix: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListAllBucketsResult {
+    #[serde(rename = "Buckets")]
+    pub buckets: ListBuckets,
+}
+#[derive(Debug, Serialize)]
+pub struct ListBuckets {
+    #[serde(rename = "Bucket")]
+    pub bucket: Vec<ListBucket>,
+}
+#[derive(Debug, Serialize)]
+pub struct ListBucket {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "CreationDate")]
+    pub creation_date: String,
 }
 
 #[derive(Debug, Serialize)]

@@ -15,9 +15,8 @@ use apis::API;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
 use core::num::NonZeroU32;
-
+use env_logger::Env;
 use futures_util::StreamExt;
-
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
@@ -573,11 +572,13 @@ async fn list_objects(
     }
 }
 
-#[get("/list_accounts")]
-async fn list_accounts(api_client: web::Data<SourceAPI>) -> impl Responder {
+#[get("/")]
+async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
+    // HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+
     // TODO: Change to some existing default accId & repoId
-    let account_id = String::from("adarsh");
-    let repository_id = String::from("adarsh-dev");
+    let account_id = env::var("DEFAULT_ACCOUNT_ID").unwrap();
+    let repository_id = env::var("DEFAULT_REPOSITORY_ID").unwrap();
 
     if let Ok(client) = api_client
         .get_backend_client(&account_id, &repository_id.to_string())
@@ -593,7 +594,7 @@ async fn list_accounts(api_client: web::Data<SourceAPI>) -> impl Responder {
             )
             .await
         {
-            Ok(res) => match to_string_with_root("ListBucketResult", &res) {
+            Ok(res) => match to_string_with_root("ListAllBucketsResult", &res) {
                 Ok(serialized) => HttpResponse::Ok()
                     .content_type("application/xml")
                     .body(serialized),
@@ -607,20 +608,15 @@ async fn list_accounts(api_client: web::Data<SourceAPI>) -> impl Responder {
     }
 }
 
-#[get("/")]
-async fn index() -> impl Responder {
-    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
-}
-
 // Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let source_api_url = env::var("SOURCE_API_URL").unwrap();
     let source_api = web::Data::new(SourceAPI::new(source_api_url));
-    json_env_logger::builder()
-        .target(json_env_logger::env_logger::Target::Stdout)
-        .init();
-    // env_logger::init_from_env(Env::default().default_filter_or("info"));
+    // json_env_logger::builder()
+    //     .target(json_env_logger::env_logger::Target::Stdout)
+    //     .init();
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
@@ -647,7 +643,6 @@ async fn main() -> std::io::Result<()> {
             .service(post_handler)
             .service(put_object)
             .service(head_object)
-            .service(list_accounts)
             .service(list_objects)
             .service(index)
     })
