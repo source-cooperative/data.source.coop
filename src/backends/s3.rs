@@ -20,7 +20,9 @@ use rusoto_s3::{
 };
 use std::pin::Pin;
 
-use super::common::{MultipartPart, UploadPartResponse};
+use super::common::{
+    ListAllBucketsResult, ListBucket, ListBuckets, MultipartPart, UploadPartResponse,
+};
 
 pub struct S3Repository {
     pub account_id: String,
@@ -620,11 +622,11 @@ impl Repository for S3Repository {
 
     async fn list_buckets_accounts(
         &self,
-        prefix: String,
+        _prefix: String,
         continuation_token: Option<String>,
         delimiter: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, Box<dyn APIError>> {
+    ) -> Result<ListAllBucketsResult, Box<dyn APIError>> {
         let client: S3Client;
 
         if self.auth_method == "s3_access_key" {
@@ -670,31 +672,25 @@ impl Repository for S3Repository {
 
         match client.list_objects_v2(request).await {
             Ok(output) => {
-                let result = ListBucketResult {
-                    name: format!("{}", self.account_id),
-                    prefix: format!("{}/{}", self.repository_id, prefix),
-                    key_count: output.key_count.unwrap_or(0),
-                    max_keys: output.max_keys.unwrap_or(0),
-                    is_truncated: output.is_truncated.unwrap_or(false),
-                    next_continuation_token: output.next_continuation_token,
-                    contents: output
-                        .common_prefixes
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|item| Content {
-                            key: replace_first(
-                                item.prefix.clone().unwrap_or_else(|| "".to_string()),
-                                "/".to_string(),
-                                "".to_string(),
-                            ),
-                            last_modified: Utc::now().to_rfc2822(),
-                            etag: "".to_string(),
-                            size: 1131,
-                            storage_class: "".to_string(),
-                        })
-                        .collect(),
-                    common_prefixes: vec![],
+                let result = ListAllBucketsResult {
+                    buckets: ListBuckets {
+                        bucket: output
+                            .common_prefixes
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|item| ListBucket {
+                                name: replace_first(
+                                    item.prefix.clone().unwrap_or_else(|| "".to_string()),
+                                    "/".to_string(),
+                                    "".to_string(),
+                                ),
+                                // TODO: Change from default creation date
+                                creation_date: Utc::now().to_rfc2822(),
+                            })
+                            .collect(),
+                    },
                 };
+
                 return Ok(result);
             }
             Err(error) => {

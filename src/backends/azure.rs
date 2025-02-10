@@ -19,7 +19,9 @@ use crate::backends::common::{
 use crate::utils::core::replace_first;
 use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
 
-use super::common::{MultipartPart, UploadPartResponse};
+use super::common::{
+    ListAllBucketsResult, ListBucket, ListBuckets, MultipartPart, UploadPartResponse,
+};
 
 pub struct AzureRepository {
     pub account_id: String,
@@ -331,93 +333,25 @@ impl Repository for AzureRepository {
 
     async fn list_buckets_accounts(
         &self,
-        prefix: String,
-        continuation_token: Option<String>,
-        delimiter: Option<String>,
-        max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, Box<dyn APIError>> {
-        let mut result = ListBucketResult {
-            name: format!("{}", self.account_id),
-            prefix: prefix.clone(),
-            key_count: 0,
-            max_keys: 0,
-            is_truncated: false,
-            contents: vec![],
-            common_prefixes: vec![],
-            next_continuation_token: None,
+        _prefix: String,
+        _continuation_token: Option<String>,
+        _delimiter: Option<String>,
+        _max_keys: NonZeroU32,
+    ) -> Result<ListAllBucketsResult, Box<dyn APIError>> {
+        let result = ListAllBucketsResult {
+            buckets: ListBuckets {
+                bucket: vec![
+                    ListBucket {
+                        name: "dummy".to_string(),
+                        creation_date: "2025-01-27T09:33:34.000Z".to_string(),
+                    },
+                    ListBucket {
+                        name: "dummy1".to_string(),
+                        creation_date: "2025-01-27T09:33:34.000Z".to_string(),
+                    },
+                ],
+            },
         };
-
-        let credentials = StorageCredentials::anonymous();
-
-        // Create a client for anonymous access
-        let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
-            .container_client(&self.container_name);
-        let search_prefix = format!("{}/{}", self.base_prefix.trim_end_matches('/'), prefix);
-
-        let next_marker = continuation_token.map_or(NextMarker::new("".to_string()), Into::into);
-
-        let query_delmiter = delimiter.unwrap_or_else(|| "".to_string());
-
-        // List blobs
-        let mut stream = client
-            .list_blobs()
-            .marker(next_marker)
-            .prefix(search_prefix)
-            .max_results(max_keys)
-            .delimiter(query_delmiter)
-            .into_stream();
-
-        if let Some(blob_result) = stream.next().await {
-            match blob_result {
-                Ok(blob) => {
-                    if blob.max_results.is_some() {
-                        result.max_keys = blob.max_results.unwrap() as i64;
-                    }
-
-                    if blob.next_marker.is_some() {
-                        result.is_truncated = true;
-                        result.next_continuation_token = Some(
-                            blob.next_marker
-                                .unwrap_or(NextMarker::new("".to_string()))
-                                .as_str()
-                                .to_string(),
-                        );
-                    }
-
-                    for blob_item in blob.blobs.items {
-                        match blob_item {
-                            BlobItem::Blob(b) => {
-                                result.contents.push(Content {
-                                    key: replace_first(
-                                        b.name,
-                                        self.base_prefix.clone().trim_end_matches('/').to_string(),
-                                        format!("{}", self.repository_id),
-                                    ),
-                                    last_modified: b
-                                        .properties
-                                        .last_modified
-                                        .format(&Rfc3339)
-                                        .unwrap_or_else(|_| String::from("Invalid DateTime")),
-                                    etag: b.properties.etag.to_string(),
-                                    size: b.properties.content_length as i64,
-                                    storage_class: b.properties.blob_type.to_string(),
-                                });
-                            }
-                            BlobItem::BlobPrefix(bp) => {
-                                result.common_prefixes.push(CommonPrefix {
-                                    prefix: replace_first(
-                                        bp.name,
-                                        self.base_prefix.clone().trim_end_matches('/').to_string(),
-                                        format!("{}", self.repository_id),
-                                    ),
-                                });
-                            }
-                        }
-                    }
-                }
-                Err(_) => (),
-            }
-        }
 
         Ok(result)
     }
