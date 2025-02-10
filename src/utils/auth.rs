@@ -16,6 +16,7 @@ use std::{
     future::{ready, Ready},
     rc::Rc,
 };
+use log::{debug, error, log_enabled, info, Level};
 use url::form_urlencoded;
 
 use crate::apis::source::{APIKey, SourceAPI};
@@ -114,6 +115,7 @@ async fn load_identity(
         Some(auth) => {
             let authorization_header: &str = auth.to_str().unwrap();
             let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
+            //info!("the headers are: {}", headers);
 
             if signature_method != "AWS4-HMAC-SHA256" {
                 return Err("Invalid Signature Algorithm".to_string());
@@ -166,6 +168,9 @@ async fn load_identity(
                                     );
 
                                     if calculated_signature != signature {
+                                        info!("the calculated signature is: {}", calculated_signature);
+                                        info!("the signature is: {}", signature);
+                                        info!("Signature mismatch");
                                         return Err("Signature mismatch".to_string());
                                     } else {
                                         return Ok(api_key);
