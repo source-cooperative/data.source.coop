@@ -355,4 +355,13 @@ impl Repository for AzureRepository {
 
         Ok(result)
     }
+
+    async fn copy_object(
+        &self,
+        _copy_identifier_path: String,
+        _key: String,
+        _range: Option<String>,
+    ) -> Result<(), Box<dyn APIError>> {
+        Ok(())
+    }
 }

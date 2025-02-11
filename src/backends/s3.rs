@@ -700,4 +700,127 @@ impl Repository for S3Repository {
             }
         }
     }
+
+    async fn copy_object(
+        &self,
+        copy_identifier_path: String,
+        key: String,
+        range: Option<String>,
+    ) -> Result<(), Box<dyn APIError>> {
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
+        let request = HeadObjectRequest {
+            bucket: self.bucket.clone(),
+            key: format!("{}", copy_identifier_path),
+            ..Default::default()
+        };
+
+        match client.head_object(request).await {
+            Ok(result) => {
+                let url_client = reqwest::Client::new();
+                let url: String;
+
+                if self.auth_method == "s3_local" {
+                    url = format!(
+                        "http://localhost:5050/{}/{}",
+                        self.bucket, copy_identifier_path
+                    )
+                } else {
+                    url = format!(
+                        "https://s3.{}.amazonaws.com/{}/{}",
+                        self.region.name(),
+                        self.bucket,
+                        copy_identifier_path
+                    );
+                }
+
+                let mut request = url_client.get(url);
+
+                if let Some(range_value) = range {
+                    request = request.header(RANGE, range_value);
+                }
+
+                match request.send().await {
+                    Ok(response) => {
+                        let content_bytes = response
+                            .bytes()
+                            .await
+                            .unwrap_or_else(|_| bytes::Bytes::from(vec![]));
+                        match self
+                            .put_object(key.clone(), content_bytes, result.content_type)
+                            .await
+                        {
+                            Ok(_put_res) => Ok(()),
+                            Err(err) => {
+                                return Err(err);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if error.is_status() {
+                            let code = error.status().unwrap().as_u16();
+                            if code == 404 {
+                                return Err(Box::new(ObjectNotFoundError {
+                                    account_id: self.account_id.clone(),
+                                    repository_id: self.repository_id.clone(),
+                                    key,
+                                }));
+                            }
+                        }
+
+                        return Err(Box::new(InternalServerError {
+                            message: "Internal Server Error".to_string(),
+                        }));
+                    }
+                }
+            }
+            Err(error) => {
+                match error {
+                    RusotoError::Unknown(response) => {
+                        if response.status.eq(&404) {
+                            return Err(Box::new(ObjectNotFoundError {
+                                account_id: self.account_id.clone(),
+                                repository_id: self.repository_id.clone(),
+                                key,
+                            }));
+                        }
+                    }
+                    _ => (),
+                }
+
+                Err(Box::new(InternalServerError {
+                    message: format!("Internal Server Error"),
+                }))
+            }
+        }
+    }
 }

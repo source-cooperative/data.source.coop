@@ -89,6 +89,12 @@ pub trait Repository {
         delimiter: Option<String>,
         max_keys: NonZeroU32,
     ) -> Result<ListAllBucketsResult, Box<dyn APIError>>;
+    async fn copy_object(
+        &self,
+        copy_identifier_path: String,
+        key: String,
+        range: Option<String>,
+    ) -> Result<(), Box<dyn APIError>>;
 }
 
 #[derive(Debug, Serialize)]
