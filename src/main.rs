@@ -574,10 +574,10 @@ async fn list_objects(
 
 #[get("/")]
 async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
-    // HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
 
     // TODO: Change to some existing default accId & repoId
-    let account_id = env::var("DEFAULT_ACCOUNT_ID").unwrap();
+    /*let account_id = env::var("DEFAULT_ACCOUNT_ID").unwrap();
     let repository_id = env::var("DEFAULT_REPOSITORY_ID").unwrap();
 
     if let Ok(client) = api_client
@@ -605,7 +605,7 @@ async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
     } else {
         // Could not find the repository
         return HttpResponse::NotFound().finish();
-    }
+    }*/
 }
 
 // Main function to set up and run the HTTP server

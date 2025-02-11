@@ -103,94 +103,6 @@ where
     }
 }
 
-async fn load_identity(
-    source_api: &web::Data<SourceAPI>,
-    method: &str,
-    path: &str,
-    headers: &HeaderMap,
-    query_string: &str,
-    body: &BytesMut,
-) -> Result<APIKey, String> {
-    match headers.get("Authorization") {
-        Some(auth) => {
-            let authorization_header: &str = auth.to_str().unwrap();
-            let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
-            //info!("the headers are: {}", headers);
-
-            if signature_method != "AWS4-HMAC-SHA256" {
-                return Err("Invalid Signature Algorithm".to_string());
-            }
-
-            let parts: Vec<&str> = authorization_header.split(", ").collect();
-            let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
-            let signed_headers: Vec<&str> = parts[1]
-                .split("SignedHeaders=")
-                .nth(1)
-                .unwrap_or("")
-                .split(";")
-                .collect();
-            let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
-
-            let parts: Vec<&str> = credential.split("/").collect();
-            let access_key_id = parts[0];
-            let date = parts[1];
-            let region = parts[2];
-            let service = parts[3];
-            match headers.get("x-amz-content-sha256") {
-                Some(content_hash) => {
-                    let canonical_request: String = create_canonical_request(
-                        method,
-                        path,
-                        headers,
-                        signed_headers,
-                        query_string,
-                        body,
-                        content_hash.to_str().unwrap(),
-                    );
-                    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
-
-                    match headers.get("x-amz-date") {
-                        Some(datetime) => {
-                            match source_api.get_api_key(access_key_id.to_string()).await {
-                                Ok(api_key) => {
-                                    let string_to_sign = create_string_to_sign(
-                                        &canonical_request,
-                                        &datetime.to_str().unwrap(),
-                                        &credential_scope,
-                                    );
-
-                                    let calculated_signature: String = calculate_signature(
-                                        api_key.secret_access_key.as_str(),
-                                        date,
-                                        region,
-                                        service,
-                                        &string_to_sign,
-                                    );
-
-                                    if calculated_signature != signature {
-                                        info!("the calculated signature is: {}", calculated_signature);
-                                        info!("the signature is: {}", signature);
-                                        info!("Signature mismatch");
-                                        return Err("Signature mismatch".to_string());
-                                    } else {
-                                        return Ok(api_key);
-                                    }
-                                }
-                                Err(_) => return Err("Error".to_string()),
-                            }
-                        }
-                        None => {
-                            return Err("No x-amz-date header found".to_string());
-                        }
-                    }
-                }
-                None => Err("No x-amz-content-sha256 header found".to_string()),
-            }
-        }
-        None => Err("No Authorization header found".to_string()),
-    }
-}
-
 fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<str> {
     let mut encoded = String::new();
     let mut chars = input.chars().peekable();
@@ -238,6 +150,223 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
     result.into_bytes().to_vec()
 }
 
+fn create_canonical_request(
+    method: &str,
+    path: &str,
+    headers: &HeaderMap,
+    signed_headers: Vec<&str>,
+    query_string: &str,
+    body: &BytesMut,
+    content_hash: &str,
+) -> String {
+    let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
+    
+    // Check for CLI version based on headers
+    let is_v2_23 = headers.contains_key("x-amz-sdk-checksum-algorithm");
+    
+    // Get canonical headers and signed headers based on version
+    let (canonical_headers, final_signed_headers) = if is_v2_23 {
+        get_v2_23_headers(headers, &signed_headers)
+    } else {
+        get_v2_22_headers(headers, &signed_headers)
+    };
+
+    // Handle payload hash based on version and headers
+    let payload_hash = if content_hash == "UNSIGNED-PAYLOAD" {
+        content_hash.to_string()
+    } else if is_v2_23 {
+        // Use the provided content hash for v2.23
+        content_hash.to_string()
+    } else {
+        // Calculate hash for v2.22
+        hash_payload(body)
+    };
+
+    format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method,
+        uri_encode(decoded_path.as_ref(), false),
+        get_canonical_query_string(query_string),
+        canonical_headers,
+        final_signed_headers,
+        payload_hash
+    )
+}
+
+
+fn get_v2_23_headers(headers: &HeaderMap, signed_headers: &Vec<&str>) -> (String, String) {
+    let mut canonical_headers = BTreeMap::new();
+    let mut final_signed_headers = Vec::new();
+
+    // Standard headers
+    let standard_headers = vec![
+        "host",
+        "content-type",
+        "x-amz-content-sha256",
+        "x-amz-date",
+    ];
+
+    // v2.23 specific headers
+    let v2_23_headers = vec![
+        "x-amz-sdk-checksum-algorithm",
+        "x-amz-checksum-crc64nvme",
+    ];
+
+    // Combine all possible headers
+    for header_name in standard_headers.iter().chain(v2_23_headers.iter()) {
+        if let Some(value) = headers.get(*header_name) {
+            let canonical_name = lowercase(header_name);
+            let canonical_value = trim(value.to_str().unwrap_or(""));
+            
+            canonical_headers
+                .entry(canonical_name.clone())
+                .or_insert_with(Vec::new)
+                .push(canonical_value);
+                
+            final_signed_headers.push(canonical_name);
+        }
+    }
+
+    // Sort headers
+    final_signed_headers.sort();
+
+    (
+        canonical_headers
+            .iter()
+            .map(|(name, values)| format!("{}:{}\n", name, values.join(",")))
+            .collect(),
+        final_signed_headers.join(";")
+    )
+}
+
+fn get_v2_22_headers(headers: &HeaderMap, signed_headers: &Vec<&str>) -> (String, String) {
+    let mut canonical_headers = BTreeMap::new();
+    let mut final_signed_headers = Vec::new();
+
+    // v2.22 required headers
+    let v2_22_headers = vec![
+        "host",
+        "content-type",
+        "content-md5",
+        "x-amz-content-sha256",
+        "x-amz-date",
+    ];
+
+    for header_name in v2_22_headers.iter() {
+        if let Some(value) = headers.get(*header_name) {
+            let canonical_name = lowercase(header_name);
+            let canonical_value = trim(value.to_str().unwrap_or(""));
+            
+            canonical_headers
+                .entry(canonical_name.clone())
+                .or_insert_with(Vec::new)
+                .push(canonical_value);
+                
+            final_signed_headers.push(canonical_name);
+        }
+    }
+
+    // Sort headers
+    final_signed_headers.sort();
+
+    (
+        canonical_headers
+            .iter()
+            .map(|(name, values)| format!("{}:{}\n", name, values.join(",")))
+            .collect(),
+        final_signed_headers.join(";")
+    )
+}
+
+async fn load_identity(
+    source_api: &web::Data<SourceAPI>,
+    method: &str,
+    path: &str,
+    headers: &HeaderMap,
+    query_string: &str,
+    body: &BytesMut,
+) -> Result<APIKey, String> {
+    match headers.get("Authorization") {
+        Some(auth) => {
+            let authorization_header: &str = auth.to_str().unwrap();
+            let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
+
+            if signature_method != "AWS4-HMAC-SHA256" {
+                return Err("Invalid Signature Algorithm".to_string());
+            }
+
+            // Parse authorization header
+            let parts: Vec<&str> = authorization_header.split(", ").collect();
+            let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
+            let signed_headers: Vec<&str> = parts[1]
+                .split("SignedHeaders=")
+                .nth(1)
+                .unwrap_or("")
+                .split(";")
+                .collect();
+            let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
+
+            // Extract credential components
+            let parts: Vec<&str> = credential.split("/").collect();
+            let access_key_id = parts[0];
+            let date = parts[1];
+            let region = parts[2];
+            let service = parts[3];
+
+            // Get content hash
+            let content_hash = headers
+                .get("x-amz-content-sha256")
+                .map(|h| h.to_str().unwrap_or(""))
+                .unwrap_or("");
+
+            // Create canonical request
+            let canonical_request = create_canonical_request(
+                method,
+                path,
+                headers,
+                signed_headers,
+                query_string,
+                body,
+                content_hash,
+            );
+
+            let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+
+            match headers.get("x-amz-date") {
+                Some(datetime) => {
+                    match source_api.get_api_key(access_key_id.to_string()).await {
+                        Ok(api_key) => {
+                            let string_to_sign = create_string_to_sign(
+                                &canonical_request,
+                                datetime.to_str().unwrap(),
+                                &credential_scope,
+                            );
+
+                            let calculated_signature = calculate_signature(
+                                api_key.secret_access_key.as_str(),
+                                date,
+                                region,
+                                service,
+                                &string_to_sign,
+                            );
+
+                            if calculated_signature != signature {
+                                // Add debug logging
+                                println!("Signature mismatch"); 
+                                return Err("Signature mismatch".to_string());
+                            }
+                            Ok(api_key)
+                        }
+                        Err(_) => Err("Invalid API key".to_string()),
+                    }
+                }
+                None => Err("No x-amz-date header found".to_string()),
+            }
+        }
+        None => Err("No Authorization header found".to_string()),
+    }
+}
+
 fn calculate_signature(
     key: &str,
     date: &str,
@@ -245,13 +374,22 @@ fn calculate_signature(
     service: &str,
     string_to_sign: &str,
 ) -> String {
+    println!("Calculating signature with:");
+    println!("Date: {}", date);
+    println!("Region: {}", region);
+    println!("Service: {}", service);
+    println!("String to sign: {}", string_to_sign);
+
     let k_date = hmac_sha256(format!("AWS4{}", key).as_bytes(), date.as_bytes());
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
-    hex::encode(&hmac_sha256(&k_signing, string_to_sign.as_bytes()))
+    let signature = hex::encode(&hmac_sha256(&k_signing, string_to_sign.as_bytes()));
+    signature
 }
+
+
 
 fn create_string_to_sign(
     canonical_request: &str,
@@ -263,38 +401,6 @@ fn create_string_to_sign(
         datetime,
         credential_scope,
         hex::encode(Sha256::digest(canonical_request.as_bytes()))
-    )
-}
-
-fn create_canonical_request(
-    method: &str,
-    path: &str,
-    headers: &HeaderMap,
-    signed_headers: Vec<&str>,
-    query_string: &str,
-    body: &BytesMut,
-    content_hash: &str,
-) -> String {
-    let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
-    if content_hash == "UNSIGNED-PAYLOAD" {
-        return format!(
-            "{}\n{}\n{}\n{}\n{}\n{}",
-            method,
-            uri_encode(decoded_path.as_ref(), false),
-            get_canonical_query_string(query_string),
-            get_canonical_headers(headers, &signed_headers),
-            get_signed_headers(&signed_headers),
-            content_hash
-        );
-    }
-    format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        method,
-        uri_encode(decoded_path.as_ref(), false),
-        get_canonical_query_string(query_string),
-        get_canonical_headers(headers, &signed_headers),
-        get_signed_headers(&signed_headers),
-        hash_payload(body)
     )
 }
 
