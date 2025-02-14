@@ -582,9 +582,6 @@ async fn index() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let source_api_url = env::var("SOURCE_API_URL").unwrap();
     let source_api = web::Data::new(SourceAPI::new(source_api_url));
-    /*json_env_logger::builder()
-        .target(json_env_logger::env_logger::Target::Stdout)
-        .init();*/
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {

@@ -48,4 +48,3 @@ sha2 = "0.10.6"
 hex = "0.4.3"
 hmac = "0.12"
 actix-http = "^3"
-json_env_logger = { version = "0.1" }
