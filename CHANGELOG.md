@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.21]
+
+### Bug Fixes
+* Fixed the issue related to handling streaming payload.
+
+
 ## [0.1.20](https://github.com/source-cooperative/data.source.coop/compare/v0.1.19...v0.1.20) (2024-12-03)
 
 
