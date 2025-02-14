@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.21]
+* Added support to handle Streaming payload in upload operation.
+
+
 ## [0.1.20](https://github.com/source-cooperative/data.source.coop/compare/v0.1.19...v0.1.20) (2024-12-03)
 
 
