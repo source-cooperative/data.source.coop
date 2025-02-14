@@ -271,7 +271,8 @@ fn create_canonical_request(
     content_hash: &str,
 ) -> String {
     let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
-    if content_hash == "UNSIGNED-PAYLOAD" {
+    if (content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") || 
+                (content_hash ==  "UNSIGNED-PAYLOAD") {
         return format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
             method,
