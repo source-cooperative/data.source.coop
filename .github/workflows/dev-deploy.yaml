@@ -46,3 +46,4 @@ jobs:
           task-definition: ${{ steps.render-data-proxy-container.outputs.task-definition }}
           service: source-data-proxy
           cluster: SourceCooperative-Dev
+          
