@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.21](https://github.com/source-cooperative/data.source.coop/compare/v0.1.20...v0.1.21) (2025-02-15)
+
+
+### Bug Fixes
+
+* Latest cli version support - Handled streaming payload support ([#48](https://github.com/source-cooperative/data.source.coop/issues/48)) ([ca8bda0](https://github.com/source-cooperative/data.source.coop/commit/ca8bda0486298c5ffef95909a1a10a68beb226dd))
+
 ## [0.1.21]
 
 ### Bug Fixes
