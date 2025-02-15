@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.21]
+
+### Bug Fixes
+* Fixed the issue related to handling streaming payload.
+
+
+## [0.1.20](https://github.com/source-cooperative/data.source.coop/compare/v0.1.19...v0.1.20) (2024-12-03)
+
+
+### Bug Fixes
+
+* Fixed the slow response of the ListObjects call. ([#32](https://github.com/source-cooperative/data.source.coop/issues/32)) ([6afcf13](https://github.com/source-cooperative/data.source.coop/commit/6afcf13ec15b9cc79f5d6a2aef55b3d269a14e16))
+
 ## [0.1.19](https://github.com/source-cooperative/data.source.coop/compare/v0.1.18...v0.1.19) (2024-11-28)
 
 
