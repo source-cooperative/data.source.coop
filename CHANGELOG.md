@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.20](https://github.com/source-cooperative/data.source.coop/compare/v0.1.19...v0.1.20) (2025-02-15)
+
+
+### Bug Fixes
+
+* changed max keys to 1000 for list objects call. ([#31](https://github.com/source-cooperative/data.source.coop/issues/31)) ([8ba11aa](https://github.com/source-cooperative/data.source.coop/commit/8ba11aaa5ee6be7421d7b625577c150a14f5b0cd))
+* update dev deploy workflow to use amd64 platform. ([d8e4974](https://github.com/source-cooperative/data.source.coop/commit/d8e4974e7ff510da29d9f2145a07d921d0eb55a5))
+* update prod deploy workflow to platform amd64. ([ae79c0d](https://github.com/source-cooperative/data.source.coop/commit/ae79c0dc60b08789592a3ae8155afcfda291ab06))
+
 ## [0.1.19](https://github.com/source-cooperative/data.source.coop/compare/v0.1.18...v0.1.19) (2024-11-28)
 
 
