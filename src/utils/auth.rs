@@ -16,6 +16,7 @@ use std::{
     future::{ready, Ready},
     rc::Rc,
 };
+use std::str::from_utf8_mut;
 use url::form_urlencoded;
 
 use crate::apis::source::{APIKey, SourceAPI};
@@ -271,6 +272,18 @@ fn create_canonical_request(
     content_hash: &str,
 ) -> String {
     let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
+    if(content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") {// cunked payload with no content signing) 
+        let bodyString: String = String::from_utf8_lossy(body).into_owned();
+        let bodyStr: &str = bodyString.as_str();
+        
+        let chunkSize: &str = bodyStr.split_once('\n')
+        .map(|(first, _)| first)
+        .unwrap_or(bodyStr);
+        
+        let number: i32 = chunkSize.trim().parse().unwrap();
+        println!("{} chunksize", number);
+    }
+
     if (content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") || 
                 (content_hash ==  "UNSIGNED-PAYLOAD") {
         return format!(
@@ -293,6 +306,22 @@ fn create_canonical_request(
         hash_payload(body)
     )
 }
+
+/*fn extract_checksum_algorithm(header: &str, body: &BytesMut) {
+    switch header {
+        case "x-amz-checksum-crc32":
+           //body = crc32c(body)
+           let bodyStr = StrMut::from(body);
+           bodyStr.split
+
+        case "x-amz-checksum-crc32c":
+        case "x-amz-checksum-crc64nvme":
+        case "x-amz-checksum-sha1":
+        case "x-amz-checksum-sha256":
+
+            
+    }
+}*/
 
 fn get_canonical_query_string(query_string: &str) -> String {
     if query_string.is_empty() {
