@@ -137,13 +137,14 @@ async fn load_identity(
             let service = parts[3];
             match headers.get("x-amz-content-sha256") {
                 Some(content_hash) => {
+                    let payload = remove_trailing_chunks_from_payload(body, content_hash.to_str().unwrap());
                     let canonical_request: String = create_canonical_request(
                         method,
                         path,
                         headers,
                         signed_headers,
                         query_string,
-                        body,
+                        &payload,
                         content_hash.to_str().unwrap(),
                     );
                     let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
@@ -262,6 +263,33 @@ fn create_string_to_sign(
     )
 }
 
+fn remove_trailing_chunks_from_payload(
+    body: &BytesMut,
+    content_hash: &str,
+) -> BytesMut {
+    
+    if(content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") {// cunked payload with no content signing) 
+        let bodyString: String = String::from_utf8_lossy(body).into_owned();
+        let bodyStr: &str = bodyString.as_str();
+        
+        let mut lines = bodyStr.lines();
+        let chunkSize: &str = lines.next().unwrap();
+        let number: i32 = chunkSize.trim().parse().unwrap();
+        println!("{} chunksize", number);
+        let data = bodyStr.split_once("\r\n")
+                   .map(|(first, second)| second)
+                   .unwrap_or(bodyStr);
+        
+        let newData = data.split_once("0\r\n")
+                      .map(|(first, second)| first)
+                      .unwrap_or(data);
+        
+        return BytesMut::from(newData.as_bytes());
+    }
+    return BytesMut::from(body.as_ref());
+
+}
+
 fn create_canonical_request(
     method: &str,
     path: &str,
@@ -272,18 +300,6 @@ fn create_canonical_request(
     content_hash: &str,
 ) -> String {
     let decoded_path = percent_decode_str(path).decode_utf8().unwrap();
-    if(content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") {// cunked payload with no content signing) 
-        let bodyString: String = String::from_utf8_lossy(body).into_owned();
-        let bodyStr: &str = bodyString.as_str();
-        
-        let chunkSize: &str = bodyStr.split_once('\n')
-        .map(|(first, _)| first)
-        .unwrap_or(bodyStr);
-        
-        let number: i32 = chunkSize.trim().parse().unwrap();
-        println!("{} chunksize", number);
-    }
-
     if (content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") || 
                 (content_hash ==  "UNSIGNED-PAYLOAD") {
         return format!(
