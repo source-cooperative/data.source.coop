@@ -72,6 +72,7 @@ where
             while let Some(chunk) = stream.next().await {
                 body.extend_from_slice(&chunk?);
             }
+            let bodyRef = &mut body;
 
             let identity = match load_identity(
                 req.app_data::<web::Data<SourceAPI>>().unwrap(),
@@ -79,7 +80,7 @@ where
                 req.path(),
                 req.headers(),
                 req.query_string(),
-                &body,
+                bodyRef,
             )
             .await
             {
@@ -109,7 +110,7 @@ async fn load_identity(
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
-    body: &BytesMut,
+    body: &mut BytesMut,
 ) -> Result<APIKey, String> {
     match headers.get("Authorization") {
         Some(auth) => {
@@ -137,14 +138,15 @@ async fn load_identity(
             let service = parts[3];
             match headers.get("x-amz-content-sha256") {
                 Some(content_hash) => {
-                    let payload = remove_trailing_chunks_from_payload(body, content_hash.to_str().unwrap());
+                    remove_trailing_chunks_from_payload(body, content_hash.to_str().unwrap());
+                    println!("{} changed payload", String::from_utf8_lossy(&body).into_owned());
                     let canonical_request: String = create_canonical_request(
                         method,
                         path,
                         headers,
                         signed_headers,
                         query_string,
-                        &payload,
+                        body,
                         content_hash.to_str().unwrap(),
                     );
                     let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
@@ -264,30 +266,31 @@ fn create_string_to_sign(
 }
 
 fn remove_trailing_chunks_from_payload(
-    body: &BytesMut,
+    body: &mut BytesMut,
     content_hash: &str,
-) -> BytesMut {
+) {
     
     if(content_hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER") {// cunked payload with no content signing) 
         let bodyString: String = String::from_utf8_lossy(body).into_owned();
         let bodyStr: &str = bodyString.as_str();
         
-        let mut lines = bodyStr.lines();
-        let chunkSize: &str = lines.next().unwrap();
-        let number: i32 = chunkSize.trim().parse().unwrap();
-        println!("{} chunksize", number);
+        //let mut lines = bodyStr.lines();
+        //let chunkSize: &str = lines.next().unwrap();
+        //let number: i32 = chunkSize.trim().parse().unwrap();
+        //println!("{} chunksize", number);
         let data = bodyStr.split_once("\r\n")
                    .map(|(first, second)| second)
                    .unwrap_or(bodyStr);
+        println!("{} data", data);            
         
         let newData = data.split_once("0\r\n")
                       .map(|(first, second)| first)
-                      .unwrap_or(data);
+                      .unwrap_or(data).trim();
+        println!("{} updated payload", newData);
+        body.clear();
+        body.copy_from_slice(newData.as_bytes());           
         
-        return BytesMut::from(newData.as_bytes());
     }
-    return BytesMut::from(body.as_ref());
-
 }
 
 fn create_canonical_request(
@@ -323,21 +326,6 @@ fn create_canonical_request(
     )
 }
 
-/*fn extract_checksum_algorithm(header: &str, body: &BytesMut) {
-    switch header {
-        case "x-amz-checksum-crc32":
-           //body = crc32c(body)
-           let bodyStr = StrMut::from(body);
-           bodyStr.split
-
-        case "x-amz-checksum-crc32c":
-        case "x-amz-checksum-crc64nvme":
-        case "x-amz-checksum-sha1":
-        case "x-amz-checksum-sha256":
-
-            
-    }
-}*/
 
 fn get_canonical_query_string(query_string: &str) -> String {
     if query_string.is_empty() {
