@@ -259,21 +259,36 @@ async fn put_object(
         }
 
         if params.part_number.is_none() && params.upload_id.is_none() {
-            // Found the repository, now try to upload the object
-            match client
-                .put_object(
-                    key.clone(),
-                    bytes,
-                    headers
-                        .get(CONTENT_TYPE)
-                        .and_then(|h| h.to_str().ok())
-                        .map(|s| s.to_string()),
-                )
-                .await
-            {
-                Ok(_) => HttpResponse::NoContent().finish(),
+            // Check if this is a server-side copy operation
+            if let Some(header_copy_identifier) = req.headers().get("x-amz-copy-source") {
+                let copy_identifier_path = header_copy_identifier.to_str().unwrap_or("");
+                match client
+                    .copy_object((&copy_identifier_path).to_string(), key.clone(), None)
+                    .await
+                {
+                    Ok(_) => HttpResponse::NoContent().finish(),
+                    Err(_) => {
+                        return HttpResponse::InternalServerError()
+                            .body("Failed to store copied object")
+                    }
+                }
+            } else {
+                // Found the repository, now try to upload the object
+                match client
+                    .put_object(
+                        key.clone(),
+                        bytes,
+                        headers
+                            .get(CONTENT_TYPE)
+                            .and_then(|h| h.to_str().ok())
+                            .map(|s| s.to_string()),
+                    )
+                    .await
+                {
+                    Ok(_) => HttpResponse::NoContent().finish(),
 
-                Err(_) => HttpResponse::NotFound().finish(),
+                    Err(_) => HttpResponse::NotFound().finish(),
+                }
             }
         } else if params.part_number.is_some() && params.upload_id.is_some() {
             match client
