@@ -573,8 +573,39 @@ async fn list_objects(
 }
 
 #[get("/")]
-async fn index() -> impl Responder {
-    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+async fn index(api_client: web::Data<SourceAPI>) -> impl Responder {
+    // HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+
+    // TODO: Change to some existing default accId & repoId
+    let account_id = env::var("DEFAULT_ACCOUNT_ID").unwrap();
+    let repository_id = env::var("DEFAULT_REPOSITORY_ID").unwrap();
+
+    if let Ok(client) = api_client
+        .get_backend_client(&account_id, &repository_id.to_string())
+        .await
+    {
+        match client
+            // Pass default static values
+            .list_buckets_accounts(
+                "".to_string(),
+                None,
+                Some("/".to_string()),
+                NonZeroU32::new(1000).unwrap(),
+            )
+            .await
+        {
+            Ok(res) => match to_string_with_root("ListAllBucketsResult", &res) {
+                Ok(serialized) => HttpResponse::Ok()
+                    .content_type("application/xml")
+                    .body(serialized),
+                Err(e) => HttpResponse::InternalServerError().finish(),
+            },
+            Err(_) => HttpResponse::NotFound().finish(),
+        }
+    } else {
+        // Could not find the repository
+        return HttpResponse::NotFound().finish();
+    }
 }
 
 // Main function to set up and run the HTTP server

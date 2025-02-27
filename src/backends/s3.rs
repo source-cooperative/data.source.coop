@@ -20,7 +20,9 @@ use rusoto_s3::{
 };
 use std::pin::Pin;
 
-use super::common::{MultipartPart, UploadPartResponse};
+use super::common::{
+    ListAllBucketsResult, ListBucket, ListBuckets, MultipartPart, UploadPartResponse,
+};
 
 pub struct S3Repository {
     pub account_id: String,
@@ -606,6 +608,86 @@ impl Repository for S3Repository {
                             ),
                         })
                         .collect(),
+                };
+
+                return Ok(result);
+            }
+            Err(error) => {
+                return Err(Box::new(InternalServerError {
+                    message: "Internal Server Error".to_string(),
+                }));
+            }
+        }
+    }
+    async fn list_buckets_accounts(
+        &self,
+        _prefix: String,
+        continuation_token: Option<String>,
+        delimiter: Option<String>,
+        max_keys: NonZeroU32,
+    ) -> Result<ListAllBucketsResult, Box<dyn APIError>> {
+        let client: S3Client;
+
+        if self.auth_method == "s3_access_key" {
+            let credentials = rusoto_credential::StaticProvider::new_minimal(
+                self.access_key_id.clone().unwrap(),
+                self.secret_access_key.clone().unwrap(),
+            );
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_ecs_task_role" {
+            let credentials = rusoto_credential::ContainerProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else if self.auth_method == "s3_local" {
+            let credentials = rusoto_credential::ChainProvider::new();
+            client = S3Client::new_with(
+                rusoto_core::request::HttpClient::new().unwrap(),
+                credentials,
+                self.region.clone(),
+            );
+        } else {
+            return Err(Box::new(InternalServerError {
+                message: format!("Internal Server Error"),
+            }));
+        }
+
+        let mut request = ListObjectsV2Request {
+            bucket: self.bucket.clone(),
+            delimiter,
+            max_keys: Some(max_keys.get() as i64),
+            ..Default::default()
+        };
+
+        if let Some(token) = continuation_token {
+            request.continuation_token = Some(token);
+        }
+
+        match client.list_objects_v2(request).await {
+            Ok(output) => {
+                let result = ListAllBucketsResult {
+                    buckets: ListBuckets {
+                        bucket: output
+                            .common_prefixes
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|item| ListBucket {
+                                name: replace_first(
+                                    item.prefix.clone().unwrap_or_else(|| "".to_string()),
+                                    "/".to_string(),
+                                    "".to_string(),
+                                ),
+                                // TODO: Change from default creation date
+                                creation_date: Utc::now().to_rfc2822(),
+                            })
+                            .collect(),
+                    },
                 };
 
                 return Ok(result);

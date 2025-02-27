@@ -19,7 +19,9 @@ use crate::backends::common::{
 use crate::utils::core::replace_first;
 use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
 
-use super::common::{MultipartPart, UploadPartResponse};
+use super::common::{
+    ListAllBucketsResult, ListBucket, ListBuckets, MultipartPart, UploadPartResponse,
+};
 
 pub struct AzureRepository {
     pub account_id: String,
@@ -325,6 +327,30 @@ impl Repository for AzureRepository {
                 Err(_) => (),
             }
         }
+
+        Ok(result)
+    }
+    async fn list_buckets_accounts(
+        &self,
+        _prefix: String,
+        _continuation_token: Option<String>,
+        _delimiter: Option<String>,
+        _max_keys: NonZeroU32,
+    ) -> Result<ListAllBucketsResult, Box<dyn APIError>> {
+        let result = ListAllBucketsResult {
+            buckets: ListBuckets {
+                bucket: vec![
+                    ListBucket {
+                        name: "dummy".to_string(),
+                        creation_date: "2025-01-27T09:33:34.000Z".to_string(),
+                    },
+                    ListBucket {
+                        name: "dummy1".to_string(),
+                        creation_date: "2025-01-27T09:33:34.000Z".to_string(),
+                    },
+                ],
+            },
+        };
 
         Ok(result)
     }
