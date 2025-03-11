@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.21](https://github.com/source-cooperative/data.source.coop/compare/v0.1.20...v0.1.21) (2025-03-11)
+
+
+### Bug Fixes
+
+* file empty on mv ([#51](https://github.com/source-cooperative/data.source.coop/issues/51)) ([1f1b3fa](https://github.com/source-cooperative/data.source.coop/commit/1f1b3fa24b175162965281a50c4f50592e1046f8))
+
 ## [0.1.20](https://github.com/source-cooperative/data.source.coop/compare/v0.1.19...v0.1.20) (2024-12-03)
 
 
