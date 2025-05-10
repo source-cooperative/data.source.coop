@@ -1,7 +1,66 @@
 use actix_web::HttpResponse;
+use reqwest::Error as ReqwestError;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum BackendError {
+    #[error("repository not found")]
+    RepositoryNotFound,
+    #[error("source repository not found")]
+    SourceRepositoryNotFound,
+    #[error("source repository missing primary mirror")]
+    SourceRepositoryMissingPrimaryMirror,
+    #[error("data connection not found")]
+    DataConnectionNotFound,
+    #[error("reqwest error (url {}, message {})", .0.url().map(|u| u.to_string()).unwrap_or("unknown".to_string()), .0.to_string())]
+    ReqwestError(#[from] ReqwestError),
+    #[error("Api threw a server error (url {}, status {}, message {})", .url, .status, .message)]
+    ApiServerError {
+        url: String,
+        status: u16,
+        message: String,
+    },
+    #[error("Api threw a client error (url {}, status {}, message {})", .url, .status, .message)]
+    ApiClientError {
+        url: String,
+        status: u16,
+        message: String,
+    },
+    #[error("Failed to parse JSON (url {})", .url)]
+    JsonParseError { url: String },
+    #[error("Unexpected data connection provider (provider {})", .provider)]
+    UnexpectedDataConnectionProvider { provider: String },
+}
+
+impl BackendError {
+    pub fn to_response(&self) -> HttpResponse {
+        // TODO: Log the error
+        match self {
+            BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
+            BackendError::SourceRepositoryNotFound => HttpResponse::NotFound().finish(),
+            BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
+            BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
+            BackendError::ReqwestError(e) => HttpResponse::BadGateway().finish(),
+            BackendError::ApiServerError {
+                url,
+                status,
+                message,
+            } => HttpResponse::BadGateway().finish(),
+            BackendError::ApiClientError {
+                url,
+                status,
+                message,
+            } => HttpResponse::BadGateway().finish(),
+            BackendError::JsonParseError { url } => HttpResponse::InternalServerError().finish(),
+            BackendError::UnexpectedDataConnectionProvider { provider } => {
+                HttpResponse::InternalServerError().finish()
+            }
+        }
+    }
+}
 
 pub trait APIError: std::error::Error + Send + Sync {
     fn to_response(&self) -> HttpResponse;

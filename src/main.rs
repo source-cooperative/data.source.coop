@@ -58,102 +58,110 @@ async fn get_object(
 ) -> impl Responder {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
-    let mut range = None;
     let mut range_start = 0;
     let mut is_range_request = false;
 
-    if let Some(range_header) = headers.get(RANGE) {
-        if let Ok(r) = range_header.to_str() {
-            if let Some(bytes_range) = r.strip_prefix("bytes=") {
-                if let Some((start, end)) = bytes_range.split_once('-') {
-                    if let Ok(s) = start.parse::<u64>() {
-                        range_start = s;
-                        if end.is_empty() || end.parse::<u64>().is_ok() {
-                            range = Some(r.to_string());
-                            is_range_request = true;
-                        }
-                    }
+    let range = headers
+        .get(RANGE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|r| r.strip_prefix("bytes="))
+        .and_then(|bytes_range| bytes_range.split_once('-'))
+        .and_then(|(start, end)| {
+            start.parse::<u64>().ok().map(|s| {
+                range_start = s;
+                if end.is_empty() || end.parse::<u64>().is_ok() {
+                    is_range_request = true;
+                    Some(format!("bytes={}-{}", start, end))
+                } else {
+                    None
                 }
-            }
-        }
-    }
+            })
+        })
+        .flatten();
 
-    if let Ok(client) = api_client
+    let client = match api_client
         .get_backend_client(&account_id, &repository_id)
         .await
     {
-        match api_client
-            .is_authorized(
-                user_identity.into_inner(),
-                &account_id,
-                &repository_id,
-                RepositoryPermission::Read,
-            )
-            .await
-        {
-            Ok(authorized) => {
-                if !authorized {
-                    return HttpResponse::Unauthorized().finish();
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
+        Ok(client) => client,
+        Err(err) => {
+            return err.to_response();
         }
+    };
 
-        // Found the repository, now try to get the object
-        match client.get_object(key.clone(), range).await {
-            Ok(res) => {
-                let mut content_length = String::from("*");
-
-                // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
-                // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
-                if is_range_request {
-                    match client.head_object(key.clone()).await {
-                        Ok(head_res) => {
-                            content_length = head_res.content_length.to_string();
-                        }
-                        Err(_) => {}
-                    }
-                }
-
-                let stream = res.body.map(|result| {
-                    result
-                        .map(web::Bytes::from)
-                        .map_err(|e| ErrorInternalServerError(e.to_string()))
-                });
-
-                let streaming_response = StreamingResponse::new(stream, res.content_length);
-                let mut response = if is_range_request {
-                    HttpResponse::PartialContent()
-                } else {
-                    HttpResponse::Ok()
-                };
-
-                let mut response = response
-                    .insert_header(("Content-Type", res.content_type))
-                    .insert_header(("Last-Modified", res.last_modified))
-                    .insert_header(("Content-Length", res.content_length.to_string()))
-                    .insert_header(("ETag", res.etag));
-
-                if is_range_request {
-                    response = response.insert_header((
-                        "Content-Range",
-                        format!(
-                            "bytes {}-{}/{}",
-                            range_start,
-                            range_start + res.content_length - 1,
-                            content_length
-                        ),
-                    ));
-                }
-
-                return response.body(streaming_response);
-            }
-            Err(_) => HttpResponse::NotFound().finish(),
+    let authorized = match api_client
+        .is_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id,
+            RepositoryPermission::Read,
+        )
+        .await
+    {
+        Ok(authorized) => authorized,
+        Err(err) => {
+            return err.to_response();
         }
-    } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
+    };
+
+    if !authorized {
+        return HttpResponse::Unauthorized().finish();
     }
+
+    // Found the repository, now try to get the object
+    let res = match client.get_object(key.clone(), range).await {
+        Ok(res) => res,
+        Err(err) => {
+            return err.to_response();
+        }
+    };
+
+    let mut content_length = String::from("*");
+    // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
+    // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
+    if is_range_request {
+        match client.head_object(key.clone()).await {
+            Ok(head_res) => {
+                content_length = head_res.content_length.to_string();
+            }
+            Err(_) => {
+                // TODO: Log this error
+            }
+        }
+    }
+
+    let stream = res.body.map(|result| {
+        result
+            .map(web::Bytes::from)
+            .map_err(|e| ErrorInternalServerError(e.to_string()))
+    });
+
+    let streaming_response = StreamingResponse::new(stream, res.content_length);
+    let mut response = if is_range_request {
+        HttpResponse::PartialContent()
+    } else {
+        HttpResponse::Ok()
+    };
+
+    let mut response = response
+        .insert_header(("Content-Type", res.content_type))
+        .insert_header(("Last-Modified", res.last_modified))
+        .insert_header(("Content-Length", res.content_length.to_string()))
+        .insert_header(("ETag", res.etag));
+
+    if is_range_request {
+        response = response.insert_header((
+            "Content-Range",
+            format!(
+                "bytes {}-{}/{}",
+                range_start,
+                range_start + res.content_length - 1,
+                content_length
+            ),
+        ));
+    }
+
+    return response.body(streaming_response);
 }
 
 #[derive(Debug, Deserialize)]
