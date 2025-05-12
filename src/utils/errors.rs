@@ -9,8 +9,8 @@ use thiserror::Error;
 pub enum BackendError {
     #[error("repository not found")]
     RepositoryNotFound,
-    #[error("source repository not found")]
-    SourceRepositoryNotFound,
+    #[error("failed to fetch repository permissions")]
+    RepositoryPermissionsNotFound,
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
     #[error("data connection not found")]
@@ -35,29 +35,30 @@ pub enum BackendError {
     UnexpectedDataConnectionProvider { provider: String },
 }
 
-impl BackendError {
-    pub fn to_response(&self) -> HttpResponse {
-        // TODO: Log the error
-        match self {
+impl From<BackendError> for HttpResponse {
+    fn from(error: BackendError) -> HttpResponse {
+        match error {
             BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
-            BackendError::SourceRepositoryNotFound => HttpResponse::NotFound().finish(),
             BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
             BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
-            BackendError::ReqwestError(e) => HttpResponse::BadGateway().finish(),
+            BackendError::ReqwestError(_e) => HttpResponse::BadGateway().finish(),
             BackendError::ApiServerError {
-                url,
-                status,
-                message,
+                url: _url,
+                status: _status,
+                message: _message,
             } => HttpResponse::BadGateway().finish(),
             BackendError::ApiClientError {
-                url,
-                status,
+                url: _url,
+                status: _status,
                 message,
-            } => HttpResponse::BadGateway().finish(),
-            BackendError::JsonParseError { url } => HttpResponse::InternalServerError().finish(),
-            BackendError::UnexpectedDataConnectionProvider { provider } => {
+            } => HttpResponse::BadGateway().body(format!("{}", message)),
+            BackendError::JsonParseError { url: _url } => {
                 HttpResponse::InternalServerError().finish()
             }
+            BackendError::UnexpectedDataConnectionProvider {
+                provider: _provider,
+            } => HttpResponse::InternalServerError().finish(),
+            BackendError::RepositoryPermissionsNotFound => HttpResponse::BadGateway().finish(), // _ => HttpResponse::InternalServerError().finish(),
         }
     }
 }
@@ -65,30 +66,6 @@ impl BackendError {
 pub trait APIError: std::error::Error + Send + Sync {
     fn to_response(&self) -> HttpResponse;
 }
-
-#[derive(Serialize, Debug)]
-pub struct RepositoryNotFoundError {
-    pub account_id: String,
-    pub repository_id: String,
-}
-
-impl APIError for RepositoryNotFoundError {
-    fn to_response(&self) -> HttpResponse {
-        HttpResponse::NotFound().json(self)
-    }
-}
-
-impl fmt::Display for RepositoryNotFoundError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Repository Not Found: {}/{}",
-            self.account_id, self.repository_id
-        )
-    }
-}
-
-impl Error for RepositoryNotFoundError {}
 
 #[derive(Serialize, Debug)]
 pub struct ObjectNotFoundError {
@@ -110,25 +87,6 @@ impl fmt::Display for ObjectNotFoundError {
 }
 
 impl Error for ObjectNotFoundError {}
-
-#[derive(Serialize, Debug)]
-pub struct AccountNotFoundError {
-    pub account_id: String,
-}
-
-impl APIError for AccountNotFoundError {
-    fn to_response(&self) -> HttpResponse {
-        HttpResponse::NotFound().json(self)
-    }
-}
-
-impl fmt::Display for AccountNotFoundError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Account Not Found: {}", self.account_id)
-    }
-}
-
-impl Error for AccountNotFoundError {}
 
 #[derive(Serialize, Debug)]
 pub struct InternalServerError {

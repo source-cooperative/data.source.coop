@@ -17,10 +17,12 @@ use bytes::Bytes;
 use core::num::NonZeroU32;
 use env_logger::Env;
 use futures_util::StreamExt;
+use log::error;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
 use std::env;
+use std::fmt::Debug;
 use std::pin::Pin;
 use std::str::from_utf8;
 use std::task::{Context, Poll};
@@ -85,7 +87,8 @@ async fn get_object(
     {
         Ok(client) => client,
         Err(err) => {
-            return err.to_response();
+            error!("Error getting backend client: {}", err);
+            return HttpResponse::from(err);
         }
     };
 
@@ -100,7 +103,8 @@ async fn get_object(
     {
         Ok(authorized) => authorized,
         Err(err) => {
-            return err.to_response();
+            error!("Error checking authorization: {}", err);
+            return HttpResponse::from(err);
         }
     };
 
@@ -120,14 +124,13 @@ async fn get_object(
     // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
     // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
     if is_range_request {
-        match client.head_object(key.clone()).await {
-            Ok(head_res) => {
-                content_length = head_res.content_length.to_string();
+        content_length = match client.head_object(key.clone()).await {
+            Ok(res) => res.content_length.to_string(),
+            Err(err) => {
+                error!("Error getting content length: {}", err);
+                return HttpResponse::InternalServerError().finish();
             }
-            Err(_) => {
-                // TODO: Log this error
-            }
-        }
+        };
     }
 
     let stream = res.body.map(|result| {

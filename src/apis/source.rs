@@ -369,7 +369,8 @@ impl SourceAPI {
             .headers(headers)
             .send()
             .await?;
-        process_json_response::<DataConnection>(response, BackendError::DataConnectionNotFound).await
+        process_json_response::<DataConnection>(response, BackendError::DataConnectionNotFound)
+            .await
     }
 
     async fn get_data_connection(
@@ -494,7 +495,8 @@ impl SourceAPI {
             self.endpoint, account_id, repository_id
         ))
         .await?;
-        process_json_response::<SourceRepository>(response, BackendError::SourceRepositoryNotFound).await
+        process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
+            .await
     }
 
     pub async fn is_authorized(
@@ -503,7 +505,7 @@ impl SourceAPI {
         account_id: &String,
         repository_id: &String,
         permission: RepositoryPermission,
-    ) -> Result<bool, Box<dyn APIError>> {
+    ) -> Result<bool, BackendError> {
         let anon: bool;
         if user_identity.api_key.is_none() {
             anon = true;
@@ -525,19 +527,16 @@ impl SourceAPI {
         }
 
         // If not in cache, fetch it
-        match self
+        let permissions = self
             .fetch_permission(user_identity.clone(), &account_id, &repository_id)
-            .await
-        {
-            Ok(permissions) => {
-                // Cache the successful result
-                self.permissions_cache
-                    .insert(cache_key, permissions.clone())
-                    .await;
-                return Ok(permissions.contains(&permission));
-            }
-            Err(e) => Err(e),
-        }
+            .await?;
+
+        // Cache the successful result
+        self.permissions_cache
+            .insert(cache_key, permissions.clone())
+            .await;
+        
+        Ok(permissions.contains(&permission))
     }
 
     async fn fetch_permission(
@@ -545,7 +544,7 @@ impl SourceAPI {
         user_identity: UserIdentity,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<Vec<RepositoryPermission>, Box<dyn APIError>> {
+    ) -> Result<Vec<RepositoryPermission>, BackendError> {
         let client = reqwest::Client::new();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
@@ -562,24 +561,19 @@ impl SourceAPI {
             );
         }
 
-        match client
+        let response = client
             .get(format!(
                 "{}/api/v1/repositories/{}/{}/permissions",
                 source_api_url, account_id, repository_id
             ))
             .headers(headers)
             .send()
-            .await
-        {
-            Ok(response) => match response.json::<Vec<RepositoryPermission>>().await {
-                Ok(permissions) => Ok(permissions),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(_) => Err(Box::new(InternalServerError {
-                message: "Internal Server Error".to_string(),
-            })),
-        }
+            .await?;
+        
+        process_json_response::<Vec<RepositoryPermission>>(
+            response,
+            BackendError::RepositoryPermissionsNotFound,
+        )
+        .await
     }
 }
