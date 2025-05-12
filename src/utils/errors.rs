@@ -38,7 +38,7 @@ pub enum BackendError {
     UnexpectedDataConnectionProvider { provider: String },
     #[error("Unauthorized")]
     UnauthorizationError,
-    #[error("Unexpected API error")] // TODO: remove this
+    #[error("Unexpected API error: {0}")] // TODO: remove this
     UnexpectedApiError(String),
 }
 
