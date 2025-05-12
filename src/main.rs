@@ -27,7 +27,7 @@ use std::pin::Pin;
 use std::str::from_utf8;
 use std::task::{Context, Poll};
 use utils::auth::{LoadIdentity, UserIdentity};
-
+use utils::errors::BackendError;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct FakeBody {
@@ -57,7 +57,7 @@ async fn get_object(
     req: HttpRequest,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
     let mut range_start = 0;
@@ -81,56 +81,35 @@ async fn get_object(
         })
         .flatten();
 
-    let client = match api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id)
-        .await
-    {
-        Ok(client) => client,
-        Err(err) => {
-            error!("Error getting backend client: {}", err);
-            return HttpResponse::from(err);
-        }
-    };
+        .await?;
 
-    let authorized = match api_client
+    let authorized = api_client
         .is_authorized(
             user_identity.into_inner(),
             &account_id,
             &repository_id,
             RepositoryPermission::Read,
         )
-        .await
-    {
-        Ok(authorized) => authorized,
-        Err(err) => {
-            error!("Error checking authorization: {}", err);
-            return HttpResponse::from(err);
-        }
-    };
+        .await?;
 
     if !authorized {
-        return HttpResponse::Unauthorized().finish();
+        return Err(BackendError::UnauthorizationError);
     }
 
     // Found the repository, now try to get the object
-    let res = match client.get_object(key.clone(), range).await {
-        Ok(res) => res,
-        Err(err) => {
-            return err.to_response();
-        }
-    };
+    let res = client.get_object(key.clone(), range).await?;
 
     let mut content_length = String::from("*");
     // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
     // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
     if is_range_request {
-        content_length = match client.head_object(key.clone()).await {
-            Ok(res) => res.content_length.to_string(),
-            Err(err) => {
-                error!("Error getting content length: {}", err);
-                return HttpResponse::InternalServerError().finish();
-            }
-        };
+        content_length = client
+            .head_object(key.clone())
+            .await?
+            .content_length
+            .to_string();
     }
 
     let stream = res.body.map(|result| {
@@ -164,7 +143,7 @@ async fn get_object(
         ));
     }
 
-    return response.body(streaming_response);
+    Ok(response.body(streaming_response))
 }
 
 #[derive(Debug, Deserialize)]

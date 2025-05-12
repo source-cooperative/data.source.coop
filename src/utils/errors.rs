@@ -1,4 +1,7 @@
+use actix_web::error;
+use actix_web::http::StatusCode;
 use actix_web::HttpResponse;
+use log::error;
 use reqwest::Error as ReqwestError;
 use serde::Serialize;
 use std::error::Error;
@@ -33,33 +36,54 @@ pub enum BackendError {
     JsonParseError { url: String },
     #[error("Unexpected data connection provider (provider {})", .provider)]
     UnexpectedDataConnectionProvider { provider: String },
+    #[error("Unauthorized")]
+    UnauthorizationError,
+    #[error("Unexpected API error")] // TODO: remove this
+    UnexpectedApiError(String),
 }
 
-impl From<BackendError> for HttpResponse {
-    fn from(error: BackendError) -> HttpResponse {
-        match error {
+impl error::ResponseError for BackendError {
+    fn error_response(&self) -> HttpResponse {
+        error!("Error: {}", self);
+        match self {
             BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
             BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
             BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
-            BackendError::ReqwestError(_e) => HttpResponse::BadGateway().finish(),
-            BackendError::ApiServerError {
-                url: _url,
-                status: _status,
-                message: _message,
-            } => HttpResponse::BadGateway().finish(),
-            BackendError::ApiClientError {
-                url: _url,
-                status: _status,
-                message,
-            } => HttpResponse::BadGateway().body(format!("{}", message)),
-            BackendError::JsonParseError { url: _url } => {
+            BackendError::ReqwestError(_) => HttpResponse::BadGateway().finish(),
+            BackendError::ApiServerError { .. } => HttpResponse::BadGateway().finish(),
+            BackendError::ApiClientError { .. } => HttpResponse::BadGateway().finish(),
+            BackendError::JsonParseError { .. } => HttpResponse::InternalServerError().finish(),
+            BackendError::UnexpectedDataConnectionProvider { .. } => {
                 HttpResponse::InternalServerError().finish()
             }
-            BackendError::UnexpectedDataConnectionProvider {
-                provider: _provider,
-            } => HttpResponse::InternalServerError().finish(),
-            BackendError::RepositoryPermissionsNotFound => HttpResponse::BadGateway().finish(), // _ => HttpResponse::InternalServerError().finish(),
+            BackendError::RepositoryPermissionsNotFound => HttpResponse::BadGateway().finish(),
+            BackendError::UnauthorizationError => HttpResponse::Unauthorized().finish(),
+            BackendError::UnexpectedApiError(_) => HttpResponse::InternalServerError().finish(),
         }
+    }
+
+    fn status_code(&self) -> StatusCode {
+        match self {
+            BackendError::RepositoryNotFound => StatusCode::NOT_FOUND,
+            BackendError::SourceRepositoryMissingPrimaryMirror => StatusCode::NOT_FOUND,
+            BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
+            BackendError::ReqwestError(_) => StatusCode::BAD_GATEWAY,
+            BackendError::ApiServerError { .. } => StatusCode::BAD_GATEWAY,
+            BackendError::ApiClientError { .. } => StatusCode::BAD_GATEWAY,
+            BackendError::JsonParseError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            BackendError::UnexpectedDataConnectionProvider { .. } => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+            BackendError::RepositoryPermissionsNotFound => StatusCode::BAD_GATEWAY,
+            BackendError::UnauthorizationError => StatusCode::UNAUTHORIZED,
+            BackendError::UnexpectedApiError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl From<Box<dyn APIError>> for BackendError {
+    fn from(error: Box<dyn APIError>) -> BackendError {
+        BackendError::UnexpectedApiError(error.to_string())
     }
 }
 
