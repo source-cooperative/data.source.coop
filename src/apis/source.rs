@@ -2,8 +2,9 @@ use super::{Account, API};
 use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
+use crate::utils::api::process_json_response;
 use crate::utils::auth::UserIdentity;
-use crate::utils::errors::{APIError, InternalServerError, RepositoryNotFoundError};
+use crate::utils::errors::{APIError, BackendError, InternalServerError};
 use async_trait::async_trait;
 use moka::future::Cache;
 use rusoto_core::Region;
@@ -13,7 +14,6 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
-
 #[derive(Clone)]
 pub struct SourceAPI {
     pub endpoint: String,
@@ -125,133 +125,111 @@ impl API for SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<Box<dyn Repository>, ()> {
-        match self
+    ) -> Result<Box<dyn Repository>, BackendError> {
+        let repository = self
             .get_repository_record(&account_id, &repository_id)
-            .await
+            .await?;
+
+        let repository_data = match repository
+            .data
+            .mirrors
+            .get(repository.data.primary_mirror.as_str())
         {
-            Ok(repository) => {
-                match repository
-                    .data
-                    .mirrors
-                    .get(repository.data.primary_mirror.as_str())
-                {
-                    Some(repository_data) => {
-                        let data_connection_id = repository_data.data_connection_id.clone();
-                        match self.get_data_connection(&data_connection_id).await {
-                            Ok(data_connection) => {
-                                if data_connection.details.provider == "s3" {
-                                    let region: Region;
-
-                                    if data_connection.authentication.clone().unwrap().auth_type
-                                        == "s3_local"
-                                    {
-                                        region = Region::Custom {
-                                            name: data_connection
-                                                .details
-                                                .region
-                                                .clone()
-                                                .unwrap_or("us-west-2".to_string()),
-                                            endpoint: format!("http://localhost:5050"),
-                                        };
-                                    } else {
-                                        region = Region::Custom {
-                                            name: data_connection
-                                                .details
-                                                .region
-                                                .clone()
-                                                .unwrap_or("us-east-1".to_string()),
-                                            endpoint: format!(
-                                                "https://s3.{}.amazonaws.com",
-                                                data_connection
-                                                    .details
-                                                    .region
-                                                    .clone()
-                                                    .unwrap_or("us-east-1".to_string())
-                                            ),
-                                        };
-                                    }
-
-                                    let bucket: String =
-                                        data_connection.details.bucket.clone().unwrap_or_default();
-                                    let base_prefix: String = data_connection
-                                        .details
-                                        .base_prefix
-                                        .clone()
-                                        .unwrap_or_default();
-
-                                    let prefix =
-                                        format!("{}{}", base_prefix, repository_data.prefix);
-
-                                    let prefix = if prefix.ends_with('/') {
-                                        prefix[..prefix.len() - 1].to_string()
-                                    } else {
-                                        prefix
-                                    };
-
-                                    Ok(Box::new(S3Repository {
-                                        account_id: account_id.to_string(),
-                                        repository_id: repository_id.to_string(),
-                                        region,
-                                        bucket,
-                                        base_prefix: prefix,
-                                        auth_method: data_connection
-                                            .authentication
-                                            .clone()
-                                            .unwrap()
-                                            .auth_type,
-                                        access_key_id: data_connection
-                                            .authentication
-                                            .clone()
-                                            .unwrap()
-                                            .access_key_id,
-                                        secret_access_key: data_connection
-                                            .authentication
-                                            .clone()
-                                            .unwrap()
-                                            .secret_access_key,
-                                    }))
-                                } else if data_connection.details.provider == "az" {
-                                    let account_name: String = data_connection
-                                        .details
-                                        .account_name
-                                        .clone()
-                                        .unwrap_or_default();
-
-                                    let container_name: String = data_connection
-                                        .details
-                                        .container_name
-                                        .clone()
-                                        .unwrap_or_default();
-                                    let base_prefix: String = data_connection
-                                        .details
-                                        .base_prefix
-                                        .clone()
-                                        .unwrap_or_default();
-
-                                    Ok(Box::new(AzureRepository {
-                                        account_id: account_id.to_string(),
-                                        repository_id: repository_id.to_string(),
-                                        account_name,
-                                        container_name,
-                                        base_prefix: format!(
-                                            "{}{}",
-                                            base_prefix, repository_data.prefix
-                                        ),
-                                    }))
-                                } else {
-                                    Err(())
-                                }
-                            }
-                            Err(_) => return Err(()),
-                        }
-                    }
-                    None => {
-                        return Err(());
-                    }
-                }
+            Some(repository_data) => repository_data,
+            None => {
+                return Err(BackendError::SourceRepositoryMissingPrimaryMirror);
             }
-            Err(_) => Err(()),
+        };
+
+        let data_connection_id = repository_data.data_connection_id.clone();
+        let data_connection = self.get_data_connection(&data_connection_id).await?;
+
+        match data_connection.details.provider.as_str() {
+            "s3" => {
+                let region: Region;
+
+                if data_connection.authentication.clone().unwrap().auth_type == "s3_local" {
+                    region = Region::Custom {
+                        name: data_connection
+                            .details
+                            .region
+                            .clone()
+                            .unwrap_or("us-west-2".to_string()),
+                        endpoint: format!("http://localhost:5050"),
+                    };
+                } else {
+                    region = Region::Custom {
+                        name: data_connection
+                            .details
+                            .region
+                            .clone()
+                            .unwrap_or("us-east-1".to_string()),
+                        endpoint: format!(
+                            "https://s3.{}.amazonaws.com",
+                            data_connection
+                                .details
+                                .region
+                                .clone()
+                                .unwrap_or("us-east-1".to_string())
+                        ),
+                    };
+                }
+
+                let bucket: String = data_connection.details.bucket.clone().unwrap_or_default();
+                let base_prefix: String = data_connection
+                    .details
+                    .base_prefix
+                    .clone()
+                    .unwrap_or_default();
+
+                let mut prefix = format!("{}{}", base_prefix, repository_data.prefix);
+                if prefix.ends_with('/') {
+                    prefix = prefix[..prefix.len() - 1].to_string();
+                };
+
+                let auth = data_connection.authentication.clone().unwrap();
+
+                Ok(Box::new(S3Repository {
+                    account_id: account_id.to_string(),
+                    repository_id: repository_id.to_string(),
+                    region,
+                    bucket,
+                    base_prefix: prefix,
+                    auth_method: auth.auth_type,
+                    access_key_id: auth.access_key_id,
+                    secret_access_key: auth.secret_access_key,
+                }))
+            }
+            "az" => {
+                let account_name: String = data_connection
+                    .details
+                    .account_name
+                    .clone()
+                    .unwrap_or_default();
+
+                let container_name: String = data_connection
+                    .details
+                    .container_name
+                    .clone()
+                    .unwrap_or_default();
+
+                let base_prefix: String = data_connection
+                    .details
+                    .base_prefix
+                    .clone()
+                    .unwrap_or_default();
+
+                Ok(Box::new(AzureRepository {
+                    account_id: account_id.to_string(),
+                    repository_id: repository_id.to_string(),
+                    account_name,
+                    container_name,
+                    base_prefix: format!("{}{}", base_prefix, repository_data.prefix),
+                }))
+            }
+            err => Err(BackendError::UnexpectedDataConnectionProvider {
+                provider: err.to_string(),
+            }),
         }
     }
 
@@ -350,7 +328,7 @@ impl SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<SourceRepository, Box<dyn APIError>> {
+    ) -> Result<SourceRepository, BackendError> {
         // Try to get the cached value
         let cache_key = format!("{}/{}", account_id, repository_id);
 
@@ -374,7 +352,7 @@ impl SourceAPI {
     async fn fetch_data_connection(
         &self,
         data_connection_id: &String,
-    ) -> Result<DataConnection, Box<dyn APIError>> {
+    ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
         let client = reqwest::Client::new();
         let mut headers = reqwest::header::HeaderMap::new();
@@ -382,39 +360,23 @@ impl SourceAPI {
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
         );
-        match client
+
+        let response = client
             .get(format!(
                 "{}/api/v1/data-connections/{}",
                 self.endpoint, data_connection_id
             ))
             .headers(headers)
             .send()
+            .await?;
+        process_json_response::<DataConnection>(response, BackendError::DataConnectionNotFound)
             .await
-        {
-            Ok(response) => match response.json::<DataConnection>().await {
-                Ok(data_connection) => Ok(data_connection),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(error) => {
-                if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                    return Err(Box::new(InternalServerError {
-                        message: "Data Connection Not Found".to_string(),
-                    }));
-                }
-
-                Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                }))
-            }
-        }
     }
 
     async fn get_data_connection(
         &self,
         data_connection_id: &String,
-    ) -> Result<DataConnection, Box<dyn APIError>> {
+    ) -> Result<DataConnection, BackendError> {
         // Try to get the cached value
         let cache_key = format!("{}", data_connection_id);
 
@@ -527,32 +489,14 @@ impl SourceAPI {
         &self,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<SourceRepository, Box<dyn APIError>> {
-        match reqwest::get(format!(
+    ) -> Result<SourceRepository, BackendError> {
+        let response = reqwest::get(format!(
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
         ))
-        .await
-        {
-            Ok(response) => match response.json::<SourceRepository>().await {
-                Ok(repository) => Ok(repository),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(error) => {
-                if error.status().is_some() && error.status().unwrap().as_u16() == 404 {
-                    return Err(Box::new(RepositoryNotFoundError {
-                        account_id: account_id.to_string(),
-                        repository_id: repository_id.to_string(),
-                    }));
-                }
-
-                Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                }))
-            }
-        }
+        .await?;
+        process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
+            .await
     }
 
     pub async fn is_authorized(
@@ -561,7 +505,7 @@ impl SourceAPI {
         account_id: &String,
         repository_id: &String,
         permission: RepositoryPermission,
-    ) -> Result<bool, Box<dyn APIError>> {
+    ) -> Result<bool, BackendError> {
         let anon: bool;
         if user_identity.api_key.is_none() {
             anon = true;
@@ -583,19 +527,16 @@ impl SourceAPI {
         }
 
         // If not in cache, fetch it
-        match self
+        let permissions = self
             .fetch_permission(user_identity.clone(), &account_id, &repository_id)
-            .await
-        {
-            Ok(permissions) => {
-                // Cache the successful result
-                self.permissions_cache
-                    .insert(cache_key, permissions.clone())
-                    .await;
-                return Ok(permissions.contains(&permission));
-            }
-            Err(e) => Err(e),
-        }
+            .await?;
+
+        // Cache the successful result
+        self.permissions_cache
+            .insert(cache_key, permissions.clone())
+            .await;
+        
+        Ok(permissions.contains(&permission))
     }
 
     async fn fetch_permission(
@@ -603,7 +544,7 @@ impl SourceAPI {
         user_identity: UserIdentity,
         account_id: &String,
         repository_id: &String,
-    ) -> Result<Vec<RepositoryPermission>, Box<dyn APIError>> {
+    ) -> Result<Vec<RepositoryPermission>, BackendError> {
         let client = reqwest::Client::new();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
@@ -620,24 +561,19 @@ impl SourceAPI {
             );
         }
 
-        match client
+        let response = client
             .get(format!(
                 "{}/api/v1/repositories/{}/{}/permissions",
                 source_api_url, account_id, repository_id
             ))
             .headers(headers)
             .send()
-            .await
-        {
-            Ok(response) => match response.json::<Vec<RepositoryPermission>>().await {
-                Ok(permissions) => Ok(permissions),
-                Err(_) => Err(Box::new(InternalServerError {
-                    message: "Internal Server Error".to_string(),
-                })),
-            },
-            Err(_) => Err(Box::new(InternalServerError {
-                message: "Internal Server Error".to_string(),
-            })),
-        }
+            .await?;
+        
+        process_json_response::<Vec<RepositoryPermission>>(
+            response,
+            BackendError::RepositoryPermissionsNotFound,
+        )
+        .await
     }
 }
