@@ -23,6 +23,9 @@ pub enum BackendError {
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
 
+    #[error("api key not found")]
+    ApiKeyNotFound,
+
     #[error("data connection not found")]
     DataConnectionNotFound,
 
@@ -74,6 +77,7 @@ impl error::ResponseError for BackendError {
         match self {
             BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
             BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
+            BackendError::ApiKeyNotFound => HttpResponse::NotFound().finish(),
             BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
             BackendError::InvalidRequest(message) => {
                 HttpResponse::BadRequest().body(message.clone())
@@ -98,6 +102,7 @@ impl error::ResponseError for BackendError {
         match self {
             BackendError::RepositoryNotFound => StatusCode::NOT_FOUND,
             BackendError::SourceRepositoryMissingPrimaryMirror => StatusCode::NOT_FOUND,
+            BackendError::ApiKeyNotFound => StatusCode::NOT_FOUND,
             BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
             BackendError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             BackendError::ReqwestError(_) => StatusCode::BAD_GATEWAY,

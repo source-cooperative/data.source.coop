@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use moka::future::Cache;
 use rusoto_core::Region;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
@@ -442,20 +441,11 @@ impl SourceAPI {
             .headers(headers)
             .send()
             .await?;
-        let status = response.status();
-        let text = response.text().await?;
-        if !status.is_success() {
-            return Err(BackendError::UnexpectedApiError(format!(
-                "Failed to get API key for access key id: {}, {}",
-                access_key_id, text
-            )));
-        }
-        let json: Value = serde_json::from_str(&text).unwrap();
-        let secret_access_key = json["secret_access_key"].as_str().unwrap();
+        let key: APIKey = process_json_response::<APIKey>(response, BackendError::ApiKeyNotFound).await?;
 
         Ok(Some(APIKey {
             access_key_id,
-            secret_access_key: secret_access_key.to_string(),
+            secret_access_key: key.secret_access_key,
         }))
     }
 

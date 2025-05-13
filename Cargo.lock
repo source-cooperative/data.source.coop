@@ -2353,7 +2353,6 @@ dependencies = [
  "rusoto_s3",
  "serde",
  "serde-xml-rs",
- "serde_json",
  "sha2 0.10.8",
  "thiserror 2.0.12",
  "time",
