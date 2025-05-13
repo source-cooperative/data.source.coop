@@ -4,7 +4,7 @@ use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
 use crate::utils::api::process_json_response;
 use crate::utils::auth::UserIdentity;
-use crate::utils::errors::{APIError, BackendError, InternalServerError};
+use crate::utils::errors::BackendError;
 use async_trait::async_trait;
 use moka::future::Cache;
 use rusoto_core::Region;
@@ -237,7 +237,7 @@ impl API for SourceAPI {
         &self,
         account_id: String,
         user_identity: UserIdentity,
-    ) -> Result<Account, ()> {
+    ) -> Result<Account, BackendError> {
         let client = reqwest::Client::new();
         // Create headers
         let mut headers = reqwest::header::HeaderMap::new();
@@ -252,29 +252,27 @@ impl API for SourceAPI {
             );
         }
 
-        match client
+        let response = client
             .get(format!(
                 "{}/api/v1/repositories/{}",
                 self.endpoint, account_id
             ))
             .headers(headers)
             .send()
-            .await
-        {
-            Ok(response) => match response.json::<SourceRepositoryList>().await {
-                Ok(repository_list) => {
-                    let mut account = Account::default();
+            .await?;
 
-                    for repository in repository_list.repositories {
-                        account.repositories.push(repository.repository_id);
-                    }
+        let repository_list = process_json_response::<SourceRepositoryList>(
+            response,
+            BackendError::RepositoryNotFound,
+        )
+        .await?;
+        let mut account = Account::default();
 
-                    Ok(account)
-                }
-                Err(_) => Err(()),
-            },
-            Err(_) => Err(()),
+        for repository in repository_list.repositories {
+            account.repositories.push(repository.repository_id);
         }
+
+        Ok(account)
     }
 }
 
@@ -323,7 +321,7 @@ impl SourceAPI {
     /// # Returns
     ///
     /// Returns a `Result` containing either a `SourceRepository` struct with the
-    /// repository information or a boxed `APIError` if the request fails.
+    /// repository information or a BackendError if the request fails.
     pub async fn get_repository_record(
         &self,
         account_id: &String,
@@ -397,7 +395,7 @@ impl SourceAPI {
         }
     }
 
-    pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, Box<dyn APIError>> {
+    pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
         // Try to get the cached value
         let cache_key = format!("{}", access_key_id);
 
@@ -406,32 +404,25 @@ impl SourceAPI {
         }
 
         // If not in cache, fetch it
-        match self.fetch_api_key(access_key_id).await {
-            Ok(secret) => {
-                // Cache the successful result
-                match secret {
-                    Some(secret) => {
-                        self.api_key_cache.insert(cache_key, secret.clone()).await;
-                        Ok(secret)
-                    }
-                    None => {
-                        let secret = APIKey {
-                            access_key_id: "".to_string(),
-                            secret_access_key: "".to_string(),
-                        };
-                        self.api_key_cache.insert(cache_key, secret.clone()).await;
-                        Ok(secret)
-                    }
-                }
+        let secret = self.fetch_api_key(access_key_id).await?;
+        // Cache the successful result
+        match secret {
+            Some(secret) => {
+                self.api_key_cache.insert(cache_key, secret.clone()).await;
+                Ok(secret)
             }
-            Err(e) => Err(e),
+            None => {
+                let secret = APIKey {
+                    access_key_id: "".to_string(),
+                    secret_access_key: "".to_string(),
+                };
+                self.api_key_cache.insert(cache_key, secret.clone()).await;
+                Ok(secret)
+            }
         }
     }
 
-    async fn fetch_api_key(
-        &self,
-        access_key_id: String,
-    ) -> Result<Option<APIKey>, Box<dyn APIError>> {
+    async fn fetch_api_key(&self, access_key_id: String) -> Result<Option<APIKey>, BackendError> {
         if access_key_id.is_empty() {
             return Ok(None);
         }
@@ -445,44 +436,29 @@ impl SourceAPI {
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
         );
-        match client
+        let response = client
             .get(format!(
                 "{}/api/v1/api-keys/{}/auth",
                 source_api_url, access_key_id
             ))
             .headers(headers)
             .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.text().await {
-                        Ok(text) => {
-                            let json: Value = serde_json::from_str(&text).unwrap();
-                            let secret_access_key = json["secret_access_key"].as_str().unwrap();
-
-                            return Ok(Some(APIKey {
-                                access_key_id,
-                                secret_access_key: secret_access_key.to_string(),
-                            }));
-                        }
-                        Err(_) => Err(Box::new(InternalServerError {
-                            message: "Internal Server Error".to_string(),
-                        })),
-                    }
-                } else {
-                    if response.status().is_client_error() {
-                        return Ok(None);
-                    }
-                    Err(Box::new(InternalServerError {
-                        message: "Internal Server Error".to_string(),
-                    }))
-                }
-            }
-            Err(_) => Err(Box::new(InternalServerError {
-                message: "Internal Server Error".to_string(),
-            })),
+            .await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            return Err(BackendError::UnexpectedApiError(format!(
+                "Failed to get API key for access key id: {}, {}",
+                access_key_id, text
+            )));
         }
+        let json: Value = serde_json::from_str(&text).unwrap();
+        let secret_access_key = json["secret_access_key"].as_str().unwrap();
+
+        Ok(Some(APIKey {
+            access_key_id,
+            secret_access_key: secret_access_key.to_string(),
+        }))
     }
 
     async fn fetch_repository(
@@ -495,8 +471,7 @@ impl SourceAPI {
             self.endpoint, account_id, repository_id
         ))
         .await?;
-        process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
-            .await
+        process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound).await
     }
 
     pub async fn is_authorized(
@@ -535,8 +510,24 @@ impl SourceAPI {
         self.permissions_cache
             .insert(cache_key, permissions.clone())
             .await;
-        
+
         Ok(permissions.contains(&permission))
+    }
+
+    pub async fn assert_authorized(
+        &self,
+        user_identity: UserIdentity,
+        account_id: &String,
+        repository_id: &String,
+        permission: RepositoryPermission,
+    ) -> Result<bool, BackendError> {
+        let authorized = self
+            .is_authorized(user_identity, account_id, repository_id, permission)
+            .await?;
+        if !authorized {
+            return Err(BackendError::UnauthorizedError);
+        }
+        Ok(authorized)
     }
 
     async fn fetch_permission(
@@ -569,7 +560,7 @@ impl SourceAPI {
             .headers(headers)
             .send()
             .await?;
-        
+
         process_json_response::<Vec<RepositoryPermission>>(
             response,
             BackendError::RepositoryPermissionsNotFound,
