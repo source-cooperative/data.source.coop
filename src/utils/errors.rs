@@ -132,7 +132,10 @@ impl error::ResponseError for BackendError {
     }
 }
 
-fn get_rusoto_error_message<T: ToString>(operation: &str, error: RusotoError<T>) -> String {
+fn get_rusoto_error_message<T: std::error::Error>(
+    operation: &str,
+    error: RusotoError<T>,
+) -> String {
     match error {
         RusotoError::Service(error) => {
             format!("{} Service Error: {}", operation, error.to_string())
