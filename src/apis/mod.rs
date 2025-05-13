@@ -27,5 +27,5 @@ pub trait API {
         &self,
         account_id: String,
         user_identity: UserIdentity,
-    ) -> Result<Account, ()>;
+    ) -> Result<Account, BackendError>;
 }

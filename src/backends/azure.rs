@@ -17,7 +17,7 @@ use crate::backends::common::{
     GetObjectResponse, HeadObjectResponse, ListBucketResult, Repository,
 };
 use crate::utils::core::replace_first;
-use crate::utils::errors::{APIError, InternalServerError, ObjectNotFoundError};
+use crate::utils::errors::BackendError;
 
 use super::common::{MultipartPart, UploadPartResponse};
 
@@ -52,7 +52,7 @@ impl Repository for AzureRepository {
         &self,
         key: String,
         range: Option<String>,
-    ) -> Result<GetObjectResponse, Box<dyn APIError>> {
+    ) -> Result<GetObjectResponse, BackendError> {
         let credentials = StorageCredentials::anonymous();
 
         let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
@@ -64,96 +64,81 @@ impl Repository for AzureRepository {
             key
         ));
 
-        match blob_client.get_properties().await {
-            Ok(blob) => {
-                let content_type = blob.blob.properties.content_type.to_string();
-                let etag = blob.blob.properties.etag.to_string();
-                let last_modified = rfc2822_to_rfc7231(
-                    blob.blob
-                        .properties
-                        .last_modified
-                        .format(&Rfc2822)
-                        .unwrap_or_else(|_| String::from("Invalid DateTime"))
-                        .as_str(),
-                )
-                .unwrap_or_else(|_| String::from("Invalid DateTime"));
+        let blob = blob_client.get_properties().await?;
+        let content_type = blob.blob.properties.content_type.to_string();
+        let etag = blob.blob.properties.etag.to_string();
+        let last_modified = rfc2822_to_rfc7231(
+            blob.blob
+                .properties
+                .last_modified
+                .format(&Rfc2822)
+                .unwrap_or_else(|_| String::from("Invalid DateTime"))
+                .as_str(),
+        )
+        .unwrap_or_else(|_| String::from("Invalid DateTime"));
 
-                let client = reqwest::Client::new();
+        let client = reqwest::Client::new();
 
-                // Start building the request
-                let mut request = client.get(format!(
-                    "https://{}.blob.core.windows.net/{}/{}/{}",
-                    self.account_name,
-                    self.container_name,
-                    self.base_prefix.trim_end_matches('/').to_string(),
-                    key
-                ));
+        // Start building the request
+        let mut request = client.get(format!(
+            "https://{}.blob.core.windows.net/{}/{}/{}",
+            self.account_name,
+            self.container_name,
+            self.base_prefix.trim_end_matches('/').to_string(),
+            key
+        ));
 
-                // If a range is provided, add it to the headers
-                if let Some(range_value) = range {
-                    request = request.header(RANGE, range_value);
-                }
-
-                // Send the request and await the response
-                match request.send().await {
-                    Ok(response) => {
-                        // Check if the status code is successful
-                        if !response.status().is_success() {
-                            return Err(Box::new(InternalServerError {
-                                message: "Internal Server Error".to_string(),
-                            }));
-                        }
-
-                        // Get the byte stream from the response
-                        let content_length = response.content_length();
-                        let stream = response.bytes_stream();
-                        let boxed_stream: Pin<
-                            Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>,
-                        > = Box::pin(stream);
-
-                        Ok(GetObjectResponse {
-                            content_length: content_length.unwrap_or(0) as u64,
-                            content_type,
-                            etag,
-                            last_modified,
-                            body: boxed_stream,
-                        })
-                    }
-                    Err(_) => Err(Box::new(InternalServerError {
-                        message: "Internal Server Error".to_string(),
-                    })),
-                }
-            }
-            Err(_) => Err(Box::new(InternalServerError {
-                message: "Internal Server Error".to_string(),
-            })),
+        // If a range is provided, add it to the headers
+        if let Some(range_value) = range {
+            request = request.header(RANGE, range_value);
         }
+
+        // Send the request and await the response
+        let response = request.send().await?;
+        // Check if the status code is successful
+        if !response.status().is_success() {
+            return Err(BackendError::UnexpectedApiError(response.text().await?));
+        }
+
+        // Get the byte stream from the response
+        let content_length = response.content_length();
+        let stream = response.bytes_stream();
+        let boxed_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>> =
+            Box::pin(stream);
+
+        Ok(GetObjectResponse {
+            content_length: content_length.unwrap_or(0) as u64,
+            content_type,
+            etag,
+            last_modified,
+            body: boxed_stream,
+        })
     }
 
-    async fn delete_object(&self, _key: String) -> Result<(), Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: "Internal Server Error".to_string(),
-        }))
+    async fn delete_object(&self, _key: String) -> Result<(), BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Delete object is not supported on Azure".to_string(),
+        ))
     }
 
     async fn create_multipart_upload(
         &self,
         _key: String,
         _content_type: Option<String>,
-    ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: format!("Internal Server Error"),
-        }))
+    ) -> Result<CreateMultipartUploadResponse, BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Create multipart upload is not supported on Azure".to_string(),
+        ))
     }
 
     async fn abort_multipart_upload(
         &self,
         _key: String,
         _upload_id: String,
-    ) -> Result<(), Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: format!("Internal Server Error"),
-        }))
+    ) -> Result<(), BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Abort multipart upload is not supported on Azure".to_string(),
+        ))
     }
 
     async fn complete_multipart_upload(
@@ -161,10 +146,10 @@ impl Repository for AzureRepository {
         _key: String,
         _upload_id: String,
         _parts: Vec<MultipartPart>,
-    ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: format!("Internal Server Error"),
-        }))
+    ) -> Result<CompleteMultipartUploadResponse, BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Complete multipart upload is not supported on Azure".to_string(),
+        ))
     }
 
     async fn upload_multipart_part(
@@ -173,10 +158,10 @@ impl Repository for AzureRepository {
         _upload_id: String,
         _part_number: String,
         _bytes: Bytes,
-    ) -> Result<UploadPartResponse, Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: format!("Internal Server Error"),
-        }))
+    ) -> Result<UploadPartResponse, BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Upload multipart part is not supported on Azure".to_string(),
+        ))
     }
 
     async fn put_object(
@@ -184,56 +169,42 @@ impl Repository for AzureRepository {
         _key: String,
         _bytes: Bytes,
         _content_type: Option<String>,
-    ) -> Result<(), Box<dyn APIError>> {
-        Err(Box::new(InternalServerError {
-            message: "Internal Server Error".to_string(),
-        }))
+    ) -> Result<(), BackendError> {
+        Err(BackendError::UnsupportedOperation(
+            "Put object is not supported on Azure".to_string(),
+        ))
     }
 
-    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>> {
+    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, BackendError> {
         let credentials = StorageCredentials::anonymous();
 
         // Create a client for anonymous access
         let client = BlobServiceClient::new(format!("{}", &self.account_name), credentials)
             .container_client(&self.container_name);
 
-        match client
+        let blob = client
             .blob_client(format!(
                 "{}/{}",
                 self.base_prefix.trim_end_matches('/').to_string(),
                 key
             ))
             .get_properties()
-            .await
-        {
-            Ok(blob) => Ok(HeadObjectResponse {
-                content_length: blob.blob.properties.content_length,
-                content_type: blob.blob.properties.content_type.to_string(),
-                etag: blob.blob.properties.etag.to_string(),
-                last_modified: rfc2822_to_rfc7231(
-                    blob.blob
-                        .properties
-                        .last_modified
-                        .format(&Rfc2822)
-                        .unwrap_or_else(|_| String::from("Invalid DateTime"))
-                        .as_str(),
-                )
-                .unwrap_or_else(|_| String::from("Invalid DateTime")),
-            }),
-            Err(e) => {
-                if e.as_http_error().unwrap().status() == 404 {
-                    return Err(Box::new(ObjectNotFoundError {
-                        account_id: self.account_id.clone(),
-                        repository_id: self.repository_id.clone(),
-                        key,
-                    }));
-                } else {
-                    Err(Box::new(InternalServerError {
-                        message: "Internal Server Error".to_string(),
-                    }))
-                }
-            }
-        }
+            .await?;
+
+        Ok(HeadObjectResponse {
+            content_length: blob.blob.properties.content_length,
+            content_type: blob.blob.properties.content_type.to_string(),
+            etag: blob.blob.properties.etag.to_string(),
+            last_modified: rfc2822_to_rfc7231(
+                blob.blob
+                    .properties
+                    .last_modified
+                    .format(&Rfc2822)
+                    .unwrap_or_else(|_| String::from("Invalid DateTime"))
+                    .as_str(),
+            )
+            .unwrap_or_else(|_| String::from("Invalid DateTime")),
+        })
     }
 
     async fn list_objects_v2(
@@ -242,7 +213,7 @@ impl Repository for AzureRepository {
         continuation_token: Option<String>,
         delimiter: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, Box<dyn APIError>> {
+    ) -> Result<ListBucketResult, BackendError> {
         let mut result = ListBucketResult {
             name: format!("{}", self.account_id),
             prefix: prefix.clone(),
@@ -333,7 +304,7 @@ impl Repository for AzureRepository {
         _copy_identifier_path: String,
         _key: String,
         _range: Option<String>,
-    ) -> Result<(), Box<dyn APIError>> {
+    ) -> Result<(), BackendError> {
         Ok(())
     }
 }
