@@ -17,7 +17,6 @@ use bytes::Bytes;
 use core::num::NonZeroU32;
 use env_logger::Env;
 use futures_util::StreamExt;
-use log::error;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
@@ -48,8 +47,6 @@ impl MessageBody for FakeBody {
         Poll::Ready(None)
     }
 }
-
-// TODO: Map the APIErrors to HTTP Responses
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(
@@ -85,18 +82,14 @@ async fn get_object(
         .get_backend_client(&account_id, &repository_id)
         .await?;
 
-    let authorized = api_client
-        .is_authorized(
+    api_client
+        .assert_authorized(
             user_identity.into_inner(),
             &account_id,
             &repository_id,
             RepositoryPermission::Read,
         )
         .await?;
-
-    if !authorized {
-        return Err(BackendError::UnauthorizationError);
-    }
 
     // Found the repository, now try to get the object
     let res = client.get_object(key.clone(), range).await?;
@@ -158,52 +151,31 @@ async fn delete_object(
     params: web::Query<DeleteParams>,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
 
-    if let Ok(client) = api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id)
-        .await
-    {
-        match api_client
-            .is_authorized(
-                user_identity.into_inner(),
-                &account_id,
-                &repository_id,
-                RepositoryPermission::Write,
-            )
-            .await
-        {
-            Ok(authorized) => {
-                if !authorized {
-                    return HttpResponse::Unauthorized().finish();
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
-        }
+        .await?;
 
-        if params.upload_id.is_none() {
-            // Found the repository, now try to delete the object
-            match client.delete_object(key.clone()).await {
-                Ok(_) => {
-                    return HttpResponse::NoContent().finish();
-                }
-                Err(_) => HttpResponse::NotFound().finish(),
-            }
-        } else {
-            match client
-                .abort_multipart_upload(key.clone(), params.upload_id.clone().unwrap())
-                .await
-            {
-                Ok(_) => {
-                    return HttpResponse::NoContent().finish();
-                }
-                Err(_) => HttpResponse::NotFound().finish(),
-            }
-        }
+    api_client
+        .assert_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id,
+            RepositoryPermission::Write,
+        )
+        .await?;
+
+    if params.upload_id.is_none() {
+        // Found the repository, now try to delete the object
+        client.delete_object(key.clone()).await?;
+        Ok(HttpResponse::NoContent().finish())
     } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
+        client
+            .abort_multipart_upload(key.clone(), params.upload_id.clone().unwrap())
+            .await?;
+        Ok(HttpResponse::NoContent().finish())
     }
 }
 
@@ -223,85 +195,61 @@ async fn put_object(
     params: web::Query<PutParams>,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
 
-    if let Ok(client) = api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id)
-        .await
-    {
-        match api_client
-            .is_authorized(
-                user_identity.into_inner(),
-                &account_id,
-                &repository_id,
-                RepositoryPermission::Write,
-            )
-            .await
-        {
-            Ok(authorized) => {
-                if !authorized {
-                    return HttpResponse::Unauthorized().finish();
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
-        }
+        .await?;
 
-        if params.part_number.is_none() && params.upload_id.is_none() {
-            // Check if this is a server-side copy operation
-            if let Some(header_copy_identifier) = req.headers().get("x-amz-copy-source") {
-                let copy_identifier_path = header_copy_identifier.to_str().unwrap_or("");
-                match client
-                    .copy_object((&copy_identifier_path).to_string(), key.clone(), None)
-                    .await
-                {
-                    Ok(_) => HttpResponse::NoContent().finish(),
-                    Err(_) => {
-                        return HttpResponse::InternalServerError()
-                            .body("Failed to store copied object")
-                    }
-                }
-            } else {
-                // Found the repository, now try to upload the object
-                match client
-                    .put_object(
-                        key.clone(),
-                        bytes,
-                        headers
-                            .get(CONTENT_TYPE)
-                            .and_then(|h| h.to_str().ok())
-                            .map(|s| s.to_string()),
-                    )
-                    .await
-                {
-                    Ok(_) => HttpResponse::NoContent().finish(),
+    api_client
+        .assert_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id,
+            RepositoryPermission::Write,
+        )
+        .await?;
 
-                    Err(_) => HttpResponse::NotFound().finish(),
-                }
-            }
-        } else if params.part_number.is_some() && params.upload_id.is_some() {
-            match client
-                .upload_multipart_part(
-                    key.clone(),
-                    params.upload_id.clone().unwrap(),
-                    params.part_number.clone().unwrap(),
-                    bytes,
-                )
-                .await
-            {
-                Ok(res) => HttpResponse::Ok()
-                    .insert_header(("ETag", res.etag))
-                    .finish(),
-
-                Err(_) => HttpResponse::NotFound().finish(),
-            }
+    if params.part_number.is_none() && params.upload_id.is_none() {
+        // Check if this is a server-side copy operation
+        if let Some(header_copy_identifier) = req.headers().get("x-amz-copy-source") {
+            let copy_identifier_path = header_copy_identifier.to_str().unwrap_or("");
+            client
+                .copy_object((&copy_identifier_path).to_string(), key.clone(), None)
+                .await?;
+            Ok(HttpResponse::NoContent().finish())
         } else {
-            return HttpResponse::NotFound().finish();
+            // Found the repository, now try to upload the object
+            client
+                .put_object(
+                    key.clone(),
+                    bytes,
+                    headers
+                        .get(CONTENT_TYPE)
+                        .and_then(|h| h.to_str().ok())
+                        .map(|s| s.to_string()),
+                )
+                .await?;
+            Ok(HttpResponse::NoContent().finish())
         }
+    } else if params.part_number.is_some() && params.upload_id.is_some() {
+        let res = client
+            .upload_multipart_part(
+                key.clone(),
+                params.upload_id.clone().unwrap(),
+                params.part_number.clone().unwrap(),
+                bytes,
+            )
+            .await?;
+        Ok(HttpResponse::Ok()
+            .insert_header(("ETag", res.etag))
+            .finish())
     } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
+        return Err(BackendError::InvalidRequest(format!(
+            "Must provide both part number and upload id or neither."
+        )));
     }
 }
 
@@ -320,100 +268,63 @@ async fn post_handler(
     mut payload: web::Payload,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
     let headers = req.headers();
 
-    if let Ok(client) = api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id)
-        .await
-    {
-        match api_client
-            .is_authorized(
-                user_identity.into_inner(),
-                &account_id,
-                &repository_id,
-                RepositoryPermission::Write,
+        .await?;
+
+    api_client
+        .assert_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id,
+            RepositoryPermission::Write,
+        )
+        .await?;
+
+    if params.uploads.is_some() {
+        let res = client
+            .create_multipart_upload(
+                key,
+                headers
+                    .get(CONTENT_TYPE)
+                    .and_then(|h| h.to_str().ok())
+                    .map(|s| s.to_string()),
             )
-            .await
-        {
-            Ok(authorized) => {
-                if !authorized {
-                    return HttpResponse::Unauthorized().finish();
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
-        }
-
-        if params.uploads.is_some() {
-            match client
-                .create_multipart_upload(
-                    key,
-                    headers
-                        .get(CONTENT_TYPE)
-                        .and_then(|h| h.to_str().ok())
-                        .map(|s| s.to_string()),
-                )
-                .await
-            {
-                Ok(res) => match to_string_with_root("InitiateMultipartUploadResult", &res) {
-                    Ok(serialized) => {
-                        return HttpResponse::Ok()
-                            .content_type("application/xml")
-                            .body(serialized)
+            .await?;
+        let serialized = to_string_with_root("InitiateMultipartUploadResult", &res)?;
+        Ok(HttpResponse::Ok()
+            .content_type("application/xml")
+            .body(serialized))
+    } else if params.upload_id.is_some() {
+        let mut body = String::new();
+        while let Some(chunk) = payload.next().await {
+            match chunk {
+                Ok(chunk) => match from_utf8(&chunk) {
+                    Ok(s) => body.push_str(s),
+                    Err(_) => {
+                        return Err(BackendError::InvalidRequest("Invalid UTF-8".to_string()))
                     }
-                    Err(_) => return HttpResponse::InternalServerError().finish(),
                 },
-                Err(_) => {
-                    return HttpResponse::NotFound().finish();
-                }
+                Err(err) => return Err(BackendError::UnexpectedApiError(err.to_string())),
             }
-        } else if params.upload_id.is_some() {
-            let mut body = String::new();
-            while let Some(chunk) = payload.next().await {
-                match chunk {
-                    Ok(chunk) => match from_utf8(&chunk) {
-                        Ok(s) => body.push_str(s),
-                        Err(_) => return HttpResponse::BadRequest().body("Invalid UTF-8"),
-                    },
-                    Err(_) => return HttpResponse::InternalServerError().finish(),
-                }
-            }
-
-            match from_str::<CompleteMultipartUpload>(&body) {
-                Ok(upload) => {
-                    match client
-                        .complete_multipart_upload(
-                            key,
-                            params.upload_id.clone().unwrap(),
-                            upload.parts,
-                        )
-                        .await
-                    {
-                        Ok(res) => match to_string_with_root("CompleteMultipartUploadResult", &res)
-                        {
-                            Ok(serialized) => {
-                                return HttpResponse::Ok()
-                                    .content_type("application/xml")
-                                    .body(serialized)
-                            }
-                            Err(_) => return HttpResponse::InternalServerError().finish(),
-                        },
-                        Err(_) => {
-                            return HttpResponse::NotFound().finish();
-                        }
-                    }
-                }
-                Err(_) => {
-                    return HttpResponse::BadRequest().finish();
-                }
-            }
-        } else {
-            return HttpResponse::NotFound().finish();
         }
+
+        let upload = from_str::<CompleteMultipartUpload>(&body)?;
+        let res = client
+            .complete_multipart_upload(key, params.upload_id.clone().unwrap(), upload.parts)
+            .await?;
+        let serialized = to_string_with_root("CompleteMultipartUploadResult", &res)?;
+        Ok(HttpResponse::Ok()
+            .content_type("application/xml")
+            .body(serialized))
     } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
+        return Err(BackendError::InvalidRequest(
+            "Must provide either uploads or uploadId".to_string(),
+        ));
     }
 }
 
@@ -422,44 +333,30 @@ async fn head_object(
     api_client: web::Data<SourceAPI>,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
 
-    match api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id)
-        .await
-    {
-        Ok(client) => {
-            match api_client
-                .is_authorized(
-                    user_identity.into_inner(),
-                    &account_id,
-                    &repository_id,
-                    RepositoryPermission::Read,
-                )
-                .await
-            {
-                Ok(authorized) => {
-                    if !authorized {
-                        return HttpResponse::Unauthorized().finish();
-                    }
-                }
-                Err(_) => return HttpResponse::InternalServerError().finish(),
-            }
+        .await?;
 
-            match client.head_object(key.clone()).await {
-                Ok(res) => HttpResponse::Ok()
-                    .insert_header(("Content-Type", res.content_type))
-                    .insert_header(("Last-Modified", res.last_modified))
-                    .insert_header(("ETag", res.etag))
-                    .body(BoxBody::new(FakeBody {
-                        size: res.content_length as usize,
-                    })),
-                Err(error) => error.to_response(),
-            }
-        }
-        Err(_) => HttpResponse::NotFound().finish(),
-    }
+    api_client
+        .assert_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id,
+            RepositoryPermission::Read,
+        )
+        .await?;
+
+    let res = client.head_object(key.clone()).await?;
+    Ok(HttpResponse::Ok()
+        .insert_header(("Content-Type", res.content_type))
+        .insert_header(("Last-Modified", res.last_modified))
+        .insert_header(("ETag", res.etag))
+        .body(BoxBody::new(FakeBody {
+            size: res.content_length as usize,
+        })))
 }
 
 #[derive(Deserialize)]
@@ -482,44 +379,36 @@ async fn list_objects(
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
     user_identity: web::ReqData<UserIdentity>,
-) -> impl Responder {
+) -> Result<impl Responder, BackendError> {
     let account_id = path.into_inner();
 
     if info.prefix.clone().is_some_and(|s| s.is_empty()) || info.prefix.is_none() {
-        match api_client
+        let account = api_client
             .get_account(account_id.clone(), (*user_identity).clone())
-            .await
-        {
-            Ok(account) => {
-                let repositories = account.repositories;
-                let mut common_prefixes = Vec::new();
-                for repository_id in repositories.iter() {
-                    common_prefixes.push(CommonPrefix {
-                        prefix: format!("{}/", repository_id.clone()),
-                    });
-                }
-                let list_response = ListBucketResult {
-                    name: account_id.clone(),
-                    prefix: "/".to_string(),
-                    key_count: 0,
-                    max_keys: 0,
-                    is_truncated: false,
-                    contents: vec![],
-                    common_prefixes,
-                    next_continuation_token: None,
-                };
+            .await?;
 
-                match to_string_with_root("ListBucketResult", &list_response) {
-                    Ok(serialized) => {
-                        return HttpResponse::Ok()
-                            .content_type("application/xml")
-                            .body(serialized)
-                    }
-                    Err(_) => return HttpResponse::InternalServerError().finish(),
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
+        let repositories = account.repositories;
+        let mut common_prefixes = Vec::new();
+        for repository_id in repositories.iter() {
+            common_prefixes.push(CommonPrefix {
+                prefix: format!("{}/", repository_id.clone()),
+            });
         }
+        let list_response = ListBucketResult {
+            name: account_id.clone(),
+            prefix: "/".to_string(),
+            key_count: 0,
+            max_keys: 0,
+            is_truncated: false,
+            contents: vec![],
+            common_prefixes,
+            next_continuation_token: None,
+        };
+
+        let serialized = to_string_with_root("ListBucketResult", &list_response)?;
+        return Ok(HttpResponse::Ok()
+            .content_type("application/xml")
+            .body(serialized));
     }
 
     let path_prefix = info.prefix.clone().unwrap_or("".to_string());
@@ -531,50 +420,34 @@ async fn list_objects(
         max_keys = mk;
     }
 
-    if let Ok(client) = api_client
+    let client = api_client
         .get_backend_client(&account_id, &repository_id.to_string())
-        .await
-    {
-        match api_client
-            .is_authorized(
-                user_identity.into_inner(),
-                &account_id,
-                &repository_id.to_string(),
-                RepositoryPermission::Read,
-            )
-            .await
-        {
-            Ok(authorized) => {
-                if !authorized {
-                    return HttpResponse::Unauthorized().finish();
-                }
-            }
-            Err(_) => return HttpResponse::InternalServerError().finish(),
-        }
+        .await?;
 
-        // We're listing within a repository, so we need to query the object store backend
-        match client
-            .list_objects_v2(
-                prefix.to_string(),
-                info.continuation_token.clone(),
-                info.delimiter.clone(),
-                max_keys,
-            )
-            .await
-        {
-            Ok(res) => match to_string_with_root("ListBucketResult", &res) {
-                Ok(serialized) => HttpResponse::Ok()
-                    .content_type("application/xml")
-                    .body(serialized),
-                Err(e) => HttpResponse::InternalServerError().finish(),
-            },
-            Err(_) => HttpResponse::NotFound().finish(),
-        }
-        // Found the repository, now make the list objects request
-    } else {
-        // Could not find the repository
-        return HttpResponse::NotFound().finish();
-    }
+    api_client
+        .assert_authorized(
+            user_identity.into_inner(),
+            &account_id,
+            &repository_id.to_string(),
+            RepositoryPermission::Read,
+        )
+        .await?;
+
+    // We're listing within a repository, so we need to query the object store backend
+    let res = client
+        .list_objects_v2(
+            prefix.to_string(),
+            info.continuation_token.clone(),
+            info.delimiter.clone(),
+            max_keys,
+        )
+        .await?;
+
+    let serialized = to_string_with_root("ListBucketResult", &res)?;
+
+    Ok(HttpResponse::Ok()
+        .content_type("application/xml")
+        .body(serialized))
 }
 
 #[get("/")]

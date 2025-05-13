@@ -26,6 +26,9 @@ pub enum BackendError {
     #[error("data connection not found")]
     DataConnectionNotFound,
 
+    #[error("invalid request")]
+    InvalidRequest(String),
+
     #[error("reqwest error (url {}, message {})", .0.url().map(|u| u.to_string()).unwrap_or("unknown".to_string()), .0.to_string())]
     ReqwestError(#[from] ReqwestError),
 
@@ -52,7 +55,7 @@ pub enum BackendError {
     #[error("unauthorized")]
     UnauthorizedError,
 
-    #[error("unexpected API error: {0}")] // TODO: remove this
+    #[error("unexpected API error: {0}")]
     UnexpectedApiError(String),
 
     #[error("unsupported auth method: {0}")]
@@ -72,6 +75,9 @@ impl error::ResponseError for BackendError {
             BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
             BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
             BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
+            BackendError::InvalidRequest(message) => {
+                HttpResponse::BadRequest().body(message.clone())
+            }
             BackendError::ReqwestError(_) => HttpResponse::BadGateway().finish(),
             BackendError::ApiServerError { .. } => HttpResponse::BadGateway().finish(),
             BackendError::ApiClientError { .. } => HttpResponse::BadGateway().finish(),
@@ -93,6 +99,7 @@ impl error::ResponseError for BackendError {
             BackendError::RepositoryNotFound => StatusCode::NOT_FOUND,
             BackendError::SourceRepositoryMissingPrimaryMirror => StatusCode::NOT_FOUND,
             BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
+            BackendError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             BackendError::ReqwestError(_) => StatusCode::BAD_GATEWAY,
             BackendError::ApiServerError { .. } => StatusCode::BAD_GATEWAY,
             BackendError::ApiClientError { .. } => StatusCode::BAD_GATEWAY,
@@ -161,6 +168,11 @@ impl From<RusotoError<ListObjectsV2Error>> for BackendError {
 
 impl From<DeError> for BackendError {
     fn from(error: DeError) -> BackendError {
+        BackendError::XmlParseError(format!("failed to parse xml: {}", error))
+    }
+}
+impl From<serde_xml_rs::Error> for BackendError {
+    fn from(error: serde_xml_rs::Error) -> BackendError {
         BackendError::XmlParseError(format!("failed to parse xml: {}", error))
     }
 }
