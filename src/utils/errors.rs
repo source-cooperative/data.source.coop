@@ -69,6 +69,12 @@ pub enum BackendError {
 
     #[error("xml parse error: {0}")]
     XmlParseError(String),
+
+    #[error(transparent)]
+    AzureError(#[from] AzureError),
+
+    #[error("s3 error: {0}")]
+    S3Error(String),
 }
 
 impl error::ResponseError for BackendError {
@@ -95,6 +101,8 @@ impl error::ResponseError for BackendError {
             BackendError::UnsupportedAuthMethod(_) => HttpResponse::BadRequest().finish(),
             BackendError::UnsupportedOperation(_) => HttpResponse::BadRequest().finish(),
             BackendError::XmlParseError(_) => HttpResponse::InternalServerError().finish(),
+            BackendError::AzureError(_) => HttpResponse::BadGateway().finish(),
+            BackendError::S3Error(_) => HttpResponse::BadGateway().finish(),
         }
     }
 
@@ -118,56 +126,83 @@ impl error::ResponseError for BackendError {
             BackendError::UnsupportedAuthMethod(_) => StatusCode::BAD_REQUEST,
             BackendError::UnsupportedOperation(_) => StatusCode::BAD_REQUEST,
             BackendError::XmlParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            BackendError::AzureError(_) => StatusCode::BAD_GATEWAY,
+            BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
         }
     }
 }
 
-// Azure API Errors
-impl From<AzureError> for BackendError {
-    fn from(error: AzureError) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+fn get_rusoto_error_message<T: std::error::Error>(
+    operation: &str,
+    error: RusotoError<T>,
+) -> String {
+    match error {
+        RusotoError::Service(error) => {
+            format!("{} Service Error: {}", operation, error.to_string())
+        }
+        RusotoError::HttpDispatch(error) => {
+            format!("{} HttpDispatch Error: {}", operation, error.to_string())
+        }
+        RusotoError::Credentials(error) => {
+            format!("{} Credentials Error: {}", operation, error.to_string())
+        }
+        RusotoError::Validation(error) => {
+            format!("{} Validation Error: {}", operation, error.to_string())
+        }
+        RusotoError::ParseError(error) => {
+            format!("{} Parse Error: {}", operation, error.to_string())
+        }
+        RusotoError::Unknown(error) => {
+            format!(
+                "{} Unknown Error: status {}, body {}",
+                operation,
+                error.status,
+                error.body_as_str(),
+            )
+        }
+        RusotoError::Blocking => format!("{} Blocking Error", operation,),
     }
 }
 
 // S3 API Errors
 impl From<RusotoError<HeadObjectError>> for BackendError {
     fn from(error: RusotoError<HeadObjectError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("HeadObject", error))
     }
 }
 impl From<RusotoError<DeleteObjectError>> for BackendError {
     fn from(error: RusotoError<DeleteObjectError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("DeleteObject", error))
     }
 }
 impl From<RusotoError<PutObjectError>> for BackendError {
     fn from(error: RusotoError<PutObjectError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("PutObject", error))
     }
 }
 impl From<RusotoError<CreateMultipartUploadError>> for BackendError {
     fn from(error: RusotoError<CreateMultipartUploadError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("CreateMultipartUpload", error))
     }
 }
 impl From<RusotoError<AbortMultipartUploadError>> for BackendError {
     fn from(error: RusotoError<AbortMultipartUploadError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("AbortMultipartUpload", error))
     }
 }
 impl From<RusotoError<CompleteMultipartUploadError>> for BackendError {
     fn from(error: RusotoError<CompleteMultipartUploadError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("CompleteMultipartUpload", error))
     }
 }
 impl From<RusotoError<UploadPartError>> for BackendError {
     fn from(error: RusotoError<UploadPartError>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("UploadPart", error))
     }
 }
 impl From<RusotoError<ListObjectsV2Error>> for BackendError {
     fn from(error: RusotoError<ListObjectsV2Error>) -> BackendError {
-        BackendError::UnexpectedApiError(error.to_string())
+        BackendError::S3Error(get_rusoto_error_message("ListObjectsV2", error))
     }
 }
 
