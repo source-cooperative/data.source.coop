@@ -405,20 +405,18 @@ impl SourceAPI {
 
         // If not in cache, fetch it
         let secret = self.fetch_api_key(access_key_id).await?;
+        
         // Cache the successful result
-        match secret {
-            Some(secret) => {
-                self.api_key_cache.insert(cache_key, secret.clone()).await;
-                Ok(secret)
-            }
-            None => {
-                let secret = APIKey {
-                    access_key_id: "".to_string(),
-                    secret_access_key: "".to_string(),
-                };
-                self.api_key_cache.insert(cache_key, secret.clone()).await;
-                Ok(secret)
-            }
+        if let Some(secret) = secret {
+            self.api_key_cache.insert(cache_key, secret.clone()).await;
+            Ok(secret)
+        } else {
+            let secret = APIKey {
+                access_key_id: "".to_string(),
+                secret_access_key: "".to_string(),
+            };
+            self.api_key_cache.insert(cache_key, secret.clone()).await;
+            Ok(secret)
         }
     }
 
