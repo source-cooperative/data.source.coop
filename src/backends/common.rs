@@ -1,4 +1,3 @@
-use crate::utils::errors::APIError;
 use async_trait::async_trait;
 use bytes::Bytes;
 use core::num::NonZeroU32;
@@ -9,6 +8,7 @@ use std::pin::Pin;
 
 use reqwest::Error as ReqwestError;
 type BoxedReqwestStream = Pin<Box<dyn Stream<Item = Result<Bytes, ReqwestError>> + Send>>;
+use crate::utils::errors::BackendError;
 
 pub struct GetObjectResponse {
     pub content_length: u64,
@@ -39,55 +39,55 @@ pub struct CompleteMultipartUploadResponse {
 
 #[async_trait]
 pub trait Repository {
-    async fn delete_object(&self, key: String) -> Result<(), Box<dyn APIError>>;
+    async fn delete_object(&self, key: String) -> Result<(), BackendError>;
     async fn create_multipart_upload(
         &self,
         key: String,
         content_type: Option<String>,
-    ) -> Result<CreateMultipartUploadResponse, Box<dyn APIError>>;
+    ) -> Result<CreateMultipartUploadResponse, BackendError>;
     async fn abort_multipart_upload(
         &self,
         key: String,
         upload_id: String,
-    ) -> Result<(), Box<dyn APIError>>;
+    ) -> Result<(), BackendError>;
     async fn complete_multipart_upload(
         &self,
         key: String,
         upload_id: String,
         parts: Vec<MultipartPart>,
-    ) -> Result<CompleteMultipartUploadResponse, Box<dyn APIError>>;
+    ) -> Result<CompleteMultipartUploadResponse, BackendError>;
     async fn upload_multipart_part(
         &self,
         key: String,
         upload_id: String,
         part_number: String,
         bytes: Bytes,
-    ) -> Result<UploadPartResponse, Box<dyn APIError>>;
+    ) -> Result<UploadPartResponse, BackendError>;
     async fn put_object(
         &self,
         key: String,
         bytes: Bytes,
         content_type: Option<String>,
-    ) -> Result<(), Box<dyn APIError>>;
+    ) -> Result<(), BackendError>;
     async fn get_object(
         &self,
         key: String,
         range: Option<String>,
-    ) -> Result<GetObjectResponse, Box<dyn APIError>>;
-    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, Box<dyn APIError>>;
+    ) -> Result<GetObjectResponse, BackendError>;
+    async fn head_object(&self, key: String) -> Result<HeadObjectResponse, BackendError>;
     async fn list_objects_v2(
         &self,
         prefix: String,
         continuation_token: Option<String>,
         delimiter: Option<String>,
         max_keys: NonZeroU32,
-    ) -> Result<ListBucketResult, Box<dyn APIError>>;
+    ) -> Result<ListBucketResult, BackendError>;
     async fn copy_object(
         &self,
         copy_identifier_path: String,
         key: String,
         range: Option<String>,
-    ) -> Result<(), Box<dyn APIError>>;
+    ) -> Result<(), BackendError>;
 }
 
 #[derive(Debug, Serialize)]
