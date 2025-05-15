@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.26](https://github.com/source-cooperative/data.source.coop/compare/v0.1.25...v0.1.26) (2025-05-15)
+
+
+### Bug Fixes
+
+* rectify crate version ([#61](https://github.com/source-cooperative/data.source.coop/issues/61)) ([00fa9db](https://github.com/source-cooperative/data.source.coop/commit/00fa9db0cc6dee84d7abbfcf9d633a41d1a24f2d))
+
 ## [0.1.21](https://github.com/source-cooperative/data.source.coop/compare/v0.1.20...v0.1.21) (2025-03-11)
 
 
