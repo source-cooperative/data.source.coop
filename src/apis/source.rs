@@ -129,15 +129,12 @@ impl API for SourceAPI {
             .get_repository_record(&account_id, &repository_id)
             .await?;
 
-        let repository_data = match repository
+        let Some(repository_data) = repository
             .data
             .mirrors
             .get(repository.data.primary_mirror.as_str())
-        {
-            Some(repository_data) => repository_data,
-            None => {
-                return Err(BackendError::SourceRepositoryMissingPrimaryMirror);
-            }
+        else {
+            return Err(BackendError::SourceRepositoryMissingPrimaryMirror);
         };
 
         let data_connection_id = repository_data.data_connection_id.clone();
@@ -334,16 +331,20 @@ impl SourceAPI {
         }
 
         // If not in cache, fetch it
-        match self.fetch_repository(account_id, repository_id).await {
-            Ok(repository) => {
-                // Cache the successful result
-                self.repository_cache
-                    .insert(cache_key, repository.clone())
-                    .await;
-                Ok(repository)
-            }
-            Err(e) => Err(e),
-        }
+        let url = format!(
+            "{}/api/v1/repositories/{}/{}",
+            self.endpoint, account_id, repository_id
+        );
+        let response = reqwest::get(url).await?;
+        let repository =
+            process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
+                .await?;
+
+        // Cache the successful result
+        self.repository_cache
+            .insert(cache_key, repository.clone())
+            .await;
+        Ok(repository)
     }
 
     async fn fetch_data_connection(
@@ -404,7 +405,7 @@ impl SourceAPI {
 
         // If not in cache, fetch it
         let secret = self.fetch_api_key(access_key_id).await?;
-        
+
         // Cache the successful result
         if let Some(secret) = secret {
             self.api_key_cache.insert(cache_key, secret.clone()).await;
@@ -441,25 +442,12 @@ impl SourceAPI {
             .headers(headers)
             .send()
             .await?;
-        let key: APIKey = process_json_response::<APIKey>(response, BackendError::ApiKeyNotFound).await?;
+        let key = process_json_response::<APIKey>(response, BackendError::ApiKeyNotFound).await?;
 
         Ok(Some(APIKey {
             access_key_id,
             secret_access_key: key.secret_access_key,
         }))
-    }
-
-    async fn fetch_repository(
-        &self,
-        account_id: &String,
-        repository_id: &String,
-    ) -> Result<SourceRepository, BackendError> {
-        let response = reqwest::get(format!(
-            "{}/api/v1/repositories/{}/{}",
-            self.endpoint, account_id, repository_id
-        ))
-        .await?;
-        process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound).await
     }
 
     pub async fn is_authorized(
