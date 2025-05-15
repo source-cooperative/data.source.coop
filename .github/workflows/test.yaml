@@ -1,0 +1,18 @@
+name: Test
+
+on:
+  push:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
+      - name: Set up Rust
+        uses: actions-rs/toolchain@8e603f32c5c6eeca5b1b2d9d1e7464d926082f1d # v1.0.0
+        with:
+          toolchain: stable
+      - name: Run tests
+        shell: bash
+        run: cargo test
