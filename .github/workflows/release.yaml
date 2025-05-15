@@ -2,6 +2,7 @@ name: Release build
 on:
   push:
     branches:
+      - dev
       - main
   workflow_dispatch:
 
