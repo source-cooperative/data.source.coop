@@ -19,17 +19,20 @@ To run the data proxy locally, run the following command:
 
 ### Contributing
 
-Contributing new features should be and deploying new versions of the proxy should be done as follows:
+To make contributions to this codebase, please create a pull request of a feature branch to the `main` branch. The PR title should conform to [Conventional Commits](http://conventionalcommits.org/en/v1.0.0/).
 
-1. Create a pull request of a feature branch to the `dev` branch. Either the commit message (in the event that a single commit is made) or the PR title (in the event that multiple commits were made) should conform to [Conventional Commits](http://conventionalcommits.org/en/v1.0.0/).
+> [!TIP]
+> The `CHANGELOG.md` and the project version within `Cargo.toml` are managed automatically within our CICD pipeline. There is typically no need for individual developers to alter these values.
 
-### Release + Deployment
+### Releases
 
-Releasing and deploying new versions of the proxy should be done as follows:
+Releases are automated via the [Release Please action](https://github.com/googleapis/release-please-action/). As contributiong are made to `main`, a release PR will be kept up-to-date to represent the upcoming release. When that PR is merged, a new Github Release will be generated.
 
-1. Create a pull request of a feature branch to development. If the PR contains a single commit, the commit message should conform to [Conventional Commits](http://conventionalcommits.org/en/v1.0.0/). Should the PR contain _multiple_ commits, its title should conform to [Convention Commits](http://conventionalcommits.org/en/v1.0.0/).
-2. Merges to `main` trigger deployments to the Proxy development cluster.
-3.
+### Deployments
+
+Merges to the `main` branch trigger deployment to the development instance of the proxy.
+
+New releases trigger deployment to the production instance of the proxy.
 
 <details>
 
