@@ -14,7 +14,8 @@
 
 - [ ] This PR has **no** breaking changes.
 - [ ] I have updated or added new tests to cover the changes in this PR.
-- [ ] This PR affects the [Source Cooperative Frontend & API](https://github.com/source-cooperative/source.coop), and I have opened issue/PR #XXX to track the change.
+- [ ] This PR affects the [Source Cooperative Frontend & API](https://github.com/source-cooperative/source.coop),
+      and I have opened issue/PR #XXX to track the change.
 
 ## Related Issues
 
