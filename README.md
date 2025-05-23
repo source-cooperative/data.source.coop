@@ -26,7 +26,7 @@ To make contributions to this codebase, please create a pull request of a featur
 
 ### Releases
 
-Releases are automated via the [Release Please action](https://github.com/googleapis/release-please-action/). As contributiong are made to `main`, a release PR will be kept up-to-date to represent the upcoming release. When that PR is merged, a new Github Release will be generated.
+Releases are automated via the [Release Please action](https://github.com/googleapis/release-please-action/). As contributions are made to `main`, a release PR will be kept up-to-date to represent the upcoming release. When that PR is merged, a new Github Release will be generated.
 
 ### Deployments
 
