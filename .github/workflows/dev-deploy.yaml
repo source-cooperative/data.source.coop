@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  deploy_release:
+  deploy_commit:
     runs-on: ubuntu-latest
 
     steps:
