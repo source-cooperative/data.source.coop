@@ -80,54 +80,38 @@ pub enum BackendError {
 impl error::ResponseError for BackendError {
     fn error_response(&self) -> HttpResponse {
         error!("Error: {}", self);
-        match self {
-            BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
-            BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
-            BackendError::ApiKeyNotFound => HttpResponse::NotFound().finish(),
-            BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
-            BackendError::InvalidRequest(message) => {
-                HttpResponse::BadRequest().body(message.clone())
-            }
-            BackendError::ReqwestError(_) => HttpResponse::BadGateway().finish(),
-            BackendError::ApiServerError { .. } => HttpResponse::BadGateway().finish(),
-            BackendError::ApiClientError { .. } => HttpResponse::BadGateway().finish(),
-            BackendError::JsonParseError { .. } => HttpResponse::InternalServerError().finish(),
-            BackendError::UnexpectedDataConnectionProvider { .. } => {
-                HttpResponse::InternalServerError().finish()
-            }
-            BackendError::RepositoryPermissionsNotFound => HttpResponse::BadGateway().finish(),
-            BackendError::UnauthorizedError => HttpResponse::Unauthorized().finish(),
-            BackendError::UnexpectedApiError(_) => HttpResponse::InternalServerError().finish(),
-            BackendError::UnsupportedAuthMethod(_) => HttpResponse::BadRequest().finish(),
-            BackendError::UnsupportedOperation(_) => HttpResponse::BadRequest().finish(),
-            BackendError::XmlParseError(_) => HttpResponse::InternalServerError().finish(),
-            BackendError::AzureError(_) => HttpResponse::BadGateway().finish(),
-            BackendError::S3Error(_) => HttpResponse::BadGateway().finish(),
-        }
+        let status_code = self.status_code();
+        let body = match status_code {
+            e if e.is_client_error() => self.to_string(),
+            _ => format!("Internal Server Error: {}", self.to_string()),
+        };
+        HttpResponse::build(self.status_code()).body(body)
     }
 
     fn status_code(&self) -> StatusCode {
         match self {
-            BackendError::RepositoryNotFound => StatusCode::NOT_FOUND,
-            BackendError::SourceRepositoryMissingPrimaryMirror => StatusCode::NOT_FOUND,
-            BackendError::ApiKeyNotFound => StatusCode::NOT_FOUND,
-            BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
-            BackendError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            BackendError::ReqwestError(_) => StatusCode::BAD_GATEWAY,
-            BackendError::ApiServerError { .. } => StatusCode::BAD_GATEWAY,
-            BackendError::ApiClientError { .. } => StatusCode::BAD_GATEWAY,
-            BackendError::JsonParseError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::UnexpectedDataConnectionProvider { .. } => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            BackendError::RepositoryPermissionsNotFound => StatusCode::BAD_GATEWAY,
+            // 400
+            BackendError::InvalidRequest(_)
+            | BackendError::UnsupportedAuthMethod(_)
+            | BackendError::UnsupportedOperation(_) => StatusCode::BAD_REQUEST,
+            // 401
             BackendError::UnauthorizedError => StatusCode::UNAUTHORIZED,
-            BackendError::UnexpectedApiError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::UnsupportedAuthMethod(_) => StatusCode::BAD_REQUEST,
-            BackendError::UnsupportedOperation(_) => StatusCode::BAD_REQUEST,
-            BackendError::XmlParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::AzureError(_) => StatusCode::BAD_GATEWAY,
-            BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
+            // 404
+            BackendError::RepositoryNotFound
+            | BackendError::ObjectNotFound
+            | BackendError::SourceRepositoryMissingPrimaryMirror
+            | BackendError::ApiKeyNotFound
+            | BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
+
+            // 502
+            BackendError::ReqwestError(_)
+            | BackendError::ApiServerError { .. }
+            | BackendError::ApiClientError { .. }
+            | BackendError::RepositoryPermissionsNotFound
+            | BackendError::AzureError(_)
+            | BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
+            // 500
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
