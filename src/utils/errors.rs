@@ -1,7 +1,10 @@
 use actix_web::error;
 use actix_web::http::StatusCode;
 use actix_web::HttpResponse;
-use azure_core::error::Error as AzureError;
+use azure_core::{
+    error::{Error as AzureError, ErrorKind as AzureErrorKind},
+    StatusCode as AzureStatusCode,
+};
 use log::error;
 use quick_xml::DeError;
 use reqwest::Error as ReqwestError;
@@ -22,6 +25,9 @@ pub enum BackendError {
 
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
+
+    #[error("object not found: {0:?}")]
+    ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
     ApiKeyNotFound,
@@ -70,11 +76,24 @@ pub enum BackendError {
     #[error("xml parse error: {0}")]
     XmlParseError(String),
 
-    #[error(transparent)]
-    AzureError(#[from] AzureError),
+    #[error("azure error: {0}")]
+    AzureError(AzureError),
 
     #[error("s3 error: {0}")]
     S3Error(String),
+}
+
+impl From<AzureError> for BackendError {
+    fn from(error: AzureError) -> BackendError {
+        match error.kind() {
+            AzureErrorKind::HttpResponse { status, error_code }
+                if *status == AzureStatusCode::NotFound =>
+            {
+                BackendError::ObjectNotFound(error_code.clone())
+            }
+            _ => BackendError::AzureError(error),
+        }
+    }
 }
 
 impl error::ResponseError for BackendError {
@@ -98,7 +117,7 @@ impl error::ResponseError for BackendError {
             BackendError::UnauthorizedError => StatusCode::UNAUTHORIZED,
             // 404
             BackendError::RepositoryNotFound
-            | BackendError::ObjectNotFound
+            | BackendError::ObjectNotFound(_)
             | BackendError::SourceRepositoryMissingPrimaryMirror
             | BackendError::ApiKeyNotFound
             | BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
@@ -151,7 +170,12 @@ fn get_rusoto_error_message<T: std::error::Error>(
 // S3 API Errors
 impl From<RusotoError<HeadObjectError>> for BackendError {
     fn from(error: RusotoError<HeadObjectError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("HeadObject", error))
+        match error {
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
+                BackendError::ObjectNotFound(Some(e))
+            }
+            _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
+        }
     }
 }
 impl From<RusotoError<DeleteObjectError>> for BackendError {
