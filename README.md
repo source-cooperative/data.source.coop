@@ -38,8 +38,7 @@ New releases trigger deployment to the production instance of the proxy.
 
 <summary>Manual Deployment Steps</summary>
 
-> [!WARNING]
-> This should only be necessary is extreme circumstances. Use of automated deployments via GitHub Workflows is preferred.
+**⚠️ Manual deployment should only be necessary in extreme circumstances. Automated deployments via GitHub Workflows are preferred. ⚠️**
 
 ## Deployment
 
