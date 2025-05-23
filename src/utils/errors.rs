@@ -137,30 +137,18 @@ fn get_rusoto_error_message<T: std::error::Error>(
     error: RusotoError<T>,
 ) -> String {
     match error {
-        RusotoError::Service(error) => {
-            format!("{} Service Error: {}", operation, error.to_string())
-        }
-        RusotoError::HttpDispatch(error) => {
-            format!("{} HttpDispatch Error: {}", operation, error.to_string())
-        }
-        RusotoError::Credentials(error) => {
-            format!("{} Credentials Error: {}", operation, error.to_string())
-        }
-        RusotoError::Validation(error) => {
-            format!("{} Validation Error: {}", operation, error.to_string())
-        }
-        RusotoError::ParseError(error) => {
-            format!("{} Parse Error: {}", operation, error.to_string())
-        }
-        RusotoError::Unknown(error) => {
-            format!(
+        RusotoError::Service(e) => format!("{} Service Error: {}", operation, e),
+        RusotoError::HttpDispatch(e) => format!("{} HttpDispatch Error: {}", operation, e),
+        RusotoError::Credentials(e) => format!("{} Credentials Error: {}", operation, e),
+        RusotoError::Validation(e) => format!("{} Validation Error: {}", operation, e),
+        RusotoError::ParseError(e) => format!("{} Parse Error: {}", operation, e),
+        RusotoError::Unknown(e) => format!(
                 "{} Unknown Error: status {}, body {}",
                 operation,
-                error.status,
-                error.body_as_str(),
-            )
-        }
-        RusotoError::Blocking => format!("{} Blocking Error", operation,),
+            e.status,
+            e.body_as_str()
+        ),
+        RusotoError::Blocking => format!("{} Blocking Error", operation),
     }
 }
 
