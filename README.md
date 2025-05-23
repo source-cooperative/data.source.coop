@@ -5,8 +5,9 @@ This repository contains the rust application which hosts the Source Cooperative
 ## Getting Started
 
 ### Prerequisites
- - Cargo installed on your local machine
- - The AWS CLI installed on your local machine
+
+- Cargo installed on your local machine
+- The AWS CLI installed on your local machine
 
 ### Run Locally
 
@@ -15,6 +16,30 @@ To run the data proxy locally, run the following command:
 ```
 ./scripts/run.sh
 ```
+
+### Contributing
+
+To make contributions to this codebase, please create a pull request of a feature branch to the `main` branch. The PR title should conform to [Conventional Commits](http://conventionalcommits.org/en/v1.0.0/).
+
+> [!TIP]
+> The `CHANGELOG.md` and the project version within `Cargo.toml` are managed automatically within our CICD pipeline. There is typically no need for individual developers to alter these values.
+
+### Releases
+
+Releases are automated via the [Release Please action](https://github.com/googleapis/release-please-action/). As contributions are made to `main`, a release PR will be kept up-to-date to represent the upcoming release. When that PR is merged, a new Github Release will be generated.
+
+### Deployments
+
+Merges to the `main` branch trigger deployment to the development instance of the proxy.
+
+New releases trigger deployment to the production instance of the proxy.
+
+<details>
+
+<summary>Manual Deployment Steps</summary>
+
+> [!WARNING]
+> This should only be necessary is extreme circumstances. Use of automated deployments via GitHub Workflows is preferred.
 
 ## Deployment
 
@@ -57,3 +82,5 @@ Next, deploy the version to ECS:
 ```
 ./scripts/deploy.sh
 ```
+
+</details>
