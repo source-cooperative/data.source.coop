@@ -132,6 +132,7 @@ impl error::ResponseError for BackendError {
     }
 }
 
+// S3 API Errors
 fn get_rusoto_error_message<T: std::error::Error>(
     operation: &str,
     error: RusotoError<T>,
@@ -143,56 +144,35 @@ fn get_rusoto_error_message<T: std::error::Error>(
         RusotoError::Validation(e) => format!("{} Validation Error: {}", operation, e),
         RusotoError::ParseError(e) => format!("{} Parse Error: {}", operation, e),
         RusotoError::Unknown(e) => format!(
-                "{} Unknown Error: status {}, body {}",
-                operation,
+            "{} Unknown Error: status {}, body {}",
+            operation,
             e.status,
             e.body_as_str()
         ),
         RusotoError::Blocking => format!("{} Blocking Error", operation),
     }
 }
-
-// S3 API Errors
-impl From<RusotoError<HeadObjectError>> for BackendError {
-    fn from(error: RusotoError<HeadObjectError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("HeadObject", error))
-    }
+macro_rules! impl_s3_errors {
+    ($(($error_type:ty, $operation:expr)),* $(,)?) => {
+        $(
+            impl From<RusotoError<$error_type>> for BackendError {
+                fn from(error: RusotoError<$error_type>) -> BackendError {
+                    BackendError::S3Error(get_rusoto_error_message($operation, error))
+                }
+            }
+        )*
+    };
 }
-impl From<RusotoError<DeleteObjectError>> for BackendError {
-    fn from(error: RusotoError<DeleteObjectError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("DeleteObject", error))
-    }
-}
-impl From<RusotoError<PutObjectError>> for BackendError {
-    fn from(error: RusotoError<PutObjectError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("PutObject", error))
-    }
-}
-impl From<RusotoError<CreateMultipartUploadError>> for BackendError {
-    fn from(error: RusotoError<CreateMultipartUploadError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("CreateMultipartUpload", error))
-    }
-}
-impl From<RusotoError<AbortMultipartUploadError>> for BackendError {
-    fn from(error: RusotoError<AbortMultipartUploadError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("AbortMultipartUpload", error))
-    }
-}
-impl From<RusotoError<CompleteMultipartUploadError>> for BackendError {
-    fn from(error: RusotoError<CompleteMultipartUploadError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("CompleteMultipartUpload", error))
-    }
-}
-impl From<RusotoError<UploadPartError>> for BackendError {
-    fn from(error: RusotoError<UploadPartError>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("UploadPart", error))
-    }
-}
-impl From<RusotoError<ListObjectsV2Error>> for BackendError {
-    fn from(error: RusotoError<ListObjectsV2Error>) -> BackendError {
-        BackendError::S3Error(get_rusoto_error_message("ListObjectsV2", error))
-    }
-}
+impl_s3_errors!(
+    (HeadObjectError, "HeadObject"),
+    (DeleteObjectError, "DeleteObject"),
+    (PutObjectError, "PutObject"),
+    (CreateMultipartUploadError, "CreateMultipartUpload"),
+    (AbortMultipartUploadError, "AbortMultipartUpload"),
+    (CompleteMultipartUploadError, "CompleteMultipartUpload"),
+    (UploadPartError, "UploadPart"),
+    (ListObjectsV2Error, "ListObjectsV2"),
+);
 
 impl From<DeError> for BackendError {
     fn from(error: DeError) -> BackendError {
