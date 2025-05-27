@@ -167,15 +167,33 @@ macro_rules! impl_s3_errors {
     };
 }
 impl_s3_errors!(
-    (HeadObjectError, "HeadObject"),
     (DeleteObjectError, "DeleteObject"),
     (PutObjectError, "PutObject"),
     (CreateMultipartUploadError, "CreateMultipartUpload"),
     (AbortMultipartUploadError, "AbortMultipartUpload"),
     (CompleteMultipartUploadError, "CompleteMultipartUpload"),
     (UploadPartError, "UploadPart"),
-    (ListObjectsV2Error, "ListObjectsV2"),
 );
+impl From<RusotoError<HeadObjectError>> for BackendError {
+    fn from(error: RusotoError<HeadObjectError>) -> BackendError {
+        match error {
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
+                BackendError::ObjectNotFound(Some(e))
+            }
+            _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
+        }
+    }
+}
+impl From<RusotoError<ListObjectsV2Error>> for BackendError {
+    fn from(error: RusotoError<ListObjectsV2Error>) -> BackendError {
+        match error {
+            RusotoError::Service(ListObjectsV2Error::NoSuchBucket(_)) => {
+                BackendError::RepositoryNotFound
+            }
+            _ => BackendError::S3Error(get_rusoto_error_message("ListObjectsV2", error)),
+        }
+    }
+}
 
 impl From<DeError> for BackendError {
     fn from(error: DeError) -> BackendError {
