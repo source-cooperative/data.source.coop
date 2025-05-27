@@ -5,7 +5,42 @@
 
 ### Bug Fixes
 
-* rectify crate version ([#61](https://github.com/source-cooperative/data.source.coop/issues/61)) ([00fa9db](https://github.com/source-cooperative/data.source.coop/commit/00fa9db0cc6dee84d7abbfcf9d633a41d1a24f2d))
+* Rectify crate version ([#61](https://github.com/source-cooperative/data.source.coop/issues/61)) ([00fa9db](https://github.com/source-cooperative/data.source.coop/commit/00fa9db0cc6dee84d7abbfcf9d633a41d1a24f2d))
+
+## [0.1.25](https://github.com/source-cooperative/data.source.coop/compare/v0.1.24...v0.1.25) (2025-05-13)
+
+
+### Improvements
+
+* Add more clarity to cloud provider errors ([#60](https://github.com/source-cooperative/data.source.coop/pull/60)) ([29837a3](https://github.com/source-cooperative/data.source.coop/commit/29837a357172161037a33ab0dad32c0ae3744007))
+
+
+## [0.1.24](https://github.com/source-cooperative/data.source.coop/compare/v0.1.23...v0.1.24) (2025-05-15)
+
+
+### Improvements
+
+* Observability/convert error handling ([#59](https://github.com/source-cooperative/data.source.coop/pull/59)) ([562c2de](https://github.com/source-cooperative/data.source.coop/commit/562c2dea3b50c643b749d50a7419fdad991e9cd4))
+
+## [0.1.23](https://github.com/source-cooperative/data.source.coop/compare/v0.1.22...v0.1.23) (2025-05-15)
+
+
+### Improvements
+
+* Log unexpected errors ([d339a01](https://github.com/source-cooperative/data.source.coop/commit/d339a01a43ce2fe01745dffa17e410ed5a156ec4))
+
+## [0.1.22](https://github.com/source-cooperative/data.source.coop/compare/v0.1.21...v0.1.22) (2025-05-15)
+
+
+### Bug Fixes
+
+* File empty on mv ([#54](https://github.com/source-cooperative/data.source.coop/pull/54)) ([d4e329e](https://github.com/source-cooperative/data.source.coop/commit/d4e329e5424cd66ad7930a90685388385e684147))
+
+
+### Improvements
+
+* Updated release versions ([#56](https://github.com/source-cooperative/data.source.coop/pull/56)) ([c8b44b6](https://github.com/source-cooperative/data.source.coop/commit/c8b44b68b9b672beebc20324e2c63d34675ad48d))
+* More targetted error handling ([#58](https://github.com/source-cooperative/data.source.coop/pull/58)) ([90e3475](https://github.com/source-cooperative/data.source.coop/commit/90e34750ceabe7281e3cc5dfb003982240e83217))
 
 ## [0.1.21](https://github.com/source-cooperative/data.source.coop/compare/v0.1.20...v0.1.21) (2025-03-11)
 
