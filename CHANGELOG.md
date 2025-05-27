@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.27](https://github.com/source-cooperative/data.source.coop/compare/v0.1.26...v0.1.27) (2025-05-27)
+
+
+### Bug Fixes
+
+* treat missing objects as 404s ([#69](https://github.com/source-cooperative/data.source.coop/issues/69)) ([8f4efbf](https://github.com/source-cooperative/data.source.coop/commit/8f4efbf897afaa354b5aab4d5393d69939249ab1))
+
 ## [0.1.26](https://github.com/source-cooperative/data.source.coop/compare/v0.1.25...v0.1.26) (2025-05-15)
 
 
