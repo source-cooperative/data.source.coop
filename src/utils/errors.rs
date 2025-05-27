@@ -104,7 +104,7 @@ impl error::ResponseError for BackendError {
             e if e.is_client_error() => self.to_string(),
             _ => format!("Internal Server Error: {}", self.to_string()),
         };
-        HttpResponse::build(self.status_code()).body(body)
+        HttpResponse::build(status_code).body(body)
     }
 
     fn status_code(&self) -> StatusCode {
