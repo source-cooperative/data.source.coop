@@ -7,6 +7,11 @@
 
 * Rectify crate version ([#61](https://github.com/source-cooperative/data.source.coop/issues/61)) ([00fa9db](https://github.com/source-cooperative/data.source.coop/commit/00fa9db0cc6dee84d7abbfcf9d633a41d1a24f2d))
 
+
+### Refactor
+
+* refactor: simplify repository fetching logic in SourceAPI ([#62](https://github.com/source-cooperative/data.source.coop/issues/62)) ([c739a3a](https://github.com/source-cooperative/data.source.coop/commit/c739a3ad2501ac5c8e0bf9a8f6ccf4c8632b7e61))
+
 ## [0.1.25](https://github.com/source-cooperative/data.source.coop/compare/v0.1.24...v0.1.25) (2025-05-13)
 
 
