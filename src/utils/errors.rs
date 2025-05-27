@@ -1,7 +1,10 @@
 use actix_web::error;
 use actix_web::http::StatusCode;
 use actix_web::HttpResponse;
-use azure_core::error::Error as AzureError;
+use azure_core::{
+    error::{Error as AzureError, ErrorKind as AzureErrorKind},
+    StatusCode as AzureStatusCode,
+};
 use log::error;
 use quick_xml::DeError;
 use reqwest::Error as ReqwestError;
@@ -22,6 +25,9 @@ pub enum BackendError {
 
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
+
+    #[error("object not found: {0:?}")]
+    ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
     ApiKeyNotFound,
@@ -70,64 +76,61 @@ pub enum BackendError {
     #[error("xml parse error: {0}")]
     XmlParseError(String),
 
-    #[error(transparent)]
-    AzureError(#[from] AzureError),
+    #[error("azure error: {0}")]
+    AzureError(AzureError),
 
     #[error("s3 error: {0}")]
     S3Error(String),
 }
 
+impl From<AzureError> for BackendError {
+    fn from(error: AzureError) -> BackendError {
+        match error.kind() {
+            AzureErrorKind::HttpResponse { status, error_code }
+                if *status == AzureStatusCode::NotFound =>
+            {
+                BackendError::ObjectNotFound(error_code.clone())
+            }
+            _ => BackendError::AzureError(error),
+        }
+    }
+}
+
 impl error::ResponseError for BackendError {
     fn error_response(&self) -> HttpResponse {
         error!("Error: {}", self);
-        match self {
-            BackendError::RepositoryNotFound => HttpResponse::NotFound().finish(),
-            BackendError::SourceRepositoryMissingPrimaryMirror => HttpResponse::NotFound().finish(),
-            BackendError::ApiKeyNotFound => HttpResponse::NotFound().finish(),
-            BackendError::DataConnectionNotFound => HttpResponse::NotFound().finish(),
-            BackendError::InvalidRequest(message) => {
-                HttpResponse::BadRequest().body(message.clone())
-            }
-            BackendError::ReqwestError(_) => HttpResponse::BadGateway().finish(),
-            BackendError::ApiServerError { .. } => HttpResponse::BadGateway().finish(),
-            BackendError::ApiClientError { .. } => HttpResponse::BadGateway().finish(),
-            BackendError::JsonParseError { .. } => HttpResponse::InternalServerError().finish(),
-            BackendError::UnexpectedDataConnectionProvider { .. } => {
-                HttpResponse::InternalServerError().finish()
-            }
-            BackendError::RepositoryPermissionsNotFound => HttpResponse::BadGateway().finish(),
-            BackendError::UnauthorizedError => HttpResponse::Unauthorized().finish(),
-            BackendError::UnexpectedApiError(_) => HttpResponse::InternalServerError().finish(),
-            BackendError::UnsupportedAuthMethod(_) => HttpResponse::BadRequest().finish(),
-            BackendError::UnsupportedOperation(_) => HttpResponse::BadRequest().finish(),
-            BackendError::XmlParseError(_) => HttpResponse::InternalServerError().finish(),
-            BackendError::AzureError(_) => HttpResponse::BadGateway().finish(),
-            BackendError::S3Error(_) => HttpResponse::BadGateway().finish(),
-        }
+        let status_code = self.status_code();
+        let body = match status_code {
+            e if e.is_client_error() => self.to_string(),
+            _ => format!("Internal Server Error: {}", self.to_string()),
+        };
+        HttpResponse::build(status_code).body(body)
     }
 
     fn status_code(&self) -> StatusCode {
         match self {
-            BackendError::RepositoryNotFound => StatusCode::NOT_FOUND,
-            BackendError::SourceRepositoryMissingPrimaryMirror => StatusCode::NOT_FOUND,
-            BackendError::ApiKeyNotFound => StatusCode::NOT_FOUND,
-            BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
-            BackendError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            BackendError::ReqwestError(_) => StatusCode::BAD_GATEWAY,
-            BackendError::ApiServerError { .. } => StatusCode::BAD_GATEWAY,
-            BackendError::ApiClientError { .. } => StatusCode::BAD_GATEWAY,
-            BackendError::JsonParseError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::UnexpectedDataConnectionProvider { .. } => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
-            BackendError::RepositoryPermissionsNotFound => StatusCode::BAD_GATEWAY,
+            // 400
+            BackendError::InvalidRequest(_)
+            | BackendError::UnsupportedAuthMethod(_)
+            | BackendError::UnsupportedOperation(_) => StatusCode::BAD_REQUEST,
+            // 401
             BackendError::UnauthorizedError => StatusCode::UNAUTHORIZED,
-            BackendError::UnexpectedApiError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::UnsupportedAuthMethod(_) => StatusCode::BAD_REQUEST,
-            BackendError::UnsupportedOperation(_) => StatusCode::BAD_REQUEST,
-            BackendError::XmlParseError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            BackendError::AzureError(_) => StatusCode::BAD_GATEWAY,
-            BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
+            // 404
+            BackendError::RepositoryNotFound
+            | BackendError::ObjectNotFound(_)
+            | BackendError::SourceRepositoryMissingPrimaryMirror
+            | BackendError::ApiKeyNotFound
+            | BackendError::DataConnectionNotFound => StatusCode::NOT_FOUND,
+
+            // 502
+            BackendError::ReqwestError(_)
+            | BackendError::ApiServerError { .. }
+            | BackendError::ApiClientError { .. }
+            | BackendError::RepositoryPermissionsNotFound
+            | BackendError::AzureError(_)
+            | BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
+            // 500
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }
@@ -164,15 +167,33 @@ macro_rules! impl_s3_errors {
     };
 }
 impl_s3_errors!(
-    (HeadObjectError, "HeadObject"),
     (DeleteObjectError, "DeleteObject"),
     (PutObjectError, "PutObject"),
     (CreateMultipartUploadError, "CreateMultipartUpload"),
     (AbortMultipartUploadError, "AbortMultipartUpload"),
     (CompleteMultipartUploadError, "CompleteMultipartUpload"),
     (UploadPartError, "UploadPart"),
-    (ListObjectsV2Error, "ListObjectsV2"),
 );
+impl From<RusotoError<HeadObjectError>> for BackendError {
+    fn from(error: RusotoError<HeadObjectError>) -> BackendError {
+        match error {
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
+                BackendError::ObjectNotFound(Some(e))
+            }
+            _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
+        }
+    }
+}
+impl From<RusotoError<ListObjectsV2Error>> for BackendError {
+    fn from(error: RusotoError<ListObjectsV2Error>) -> BackendError {
+        match error {
+            RusotoError::Service(ListObjectsV2Error::NoSuchBucket(_)) => {
+                BackendError::RepositoryNotFound
+            }
+            _ => BackendError::S3Error(get_rusoto_error_message("ListObjectsV2", error)),
+        }
+    }
+}
 
 impl From<DeError> for BackendError {
     fn from(error: DeError) -> BackendError {
