@@ -212,96 +212,106 @@ mod tests {
     use rusoto_core::RusotoError;
     use rusoto_s3::{HeadObjectError, ListObjectsV2Error, PutObjectError};
 
-    #[test]
-    fn test_head_object_error_conversion() {
-        // Test Rusoto HeadObject NoSuchKey error converts to 404
-        let error = RusotoError::Service(HeadObjectError::NoSuchKey("test-key".to_string()));
-        let backend_error = BackendError::from(error);
-        assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(backend_error.to_string(), "object not found: \"test-key\"");
+    mod s3_errors {
+        use super::*;
+
+        #[test]
+        fn should_convert_head_object_no_such_key_to_404() {
+            let error = RusotoError::Service(HeadObjectError::NoSuchKey("test-key".to_string()));
+            let backend_error = BackendError::from(error);
+            assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
+            assert_eq!(backend_error.to_string(), "object not found: \"test-key\"");
+        }
+
+        #[test]
+        fn should_convert_list_objects_no_such_bucket_to_404() {
+            let error = RusotoError::Service(ListObjectsV2Error::NoSuchBucket("test-bucket".to_string()));
+            let backend_error = BackendError::from(error);
+            assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
+            assert_eq!(backend_error.to_string(), "repository not found");
+        }
+
+        #[test]
+        fn should_convert_put_object_unknown_error_to_502() {
+            let error: RusotoError<PutObjectError> = RusotoError::Unknown(
+                rusoto_core::request::BufferedHttpResponse {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    headers: Default::default(),
+                    body: Bytes::new(),
+                }
+            );
+            let backend_error = BackendError::from(error);
+            assert_eq!(backend_error.status_code(), StatusCode::BAD_GATEWAY);
+            assert_eq!(
+                backend_error.to_string(),
+                "s3 error: PutObject Unknown Error: status 500 Internal Server Error"
+            );
+        }
     }
 
-    #[test]
-    fn test_list_objects_v2_error_conversion() {
-        // Test Rusoto ListObjectsV2 NoSuchBucket error converts to 404
-        let error =
-            RusotoError::Service(ListObjectsV2Error::NoSuchBucket("test-bucket".to_string()));
-        let backend_error = BackendError::from(error);
-        assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(backend_error.to_string(), "repository not found");
+    mod azure_errors {
+        use super::*;
+
+        #[test]
+        fn should_convert_not_found_to_404() {
+            let error = AzureError::new(
+                AzureErrorKind::HttpResponse {
+                    status: AzureStatusCode::NotFound,
+                    error_code: Some("ResourceNotFound".to_string()),
+                },
+                "Resource not found",
+            );
+            let backend_error = BackendError::from(error);
+            assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                backend_error.to_string(),
+                "object not found: \"ResourceNotFound\""
+            );
+        }
+
+        #[test]
+        fn should_convert_other_errors_to_502() {
+            let error = AzureError::new(
+                AzureErrorKind::HttpResponse {
+                    status: AzureStatusCode::InternalServerError,
+                    error_code: Some("InternalError".to_string()),
+                },
+                "Internal error",
+            );
+            let backend_error = BackendError::from(error);
+            assert_eq!(backend_error.status_code(), StatusCode::BAD_GATEWAY);
+        }
     }
 
-    #[test]
-    fn test_unauthorized_error() {
-        let error = BackendError::UnauthorizedError;
-        assert_eq!(error.status_code(), StatusCode::UNAUTHORIZED);
-        assert_eq!(error.to_string(), "unauthorized");
-    }
+    mod client_errors {
+        use super::*;
 
-    #[test]
-    fn test_invalid_request_error() {
-        let error = BackendError::InvalidRequest("bad input".to_string());
-        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
-        assert_eq!(error.to_string(), "invalid request");
-    }
+        #[test]
+        fn should_handle_unauthorized_error() {
+            let error = BackendError::UnauthorizedError;
+            assert_eq!(error.status_code(), StatusCode::UNAUTHORIZED);
+            assert_eq!(error.to_string(), "unauthorized");
+        }
 
-    #[test]
-    fn test_unsupported_auth_method() {
-        let error = BackendError::UnsupportedAuthMethod("basic".to_string());
-        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
-        assert_eq!(error.to_string(), "unsupported auth method: basic");
-    }
+        #[test]
+        fn should_handle_invalid_request_error() {
+            let error = BackendError::InvalidRequest("bad input".to_string());
+            assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+            assert_eq!(error.to_string(), "invalid request");
+        }
 
-    #[test]
-    fn test_unsupported_operation() {
-        let error = BackendError::UnsupportedOperation("delete".to_string());
-        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
-        assert_eq!(error.to_string(), "unsupported operation: delete");
-    }
+        #[test]
+        fn should_handle_unsupported_auth_method() {
+            let error = BackendError::UnsupportedAuthMethod("basic".to_string());
+            assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+            assert_eq!(error.to_string(), "unsupported auth method: basic");
+        }
 
-    #[test]
-    fn test_s3_error_conversion() {
-        // Test S3 PutObject error converts to 502
-        let error: RusotoError<PutObjectError> =
-            RusotoError::Unknown(rusoto_core::request::BufferedHttpResponse {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                headers: Default::default(),
-                body: Bytes::new(),
-            });
-        let backend_error = BackendError::from(error);
-        assert_eq!(backend_error.status_code(), StatusCode::BAD_GATEWAY);
-        assert_eq!(
-            backend_error.to_string(),
-            "s3 error: PutObject Unknown Error: status 500 Internal Server Error"
-        );
-    }
-
-    #[test]
-    fn test_azure_error_conversion() {
-        // Test Azure NotFound error converts to 404
-        let error = AzureError::new(
-            AzureErrorKind::HttpResponse {
-                status: AzureStatusCode::NotFound,
-                error_code: Some("ResourceNotFound".to_string()),
-            },
-            "Resource not found",
-        );
-        let backend_error = BackendError::from(error);
-        assert_eq!(backend_error.status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            backend_error.to_string(),
-            "object not found: \"ResourceNotFound\""
-        );
-
-        // Test other Azure error converts to 502
-        let error = AzureError::new(
-            AzureErrorKind::HttpResponse {
-                status: AzureStatusCode::InternalServerError,
-                error_code: Some("InternalError".to_string()),
-            },
-            "Internal error",
-        );
-        let backend_error = BackendError::from(error);
-        assert_eq!(backend_error.status_code(), StatusCode::BAD_GATEWAY);
+        #[test]
+        fn should_handle_unsupported_operation() {
+            let error = BackendError::UnsupportedOperation("delete".to_string());
+            assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+            assert_eq!(error.to_string(), "unsupported operation: delete");
+        }
     }
 }
