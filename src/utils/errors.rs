@@ -180,7 +180,7 @@ impl From<RusotoError<HeadObjectError>> for BackendError {
             RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
                 BackendError::ObjectNotFound(Some(e))
             }
-            RusotoError::Unknown(e) if e.status == 404 => {
+            RusotoError::Unknown(e) if e.status == StatusCode::NOT_FOUND => {
                 BackendError::ObjectNotFound(Some(e.body_as_str().to_string()))
             }
             _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
