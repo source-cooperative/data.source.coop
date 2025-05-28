@@ -13,7 +13,6 @@ use rusoto_s3::{
     AbortMultipartUploadError, CompleteMultipartUploadError, CreateMultipartUploadError,
     DeleteObjectError, HeadObjectError, ListObjectsV2Error, PutObjectError, UploadPartError,
 };
-use serde_xml_rs::Error as XmlError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
