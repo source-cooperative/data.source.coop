@@ -227,10 +227,10 @@ mod tests {
             let error = RusotoError::Service(HeadObjectError::NoSuchKey("test-key".to_string()));
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::ObjectNotFound(_key) => (),
-                _ => panic!("expected error to be converted to ObjectNotFound"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::ObjectNotFound(_)),
+                "expected error to be ObjectNotFound"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::NOT_FOUND,
@@ -250,10 +250,10 @@ mod tests {
                 RusotoError::Service(ListObjectsV2Error::NoSuchBucket("test-bucket".to_string()));
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::RepositoryNotFound => (),
-                _ => panic!("expected error to be converted to RepositoryNotFound"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::RepositoryNotFound),
+                "expected error to be converted to RepositoryNotFound"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::NOT_FOUND,
@@ -277,10 +277,10 @@ mod tests {
                 });
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::S3Error(_msg) => (),
-                _ => panic!("expected error to be converted to S3Error"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::S3Error(_)),
+                "expected error to be converted to S3Error"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::BAD_GATEWAY,
@@ -310,10 +310,10 @@ mod tests {
             );
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::ObjectNotFound(_key) => (),
-                _ => panic!("expected error to be converted to ObjectNotFound"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::ObjectNotFound(_)),
+                "expected error to be converted to ObjectNotFound"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::NOT_FOUND,
@@ -338,10 +338,10 @@ mod tests {
             );
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::AzureError(_) => (),
-                _ => panic!("expected error to be converted to AzureError"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::AzureError(_)),
+                "expected error to be converted to AzureError"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::BAD_GATEWAY,
@@ -454,10 +454,10 @@ mod tests {
             let error = DeError::UnexpectedStart(b"unexpected start of stream".to_vec());
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::XmlParseError(_msg) => (),
-                _ => panic!("expected error to be converted to XmlParseError"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::XmlParseError(_)),
+                "expected error to be converted to XmlParseError"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -472,10 +472,10 @@ mod tests {
             };
             let backend_error = BackendError::from(error);
 
-            match &backend_error {
-                BackendError::XmlParseError(_msg) => (),
-                _ => panic!("expected error to be converted to XmlParseError"),
-            }
+            assert!(
+                matches!(backend_error, BackendError::XmlParseError(_)),
+                "expected error to be converted to XmlParseError"
+            );
             assert_eq!(
                 backend_error.status_code(),
                 StatusCode::INTERNAL_SERVER_ERROR,
