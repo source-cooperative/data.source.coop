@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.28](https://github.com/source-cooperative/data.source.coop/compare/v0.1.27...v0.1.28) (2025-05-28)
+
+
+### Bug Fixes
+
+* handle unknown Rusoto errors with 404 status ([#73](https://github.com/source-cooperative/data.source.coop/issues/73)) ([8375d50](https://github.com/source-cooperative/data.source.coop/commit/8375d5013a8e559cb2c365722859c70c709ebc68))
+
 ## [0.1.27](https://github.com/source-cooperative/data.source.coop/compare/v0.1.26...v0.1.27) (2025-05-27)
 
 
