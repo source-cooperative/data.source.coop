@@ -27,7 +27,7 @@ pub enum BackendError {
     SourceRepositoryMissingPrimaryMirror,
 
     #[error("object not found: {0:?}")]
-    ObjectNotFound(String),
+    ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
     ApiKeyNotFound,
@@ -89,11 +89,7 @@ impl From<AzureError> for BackendError {
             AzureErrorKind::HttpResponse { status, error_code }
                 if *status == AzureStatusCode::NotFound =>
             {
-                BackendError::ObjectNotFound(
-                    error_code
-                        .as_ref()
-                        .map_or("unknown".to_string(), |s| s.to_string()),
-                )
+                BackendError::ObjectNotFound(error_code.as_ref().map(|s| s.to_string()))
             }
             _ => BackendError::AzureError(error),
         }
@@ -176,7 +172,9 @@ impl_s3_errors!(
 impl From<RusotoError<HeadObjectError>> for BackendError {
     fn from(error: RusotoError<HeadObjectError>) -> BackendError {
         match error {
-            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => BackendError::ObjectNotFound(e),
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
+                BackendError::ObjectNotFound(Some(e))
+            }
             _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
         }
     }
@@ -206,6 +204,7 @@ impl From<serde_xml_rs::Error> for BackendError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::body::to_bytes;
     use actix_web::error::ResponseError;
     use actix_web::http::StatusCode;
     use bytes::Bytes;
@@ -218,14 +217,18 @@ mod tests {
     mod s3_errors {
         use super::*;
 
-        #[test]
-        fn should_convert_head_object_no_such_key_to_404() {
+        #[tokio::test]
+        async fn should_convert_head_object_no_such_key_to_404() {
             let error = RusotoError::Service(HeadObjectError::NoSuchKey("test-key".to_string()));
             let backend_error = BackendError::from(error);
 
             match &backend_error {
                 BackendError::ObjectNotFound(key) => {
-                    assert_eq!(key, "test-key", "expected correct key in ObjectNotFound")
+                    assert_eq!(
+                        key.as_deref(),
+                        Some("test-key"),
+                        "expected correct key in ObjectNotFound"
+                    )
                 }
                 _ => panic!("expected error to be converted to ObjectNotFound"),
             }
@@ -234,10 +237,16 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "expected status code to be 404"
             );
+            let response = backend_error.error_response();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("object not found: Some(\"test-key\")")
+            );
         }
 
-        #[test]
-        fn should_convert_list_objects_no_such_bucket_to_404() {
+        #[tokio::test]
+        async fn should_convert_list_objects_no_such_bucket_to_404() {
             let error =
                 RusotoError::Service(ListObjectsV2Error::NoSuchBucket("test-bucket".to_string()));
             let backend_error = BackendError::from(error);
@@ -251,10 +260,16 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "expected status code to be 404"
             );
+            let response = backend_error.error_response();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("repository not found")
+            );
         }
 
-        #[test]
-        fn should_convert_put_object_unknown_error_to_502() {
+        #[tokio::test]
+        async fn should_convert_put_object_unknown_error_to_502() {
             let error: RusotoError<PutObjectError> =
                 RusotoError::Unknown(rusoto_core::request::BufferedHttpResponse {
                     status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -275,6 +290,12 @@ mod tests {
                 StatusCode::BAD_GATEWAY,
                 "expected status code to be 502"
             );
+            let response = backend_error.error_response();
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("Internal Server Error: s3 error: PutObject Unknown Error: status 500 Internal Server Error")
+            );
         }
     }
 
@@ -282,8 +303,8 @@ mod tests {
     mod azure_errors {
         use super::*;
 
-        #[test]
-        fn should_convert_not_found_to_404() {
+        #[tokio::test]
+        async fn should_convert_not_found_to_404() {
             let error = AzureError::new(
                 AzureErrorKind::HttpResponse {
                     status: AzureStatusCode::NotFound,
@@ -295,7 +316,8 @@ mod tests {
 
             match &backend_error {
                 BackendError::ObjectNotFound(key) => assert_eq!(
-                    key, "ResourceNotFound",
+                    key.as_deref(),
+                    Some("ResourceNotFound"),
                     "expected correct key in ObjectNotFound"
                 ),
                 _ => panic!("expected error to be converted to ObjectNotFound"),
@@ -305,10 +327,16 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "expected status code to be 404"
             );
+            let response = backend_error.error_response();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("object not found: Some(\"ResourceNotFound\")")
+            );
         }
 
-        #[test]
-        fn should_convert_other_errors_to_502() {
+        #[tokio::test]
+        async fn should_convert_other_errors_to_502() {
             let error = AzureError::new(
                 AzureErrorKind::HttpResponse {
                     status: AzureStatusCode::InternalServerError,
@@ -327,6 +355,12 @@ mod tests {
                 StatusCode::BAD_GATEWAY,
                 "expected status code to be 502"
             );
+            let response = backend_error.error_response();
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("Internal Server Error: azure error: Internal error")
+            );
         }
     }
 
@@ -334,8 +368,8 @@ mod tests {
     mod client_errors {
         use super::*;
 
-        #[test]
-        fn should_handle_unauthorized_error() {
+        #[tokio::test]
+        async fn should_handle_unauthorized_error() {
             let error = BackendError::UnauthorizedError;
             assert_eq!(
                 error.status_code(),
@@ -347,10 +381,16 @@ mod tests {
                 "unauthorized",
                 "expected error message to be 'unauthorized'"
             );
+            let response = error.error_response();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("unauthorized")
+            );
         }
 
-        #[test]
-        fn should_handle_invalid_request_error() {
+        #[tokio::test]
+        async fn should_handle_invalid_request_error() {
             let error = BackendError::InvalidRequest("bad input".to_string());
             assert_eq!(
                 error.status_code(),
@@ -362,10 +402,16 @@ mod tests {
                 "invalid request",
                 "expected error message to be 'invalid request'"
             );
+            let response = error.error_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("invalid request")
+            );
         }
 
-        #[test]
-        fn should_handle_unsupported_auth_method() {
+        #[tokio::test]
+        async fn should_handle_unsupported_auth_method() {
             let error = BackendError::UnsupportedAuthMethod("basic".to_string());
             assert_eq!(
                 error.status_code(),
@@ -377,10 +423,16 @@ mod tests {
                 "unsupported auth method: basic",
                 "expected error message to include auth method"
             );
+            let response = error.error_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("unsupported auth method: basic")
+            );
         }
 
-        #[test]
-        fn should_handle_unsupported_operation() {
+        #[tokio::test]
+        async fn should_handle_unsupported_operation() {
             let error = BackendError::UnsupportedOperation("delete".to_string());
             assert_eq!(
                 error.status_code(),
@@ -391,6 +443,12 @@ mod tests {
                 error.to_string(),
                 "unsupported operation: delete",
                 "expected error message to include operation"
+            );
+            let response = error.error_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                to_bytes(response.into_body()).await.unwrap(),
+                Bytes::from("unsupported operation: delete")
             );
         }
     }
