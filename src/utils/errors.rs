@@ -228,7 +228,7 @@ mod tests {
             let backend_error = BackendError::from(error);
 
             match &backend_error {
-                BackendError::ObjectNotFound(key) => (),
+                BackendError::ObjectNotFound(_key) => (),
                 _ => panic!("expected error to be converted to ObjectNotFound"),
             }
             assert_eq!(
@@ -278,7 +278,7 @@ mod tests {
             let backend_error = BackendError::from(error);
 
             match &backend_error {
-                BackendError::S3Error(msg) => (),
+                BackendError::S3Error(_msg) => (),
                 _ => panic!("expected error to be converted to S3Error"),
             }
             assert_eq!(
@@ -311,7 +311,7 @@ mod tests {
             let backend_error = BackendError::from(error);
 
             match &backend_error {
-                BackendError::ObjectNotFound(key) => (),
+                BackendError::ObjectNotFound(_key) => (),
                 _ => panic!("expected error to be converted to ObjectNotFound"),
             }
             assert_eq!(
@@ -455,7 +455,7 @@ mod tests {
             let backend_error = BackendError::from(error);
 
             match &backend_error {
-                BackendError::XmlParseError(msg) => (),
+                BackendError::XmlParseError(_msg) => (),
                 _ => panic!("expected error to be converted to XmlParseError"),
             }
             assert_eq!(
@@ -473,7 +473,7 @@ mod tests {
             let backend_error = BackendError::from(error);
 
             match &backend_error {
-                BackendError::XmlParseError(msg) => (),
+                BackendError::XmlParseError(_msg) => (),
                 _ => panic!("expected error to be converted to XmlParseError"),
             }
             assert_eq!(
