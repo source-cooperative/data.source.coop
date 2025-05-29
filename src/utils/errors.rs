@@ -26,7 +26,7 @@ pub enum BackendError {
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
 
-    #[error("object not found: {0:?}")]
+    #[error("object not found: {}", .0.clone().unwrap_or_default())]
     ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
@@ -83,27 +83,16 @@ pub enum BackendError {
     S3Error(String),
 }
 
-impl From<AzureError> for BackendError {
-    fn from(error: AzureError) -> BackendError {
-        match error.kind() {
-            AzureErrorKind::HttpResponse { status, error_code }
-                if *status == AzureStatusCode::NotFound =>
-            {
-                BackendError::ObjectNotFound(error_code.clone())
-            }
-            _ => BackendError::AzureError(error),
-        }
-    }
-}
-
 impl error::ResponseError for BackendError {
     fn error_response(&self) -> HttpResponse {
-        error!("Error: {}", self);
         let status_code = self.status_code();
         let body = match status_code {
             e if e.is_client_error() => self.to_string(),
             _ => format!("Internal Server Error: {}", self.to_string()),
         };
+        if status_code.is_server_error() {
+            error!("Error: {}", self);
+        }
         HttpResponse::build(status_code).body(body)
     }
 
@@ -135,6 +124,20 @@ impl error::ResponseError for BackendError {
     }
 }
 
+// Azure API Errors
+impl From<AzureError> for BackendError {
+    fn from(error: AzureError) -> BackendError {
+        match error.kind() {
+            AzureErrorKind::HttpResponse { status, error_code }
+                if *status == AzureStatusCode::NotFound =>
+            {
+                BackendError::ObjectNotFound(error_code.clone())
+            }
+            _ => BackendError::AzureError(error),
+        }
+    }
+}
+
 // S3 API Errors
 fn get_rusoto_error_message<T: std::error::Error>(
     operation: &str,
@@ -146,12 +149,7 @@ fn get_rusoto_error_message<T: std::error::Error>(
         RusotoError::Credentials(e) => format!("{} Credentials Error: {}", operation, e),
         RusotoError::Validation(e) => format!("{} Validation Error: {}", operation, e),
         RusotoError::ParseError(e) => format!("{} Parse Error: {}", operation, e),
-        RusotoError::Unknown(e) => format!(
-            "{} Unknown Error: status {}, body {}",
-            operation,
-            e.status,
-            e.body_as_str()
-        ),
+        RusotoError::Unknown(e) => format!("{} Unknown Error: status {}", operation, e.status),
         RusotoError::Blocking => format!("{} Blocking Error", operation),
     }
 }
@@ -243,7 +241,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: Some(\"test-key\")")
+                Bytes::from("object not found: test-key")
             );
         }
 
@@ -293,7 +291,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("Internal Server Error: s3 error: PutObject Unknown Error: status 500 Internal Server Error, body ")
+                Bytes::from("Internal Server Error: s3 error: PutObject Unknown Error: status 500 Internal Server Error")
             );
         }
     }
@@ -326,7 +324,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: Some(\"ResourceNotFound\")")
+                Bytes::from("object not found: ResourceNotFound")
             );
         }
 
