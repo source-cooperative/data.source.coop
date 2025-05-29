@@ -83,27 +83,16 @@ pub enum BackendError {
     S3Error(String),
 }
 
-impl From<AzureError> for BackendError {
-    fn from(error: AzureError) -> BackendError {
-        match error.kind() {
-            AzureErrorKind::HttpResponse { status, error_code }
-                if *status == AzureStatusCode::NotFound =>
-            {
-                BackendError::ObjectNotFound(error_code.clone())
-            }
-            _ => BackendError::AzureError(error),
-        }
-    }
-}
-
 impl error::ResponseError for BackendError {
     fn error_response(&self) -> HttpResponse {
-        error!("Error: {}", self);
         let status_code = self.status_code();
         let body = match status_code {
             e if e.is_client_error() => self.to_string(),
             _ => format!("Internal Server Error: {}", self.to_string()),
         };
+        if status_code.is_server_error() {
+            error!("Error: {}", self);
+        }
         HttpResponse::build(status_code).body(body)
     }
 
@@ -131,6 +120,20 @@ impl error::ResponseError for BackendError {
             | BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
             // 500
             _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+// Azure API Errors
+impl From<AzureError> for BackendError {
+    fn from(error: AzureError) -> BackendError {
+        match error.kind() {
+            AzureErrorKind::HttpResponse { status, error_code }
+                if *status == AzureStatusCode::NotFound =>
+            {
+                BackendError::ObjectNotFound(error_code.clone())
+            }
+            _ => BackendError::AzureError(error),
         }
     }
 }
