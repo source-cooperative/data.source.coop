@@ -26,8 +26,8 @@ pub enum BackendError {
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
 
-    #[error("object not found: {0:?}")]
-    ObjectNotFound(String),
+    #[error("object not found: {message}", message = .0.as_ref().unwrap_or(&"".to_string()))]
+    ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
     ApiKeyNotFound,
@@ -131,7 +131,7 @@ impl From<AzureError> for BackendError {
             AzureErrorKind::HttpResponse { status, error_code }
                 if *status == AzureStatusCode::NotFound =>
             {
-                BackendError::ObjectNotFound(error_code.clone().unwrap_or("".to_string()))
+                BackendError::ObjectNotFound(error_code.clone())
             }
             _ => BackendError::AzureError(error),
         }
@@ -175,9 +175,11 @@ impl_s3_errors!(
 impl From<RusotoError<HeadObjectError>> for BackendError {
     fn from(error: RusotoError<HeadObjectError>) -> BackendError {
         match error {
-            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => BackendError::ObjectNotFound(e),
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
+                BackendError::ObjectNotFound(Some(e))
+            }
             RusotoError::Unknown(e) if e.status == StatusCode::NOT_FOUND => {
-                BackendError::ObjectNotFound(e.body_as_str().to_string())
+                BackendError::ObjectNotFound(Some(e.body_as_str().to_string()))
             }
             _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
         }
@@ -239,7 +241,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: \"test-key\"")
+                Bytes::from("object not found: test-key")
             );
         }
 
@@ -322,7 +324,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: \"ResourceNotFound\"")
+                Bytes::from("object not found: ResourceNotFound")
             );
         }
 
