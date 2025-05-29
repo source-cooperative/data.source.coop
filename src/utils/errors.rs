@@ -512,7 +512,7 @@ mod tests {
         }
 
         #[test]
-        fn should_handle_api_client_error() {
+        fn should_handle_api_client_error_400() {
             let error = BackendError::ApiClientError {
                 url: "https://api.example.com".to_string(),
                 status: 400,
@@ -520,8 +520,26 @@ mod tests {
             };
             assert_eq!(
                 error.status_code(),
-                StatusCode::BAD_GATEWAY,
-                "expected status code to be 502"
+                StatusCode::BAD_REQUEST,
+                "expected status code to be 400"
+            );
+            assert!(
+                error.to_string().contains("api threw a client error"),
+                "expected error message to mention client error"
+            );
+        }
+
+        #[test]
+        fn should_handle_api_client_error_404() {
+            let error = BackendError::ApiClientError {
+                url: "https://api.example.com".to_string(),
+                status: 404,
+                message: "Bad Request".to_string(),
+            };
+            assert_eq!(
+                error.status_code(),
+                StatusCode::NOT_FOUND,
+                "expected status code to be 404"
             );
             assert!(
                 error.to_string().contains("api threw a client error"),
