@@ -149,12 +149,7 @@ fn get_rusoto_error_message<T: std::error::Error>(
         RusotoError::Credentials(e) => format!("{} Credentials Error: {}", operation, e),
         RusotoError::Validation(e) => format!("{} Validation Error: {}", operation, e),
         RusotoError::ParseError(e) => format!("{} Parse Error: {}", operation, e),
-        RusotoError::Unknown(e) => format!(
-            "{} Unknown Error: status {}, body {}",
-            operation,
-            e.status,
-            e.body_as_str()
-        ),
+        RusotoError::Unknown(e) => format!("{} Unknown Error: status {}", operation, e.status),
         RusotoError::Blocking => format!("{} Blocking Error", operation),
     }
 }
@@ -294,7 +289,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("Internal Server Error: s3 error: PutObject Unknown Error: status 500 Internal Server Error, body ")
+                Bytes::from("Internal Server Error: s3 error: PutObject Unknown Error: status 500 Internal Server Error")
             );
         }
     }
