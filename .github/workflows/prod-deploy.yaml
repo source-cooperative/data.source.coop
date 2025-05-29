@@ -51,3 +51,12 @@ jobs:
           task-definition: ${{ steps.render-data-proxy-container.outputs.task-definition }}
           service: source-data-proxy
           cluster: SourceCooperative-Prod
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          payload: |
+            {
+              "text": "🚀 *Deploying to Source Data Proxy!*\n• Release: <${{ github.event.release.html_url }}|${{ github.event.release.tag_name }}>"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.RELEASEBOT_PROD_WEBHOOK_URL }}
