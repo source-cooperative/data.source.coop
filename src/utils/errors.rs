@@ -27,7 +27,7 @@ pub enum BackendError {
     SourceRepositoryMissingPrimaryMirror,
 
     #[error("object not found: {0:?}")]
-    ObjectNotFound(Option<String>),
+    ObjectNotFound(String),
 
     #[error("api key not found")]
     ApiKeyNotFound,
@@ -131,7 +131,7 @@ impl From<AzureError> for BackendError {
             AzureErrorKind::HttpResponse { status, error_code }
                 if *status == AzureStatusCode::NotFound =>
             {
-                BackendError::ObjectNotFound(error_code.clone())
+                BackendError::ObjectNotFound(error_code.clone().unwrap_or("".to_string()))
             }
             _ => BackendError::AzureError(error),
         }
@@ -180,11 +180,9 @@ impl_s3_errors!(
 impl From<RusotoError<HeadObjectError>> for BackendError {
     fn from(error: RusotoError<HeadObjectError>) -> BackendError {
         match error {
-            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => {
-                BackendError::ObjectNotFound(Some(e))
-            }
+            RusotoError::Service(HeadObjectError::NoSuchKey(e)) => BackendError::ObjectNotFound(e),
             RusotoError::Unknown(e) if e.status == StatusCode::NOT_FOUND => {
-                BackendError::ObjectNotFound(Some(e.body_as_str().to_string()))
+                BackendError::ObjectNotFound(e.body_as_str().to_string())
             }
             _ => BackendError::S3Error(get_rusoto_error_message("HeadObject", error)),
         }
@@ -246,7 +244,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: Some(\"test-key\")")
+                Bytes::from("object not found: \"test-key\"")
             );
         }
 
@@ -329,7 +327,7 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert_eq!(
                 to_bytes(response.into_body()).await.unwrap(),
-                Bytes::from("object not found: Some(\"ResourceNotFound\")")
+                Bytes::from("object not found: \"ResourceNotFound\"")
             );
         }
 
