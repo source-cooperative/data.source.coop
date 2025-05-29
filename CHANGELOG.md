@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.29](https://github.com/source-cooperative/data.source.coop/compare/v0.1.28...v0.1.29) (2025-05-29)
+
+
+### Bug Fixes
+
+* **errors:** pass through client error status codes ([#77](https://github.com/source-cooperative/data.source.coop/issues/77)) ([fe383dd](https://github.com/source-cooperative/data.source.coop/commit/fe383dd08f95d2b6109efa34521815990ece9e0b))
+* **logging:** only log server errors, remove unnecessary details from logs ([#75](https://github.com/source-cooperative/data.source.coop/issues/75)) ([496373c](https://github.com/source-cooperative/data.source.coop/commit/496373c70e77f22f064182641c37ac0f1c6fbef7))
+
 ## [0.1.28](https://github.com/source-cooperative/data.source.coop/compare/v0.1.27...v0.1.28) (2025-05-28)
 
 
