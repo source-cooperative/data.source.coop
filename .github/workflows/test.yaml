@@ -13,6 +13,9 @@ jobs:
         uses: actions-rs/toolchain@8e603f32c5c6eeca5b1b2d9d1e7464d926082f1d # v1.0.0
         with:
           toolchain: stable
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy -- -D warnings
       - name: Run tests
-        shell: bash
         run: cargo test
