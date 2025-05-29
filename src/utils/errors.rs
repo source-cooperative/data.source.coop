@@ -98,6 +98,11 @@ impl error::ResponseError for BackendError {
 
     fn status_code(&self) -> StatusCode {
         match self {
+            // Pass through client error status codes
+            BackendError::ApiClientError { status, .. } => {
+                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_REQUEST)
+            }
+
             // 400
             BackendError::InvalidRequest(_)
             | BackendError::UnsupportedAuthMethod(_)
@@ -114,7 +119,6 @@ impl error::ResponseError for BackendError {
             // 502
             BackendError::ReqwestError(_)
             | BackendError::ApiServerError { .. }
-            | BackendError::ApiClientError { .. }
             | BackendError::RepositoryPermissionsNotFound
             | BackendError::AzureError(_)
             | BackendError::S3Error(_) => StatusCode::BAD_GATEWAY,
