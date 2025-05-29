@@ -88,7 +88,7 @@ impl error::ResponseError for BackendError {
         let status_code = self.status_code();
         let body = match status_code {
             e if e.is_client_error() => self.to_string(),
-            _ => format!("Internal Server Error: {}", self.to_string()),
+            _ => format!("Internal Server Error: {}", self),
         };
         if status_code.is_server_error() {
             error!("Error: {}", self);

@@ -16,11 +16,11 @@ impl Account {
 }
 
 #[async_trait]
-pub trait API {
+pub trait Api {
     async fn get_backend_client(
         &self,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
     ) -> Result<Box<dyn Repository>, BackendError>;
 
     async fn get_account(

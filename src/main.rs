@@ -11,7 +11,7 @@ use actix_web::{
 };
 
 use apis::source::{RepositoryPermission, SourceAPI};
-use apis::API;
+use apis::Api;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
 use core::num::NonZeroU32;
@@ -105,11 +105,9 @@ async fn get_object(
             .to_string();
     }
 
-    let stream = res.body.map(|result| {
-        result
-            .map(web::Bytes::from)
-            .map_err(|e| ErrorInternalServerError(e.to_string()))
-    });
+    let stream = res
+        .body
+        .map(|result| result.map_err(|e| ErrorInternalServerError(e.to_string())));
 
     let streaming_response = StreamingResponse::new(stream, res.content_length);
     let mut response = if is_range_request {
@@ -247,9 +245,9 @@ async fn put_object(
             .insert_header(("ETag", res.etag))
             .finish())
     } else {
-        return Err(BackendError::InvalidRequest(format!(
-            "Must provide both part number and upload id or neither."
-        )));
+        return Err(BackendError::InvalidRequest(
+            "Must provide both part number and upload id or neither.".to_string(),
+        ));
     }
 }
 
@@ -421,7 +419,7 @@ async fn list_objects(
     }
 
     let client = api_client
-        .get_backend_client(&account_id, &repository_id.to_string())
+        .get_backend_client(&account_id, repository_id)
         .await?;
 
     api_client

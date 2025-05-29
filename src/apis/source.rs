@@ -1,4 +1,4 @@
-use super::{Account, API};
+use super::{Account, Api};
 use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
 use crate::backends::s3::S3Repository;
@@ -105,7 +105,7 @@ pub struct SourceRepositoryList {
 }
 
 #[async_trait]
-impl API for SourceAPI {
+impl Api for SourceAPI {
     /// Creates and returns a backend client for a specific repository.
     ///
     /// This method determines the appropriate storage backend (S3 or Azure) based on
@@ -122,11 +122,11 @@ impl API for SourceAPI {
     /// or an empty error `()` if the client creation fails.
     async fn get_backend_client(
         &self,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
     ) -> Result<Box<dyn Repository>, BackendError> {
         let repository = self
-            .get_repository_record(&account_id, &repository_id)
+            .get_repository_record(account_id, repository_id)
             .await?;
 
         let Some(repository_data) = repository
@@ -142,34 +142,33 @@ impl API for SourceAPI {
 
         match data_connection.details.provider.as_str() {
             "s3" => {
-                let region: Region;
-
-                if data_connection.authentication.clone().unwrap().auth_type == "s3_local" {
-                    region = Region::Custom {
-                        name: data_connection
-                            .details
-                            .region
-                            .clone()
-                            .unwrap_or("us-west-2".to_string()),
-                        endpoint: format!("http://localhost:5050"),
-                    };
-                } else {
-                    region = Region::Custom {
-                        name: data_connection
-                            .details
-                            .region
-                            .clone()
-                            .unwrap_or("us-east-1".to_string()),
-                        endpoint: format!(
-                            "https://s3.{}.amazonaws.com",
-                            data_connection
+                let region =
+                    if data_connection.authentication.clone().unwrap().auth_type == "s3_local" {
+                        Region::Custom {
+                            name: data_connection
                                 .details
                                 .region
                                 .clone()
-                                .unwrap_or("us-east-1".to_string())
-                        ),
+                                .unwrap_or("us-west-2".to_string()),
+                            endpoint: "http://localhost:5050".to_string(),
+                        }
+                    } else {
+                        Region::Custom {
+                            name: data_connection
+                                .details
+                                .region
+                                .clone()
+                                .unwrap_or("us-east-1".to_string()),
+                            endpoint: format!(
+                                "https://s3.{}.amazonaws.com",
+                                data_connection
+                                    .details
+                                    .region
+                                    .clone()
+                                    .unwrap_or("us-east-1".to_string())
+                            ),
+                        }
                     };
-                }
 
                 let bucket: String = data_connection.details.bucket.clone().unwrap_or_default();
                 let base_prefix: String = data_connection
@@ -320,8 +319,8 @@ impl SourceAPI {
     /// repository information or a BackendError if the request fails.
     pub async fn get_repository_record(
         &self,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
     ) -> Result<SourceRepository, BackendError> {
         // Try to get the cached value
         let cache_key = format!("{}/{}", account_id, repository_id);
@@ -376,7 +375,7 @@ impl SourceAPI {
         data_connection_id: &String,
     ) -> Result<DataConnection, BackendError> {
         // Try to get the cached value
-        let cache_key = format!("{}", data_connection_id);
+        let cache_key = data_connection_id.to_string();
 
         if let Some(cached_repo) = self.data_connection_cache.get(&cache_key).await {
             return Ok(cached_repo);
@@ -397,7 +396,7 @@ impl SourceAPI {
 
     pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
         // Try to get the cached value
-        let cache_key = format!("{}", access_key_id);
+        let cache_key = access_key_id.to_string();
 
         if let Some(cached_secret) = self.api_key_cache.get(&cache_key).await {
             return Ok(cached_secret);
@@ -457,21 +456,15 @@ impl SourceAPI {
         repository_id: &String,
         permission: RepositoryPermission,
     ) -> Result<bool, BackendError> {
-        let anon: bool;
-        if user_identity.api_key.is_none() {
-            anon = true;
-        } else {
-            anon = false;
-        }
+        let anon: bool = user_identity.api_key.is_none();
 
         // Try to get the cached value
-        let cache_key: String;
-        if anon {
-            cache_key = format!("{}/{}", account_id, repository_id);
+        let cache_key = if anon {
+            format!("{}/{}", account_id, repository_id)
         } else {
             let api_key = user_identity.clone().api_key.unwrap();
-            cache_key = format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id);
-        }
+            format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id)
+        };
 
         if let Some(cache_permissions) = self.permissions_cache.get(&cache_key).await {
             return Ok(cache_permissions.contains(&permission));
@@ -479,7 +472,7 @@ impl SourceAPI {
 
         // If not in cache, fetch it
         let permissions = self
-            .fetch_permission(user_identity.clone(), &account_id, &repository_id)
+            .fetch_permission(user_identity.clone(), account_id, repository_id)
             .await?;
 
         // Cache the successful result

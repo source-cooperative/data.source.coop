@@ -113,7 +113,7 @@ async fn load_identity(
     match headers.get("Authorization") {
         Some(auth) => {
             let authorization_header: &str = auth.to_str().unwrap();
-            let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
+            let signature_method: &str = authorization_header.split(" ").next().unwrap();
 
             if signature_method != "AWS4-HMAC-SHA256" {
                 return Err("Invalid Signature Algorithm".to_string());
@@ -153,7 +153,7 @@ async fn load_identity(
                                 Ok(api_key) => {
                                     let string_to_sign = create_string_to_sign(
                                         &canonical_request,
-                                        &datetime.to_str().unwrap(),
+                                        datetime.to_str().unwrap(),
                                         &credential_scope,
                                     );
 
@@ -166,17 +166,15 @@ async fn load_identity(
                                     );
 
                                     if calculated_signature != signature {
-                                        return Err("Signature mismatch".to_string());
+                                        Err("Signature mismatch".to_string())
                                     } else {
-                                        return Ok(api_key);
+                                        Ok(api_key)
                                     }
                                 }
-                                Err(_) => return Err("Error".to_string()),
+                                Err(_) => Err("Error".to_string()),
                             }
                         }
-                        None => {
-                            return Err("No x-amz-date header found".to_string());
-                        }
+                        None => Err("No x-amz-date header found".to_string()),
                     }
                 }
                 None => Err("No x-amz-content-sha256 header found".to_string()),
@@ -188,18 +186,16 @@ async fn load_identity(
 
 fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<str> {
     let mut encoded = String::new();
-    let mut chars = input.chars().peekable();
+    let chars = input.chars().peekable();
 
-    while let Some(ch) = chars.next() {
-        if ch == '/' && !encode_forward_slash {
+    for ch in chars {
+        if (ch == '/' && !encode_forward_slash)
+            || (ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~')
+        {
             encoded.push(ch);
         } else {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
-                encoded.push(ch);
-            } else {
-                for byte in ch.to_string().as_bytes() {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
+            for byte in ch.to_string().as_bytes() {
+                encoded.push_str(&format!("%{:02X}", byte));
             }
         }
     }
@@ -245,7 +241,7 @@ fn calculate_signature(
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
-    hex::encode(&hmac_sha256(&k_signing, string_to_sign.as_bytes()))
+    hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()))
 }
 
 fn create_string_to_sign(
@@ -340,7 +336,7 @@ fn get_canonical_headers(headers: &HeaderMap, signed_headers: &Vec<&str>) -> Str
 
 fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
     signed_headers
-        .into_iter()
+        .iter()
         .map(|header| lowercase(header))
         .collect::<Vec<String>>()
         .join(";")

@@ -38,11 +38,11 @@ impl S3Repository {
                 self.access_key_id.clone().unwrap(),
                 self.secret_access_key.clone().unwrap(),
             );
-            return Ok(S3Client::new_with(
+            Ok(S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
                 self.region.clone(),
-            ));
+            ))
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
             return Ok(S3Client::new_with(
@@ -75,22 +75,21 @@ impl Repository for S3Repository {
     ) -> Result<GetObjectResponse, BackendError> {
         let head_object_response = self.head_object(key.clone()).await?;
         let client = reqwest::Client::new();
-        let url: String;
 
-        if self.auth_method == "s3_local" {
-            url = format!(
+        let url = if self.auth_method == "s3_local" {
+            format!(
                 "http://localhost:5050/{}/{}/{}",
                 self.bucket, self.base_prefix, key
             )
         } else {
-            url = format!(
+            format!(
                 "https://s3.{}.amazonaws.com/{}/{}/{}",
                 self.region.name(),
                 self.bucket,
                 self.base_prefix,
                 key
-            );
-        }
+            )
+        };
         // Start building the request
         let mut request = client.get(url);
 
@@ -292,7 +291,7 @@ impl Repository for S3Repository {
 
         let output = client.list_objects_v2(request).await?;
         let result = ListBucketResult {
-            name: format!("{}", self.account_id),
+            name: self.account_id.to_string(),
             prefix: format!("{}/{}", self.repository_id, prefix),
             key_count: output.key_count.unwrap_or(0),
             max_keys: output.max_keys.unwrap_or(0),
@@ -304,17 +303,17 @@ impl Repository for S3Repository {
                 .iter()
                 .map(|item| Content {
                     key: replace_first(
-                        item.key.clone().unwrap_or_else(|| "".to_string()),
+                        item.key.clone().unwrap_or_default(),
                         self.base_prefix.clone(),
-                        format!("{}", self.repository_id),
+                        self.repository_id.to_string(),
                     ),
                     last_modified: item
                         .last_modified
                         .clone()
                         .unwrap_or_else(|| Utc::now().to_rfc2822()),
-                    etag: item.e_tag.clone().unwrap_or_else(|| "".to_string()),
+                    etag: item.e_tag.clone().unwrap_or_default(),
                     size: item.size.unwrap_or(0),
-                    storage_class: item.storage_class.clone().unwrap_or_else(|| "".to_string()),
+                    storage_class: item.storage_class.clone().unwrap_or_default(),
                 })
                 .collect(),
             common_prefixes: output
@@ -323,9 +322,9 @@ impl Repository for S3Repository {
                 .iter()
                 .map(|item| CommonPrefix {
                     prefix: replace_first(
-                        item.prefix.clone().unwrap_or_else(|| "".to_string()),
+                        item.prefix.clone().unwrap_or_default(),
                         self.base_prefix.clone(),
-                        format!("{}", self.repository_id),
+                        self.repository_id.to_string(),
                     ),
                 })
                 .collect(),
@@ -344,27 +343,26 @@ impl Repository for S3Repository {
 
         let request = HeadObjectRequest {
             bucket: self.bucket.clone(),
-            key: format!("{}", copy_identifier_path),
+            key: copy_identifier_path.to_string(),
             ..Default::default()
         };
 
         let result = client.head_object(request).await?;
         let url_client = reqwest::Client::new();
-        let url: String;
 
-        if self.auth_method == "s3_local" {
-            url = format!(
+        let url = if self.auth_method == "s3_local" {
+            format!(
                 "http://localhost:5050/{}/{}",
                 self.bucket, copy_identifier_path
             )
         } else {
-            url = format!(
+            format!(
                 "https://s3.{}.amazonaws.com/{}/{}",
                 self.region.name(),
                 self.bucket,
                 copy_identifier_path
-            );
-        }
+            )
+        };
 
         let mut request = url_client.get(url);
 
