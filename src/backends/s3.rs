@@ -107,7 +107,7 @@ impl Repository for S3Repository {
             Box::pin(stream);
 
         Ok(GetObjectResponse {
-            content_length: content_length.unwrap_or(0) as u64,
+            content_length: content_length.unwrap_or(0),
             content_type: head_object_response.content_type,
             etag: head_object_response.etag,
             last_modified: head_object_response.last_modified,

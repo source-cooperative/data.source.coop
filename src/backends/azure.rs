@@ -107,7 +107,7 @@ impl Repository for AzureRepository {
             Box::pin(stream);
 
         Ok(GetObjectResponse {
-            content_length: content_length.unwrap_or(0) as u64,
+            content_length: content_length.unwrap_or(0),
             content_type,
             etag,
             last_modified,
