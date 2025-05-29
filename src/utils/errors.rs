@@ -26,7 +26,7 @@ pub enum BackendError {
     #[error("source repository missing primary mirror")]
     SourceRepositoryMissingPrimaryMirror,
 
-    #[error("object not found: {message}", message = .0.as_ref().unwrap_or(&"".to_string()))]
+    #[error("object not found: {}", .0.clone().unwrap_or_default())]
     ObjectNotFound(Option<String>),
 
     #[error("api key not found")]
