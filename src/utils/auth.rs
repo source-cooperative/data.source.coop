@@ -148,32 +148,30 @@ async fn load_identity(
                     let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
 
                     match headers.get("x-amz-date") {
-                        Some(datetime) => {
-                            match source_api.get_api_key(access_key_id.to_string()).await {
-                                Ok(api_key) => {
-                                    let string_to_sign = create_string_to_sign(
-                                        &canonical_request,
-                                        datetime.to_str().unwrap(),
-                                        &credential_scope,
-                                    );
+                        Some(datetime) => match source_api.get_api_key(access_key_id).await {
+                            Ok(api_key) => {
+                                let string_to_sign = create_string_to_sign(
+                                    &canonical_request,
+                                    datetime.to_str().unwrap(),
+                                    &credential_scope,
+                                );
 
-                                    let calculated_signature: String = calculate_signature(
-                                        api_key.secret_access_key.as_str(),
-                                        date,
-                                        region,
-                                        service,
-                                        &string_to_sign,
-                                    );
+                                let calculated_signature: String = calculate_signature(
+                                    api_key.secret_access_key.as_str(),
+                                    date,
+                                    region,
+                                    service,
+                                    &string_to_sign,
+                                );
 
-                                    if calculated_signature != signature {
-                                        Err("Signature mismatch".to_string())
-                                    } else {
-                                        Ok(api_key)
-                                    }
+                                if calculated_signature != signature {
+                                    Err("Signature mismatch".to_string())
+                                } else {
+                                    Ok(api_key)
                                 }
-                                Err(_) => Err("Error".to_string()),
                             }
-                        }
+                            Err(_) => Err("Error".to_string()),
+                        },
                         None => Err("No x-amz-date header found".to_string()),
                     }
                 }
