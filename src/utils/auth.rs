@@ -110,77 +110,75 @@ async fn load_identity(
     query_string: &str,
     body: &BytesMut,
 ) -> Result<APIKey, String> {
-    match headers.get("Authorization") {
-        Some(auth) => {
-            let authorization_header: &str = auth.to_str().unwrap();
-            let signature_method: &str = authorization_header.split(" ").next().unwrap();
+    let Some(auth) = headers.get("Authorization") else {
+        return Err("No Authorization header found".to_string());
+    };
 
-            if signature_method != "AWS4-HMAC-SHA256" {
-                return Err("Invalid Signature Algorithm".to_string());
-            }
+    let authorization_header: &str = auth.to_str().unwrap();
+    let signature_method: &str = authorization_header.split(" ").next().unwrap();
 
-            let parts: Vec<&str> = authorization_header.split(", ").collect();
-            let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
-            let signed_headers: Vec<&str> = parts[1]
-                .split("SignedHeaders=")
-                .nth(1)
-                .unwrap_or("")
-                .split(";")
-                .collect();
-            let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
+    if signature_method != "AWS4-HMAC-SHA256" {
+        return Err("Invalid Signature Algorithm".to_string());
+    }
 
-            let parts: Vec<&str> = credential.split("/").collect();
-            let access_key_id = parts[0];
-            let date = parts[1];
-            let region = parts[2];
-            let service = parts[3];
-            match headers.get("x-amz-content-sha256") {
-                Some(content_hash) => {
-                    let canonical_request: String = create_canonical_request(
-                        method,
-                        path,
-                        headers,
-                        signed_headers,
-                        query_string,
-                        body,
-                        content_hash.to_str().unwrap(),
-                    );
-                    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+    let parts: Vec<&str> = authorization_header.split(", ").collect();
+    let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
+    let signed_headers: Vec<&str> = parts[1]
+        .split("SignedHeaders=")
+        .nth(1)
+        .unwrap_or("")
+        .split(";")
+        .collect();
+    let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
 
-                    match headers.get("x-amz-date") {
-                        Some(datetime) => {
-                            match source_api.get_api_key(access_key_id.to_string()).await {
-                                Ok(api_key) => {
-                                    let string_to_sign = create_string_to_sign(
-                                        &canonical_request,
-                                        datetime.to_str().unwrap(),
-                                        &credential_scope,
-                                    );
+    let parts: Vec<&str> = credential.split("/").collect();
+    let access_key_id = parts[0];
+    let date = parts[1];
+    let region = parts[2];
+    let service = parts[3];
 
-                                    let calculated_signature: String = calculate_signature(
-                                        api_key.secret_access_key.as_str(),
-                                        date,
-                                        region,
-                                        service,
-                                        &string_to_sign,
-                                    );
+    let Some(content_hash) = headers.get("x-amz-content-sha256") else {
+        return Err("No x-amz-content-sha256 header found".to_string());
+    };
 
-                                    if calculated_signature != signature {
-                                        Err("Signature mismatch".to_string())
-                                    } else {
-                                        Ok(api_key)
-                                    }
-                                }
-                                Err(_) => Err("Error".to_string()),
-                            }
-                        }
-                        None => Err("No x-amz-date header found".to_string()),
-                    }
-                }
-                None => Err("No x-amz-content-sha256 header found".to_string()),
-            }
-        }
-        None => Err("No Authorization header found".to_string()),
+    let canonical_request: String = create_canonical_request(
+        method,
+        path,
+        headers,
+        signed_headers,
+        query_string,
+        body,
+        content_hash.to_str().unwrap(),
+    );
+    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+
+    let Some(datetime) = headers.get("x-amz-date") else {
+        return Err("No x-amz-date header found".to_string());
+    };
+
+    let api_key = source_api
+        .get_api_key(access_key_id.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let string_to_sign = create_string_to_sign(
+        &canonical_request,
+        datetime.to_str().unwrap(),
+        &credential_scope,
+    );
+
+    let calculated_signature: String = calculate_signature(
+        api_key.secret_access_key.as_str(),
+        date,
+        region,
+        service,
+        &string_to_sign,
+    );
+
+    if calculated_signature != signature {
+        Err("Signature mismatch".to_string())
+    } else {
+        Ok(api_key)
     }
 }
 
