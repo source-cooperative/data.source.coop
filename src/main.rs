@@ -10,7 +10,7 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 
-use apis::source::{RepositoryPermission, SourceAPI};
+use apis::source::{RepositoryPermission, SourceApi};
 use apis::Api;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
@@ -50,7 +50,7 @@ impl MessageBody for FakeBody {
 
 #[get("/{account_id}/{repository_id}/{key:.*}")]
 async fn get_object(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     req: HttpRequest,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
@@ -145,7 +145,7 @@ struct DeleteParams {
 
 #[delete("/{account_id}/{repository_id}/{key:.*}")]
 async fn delete_object(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     params: web::Query<DeleteParams>,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
@@ -187,7 +187,7 @@ struct PutParams {
 
 #[put("/{account_id}/{repository_id}/{key:.*}")]
 async fn put_object(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     req: HttpRequest,
     bytes: Bytes,
     params: web::Query<PutParams>,
@@ -260,7 +260,7 @@ struct PostParams {
 
 #[post("/{account_id}/{repository_id}/{key:.*}")]
 async fn post_handler(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     req: HttpRequest,
     params: web::Query<PostParams>,
     mut payload: web::Payload,
@@ -328,7 +328,7 @@ async fn post_handler(
 
 #[head("/{account_id}/{repository_id}/{key:.*}")]
 async fn head_object(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> Result<impl Responder, BackendError> {
@@ -373,7 +373,7 @@ struct ListObjectsV2Query {
 
 #[get("/{account_id}")]
 async fn list_objects(
-    api_client: web::Data<SourceAPI>,
+    api_client: web::Data<SourceApi>,
     info: web::Query<ListObjectsV2Query>,
     path: web::Path<String>,
     user_identity: web::ReqData<UserIdentity>,
@@ -457,7 +457,7 @@ async fn index() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let source_api_url = env::var("SOURCE_API_URL").unwrap();
-    let source_api = web::Data::new(SourceAPI::new(source_api_url));
+    let source_api = web::Data::new(SourceApi::new(source_api_url));
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {

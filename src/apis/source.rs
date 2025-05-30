@@ -14,7 +14,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 #[derive(Clone)]
-pub struct SourceAPI {
+pub struct SourceApi {
     pub endpoint: String,
     repository_cache: Arc<Cache<String, SourceRepository>>,
     data_connection_cache: Arc<Cache<String, DataConnection>>,
@@ -105,7 +105,7 @@ pub struct SourceRepositoryList {
 }
 
 #[async_trait]
-impl Api for SourceAPI {
+impl Api for SourceApi {
     /// Creates and returns a backend client for a specific repository.
     ///
     /// This method determines the appropriate storage backend (S3 or Azure) based on
@@ -271,7 +271,7 @@ impl Api for SourceAPI {
     }
 }
 
-impl SourceAPI {
+impl SourceApi {
     pub fn new(endpoint: String) -> Self {
         let repository_cache = Arc::new(
             Cache::builder()
@@ -297,7 +297,7 @@ impl SourceAPI {
                 .build(),
         );
 
-        SourceAPI {
+        SourceApi {
             endpoint,
             repository_cache,
             data_connection_cache,

@@ -18,7 +18,7 @@ use std::{
 };
 use url::form_urlencoded;
 
-use crate::apis::source::{APIKey, SourceAPI};
+use crate::apis::source::{APIKey, SourceApi};
 
 #[derive(Clone)]
 pub struct UserIdentity {
@@ -73,7 +73,7 @@ where
             }
 
             let identity = match load_identity(
-                req.app_data::<web::Data<SourceAPI>>().unwrap(),
+                req.app_data::<web::Data<SourceApi>>().unwrap(),
                 req.method().as_str(),
                 req.path(),
                 req.headers(),
@@ -103,7 +103,7 @@ where
 }
 
 async fn load_identity(
-    source_api: &web::Data<SourceAPI>,
+    source_api: &web::Data<SourceApi>,
     method: &str,
     path: &str,
     headers: &HeaderMap,
