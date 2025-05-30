@@ -375,9 +375,7 @@ impl SourceAPI {
         data_connection_id: &String,
     ) -> Result<DataConnection, BackendError> {
         // Try to get the cached value
-        let cache_key = data_connection_id.to_string();
-
-        if let Some(cached_repo) = self.data_connection_cache.get(&cache_key).await {
+        if let Some(cached_repo) = self.data_connection_cache.get(data_connection_id).await {
             return Ok(cached_repo);
         }
 
@@ -386,7 +384,7 @@ impl SourceAPI {
             Ok(data_connection) => {
                 // Cache the successful result
                 self.data_connection_cache
-                    .insert(cache_key, data_connection.clone())
+                    .insert(data_connection_id.clone(), data_connection.clone())
                     .await;
                 Ok(data_connection)
             }
@@ -396,25 +394,27 @@ impl SourceAPI {
 
     pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
         // Try to get the cached value
-        let cache_key = access_key_id.to_string();
-
-        if let Some(cached_secret) = self.api_key_cache.get(&cache_key).await {
+        if let Some(cached_secret) = self.api_key_cache.get(&access_key_id).await {
             return Ok(cached_secret);
         }
 
         // If not in cache, fetch it
-        let secret = self.fetch_api_key(access_key_id).await?;
+        let secret = self.fetch_api_key(access_key_id.clone()).await?;
 
         // Cache the successful result
         if let Some(secret) = secret {
-            self.api_key_cache.insert(cache_key, secret.clone()).await;
+            self.api_key_cache
+                .insert(access_key_id, secret.clone())
+                .await;
             Ok(secret)
         } else {
             let secret = APIKey {
                 access_key_id: "".to_string(),
                 secret_access_key: "".to_string(),
             };
-            self.api_key_cache.insert(cache_key, secret.clone()).await;
+            self.api_key_cache
+                .insert(access_key_id, secret.clone())
+                .await;
             Ok(secret)
         }
     }
