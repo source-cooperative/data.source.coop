@@ -87,8 +87,7 @@ where
             }
 
             let identity = match load_identity(
-                req.app_data::<web::Data<Box<dyn ApiKeyProvider>>>()
-                    .unwrap(),
+                req.app_data::<web::Data<SourceApi>>().unwrap(),
                 req.method().as_str(),
                 req.path(),
                 req.headers(),
@@ -117,14 +116,17 @@ where
     }
 }
 
-async fn load_identity(
-    source_api: &web::Data<Box<dyn ApiKeyProvider>>,
+async fn load_identity<T>(
+    source_api: &web::Data<T>,
     method: &str,
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
     body: &BytesMut,
-) -> Result<APIKey, String> {
+) -> Result<APIKey, String>
+where
+    T: ApiKeyProvider,
+{
     let Some(auth) = headers.get("Authorization") else {
         return Err("No Authorization header found".to_string());
     };
@@ -395,9 +397,8 @@ mod tests {
         }
     }
 
-    fn create_test_source_api(api_key: Option<APIKey>) -> web::Data<Box<dyn ApiKeyProvider>> {
-        let api: Box<dyn ApiKeyProvider> = Box::new(TestSourceApi::new(api_key));
-        web::Data::new(api)
+    fn create_test_source_api(api_key: Option<APIKey>) -> web::Data<TestSourceApi> {
+        web::Data::new(TestSourceApi::new(api_key))
     }
 
     #[tokio::test]
