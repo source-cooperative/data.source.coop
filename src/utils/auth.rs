@@ -19,6 +19,20 @@ use std::{
 use url::form_urlencoded;
 
 use crate::apis::source::{APIKey, SourceAPI};
+use crate::utils::errors::BackendError;
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait ApiKeyProvider: Send + Sync {
+    async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError>;
+}
+
+#[async_trait]
+impl ApiKeyProvider for SourceAPI {
+    async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
+        self.get_api_key(access_key_id).await
+    }
+}
 
 #[derive(Clone)]
 pub struct UserIdentity {
@@ -73,7 +87,8 @@ where
             }
 
             let identity = match load_identity(
-                req.app_data::<web::Data<SourceAPI>>().unwrap(),
+                req.app_data::<web::Data<Box<dyn ApiKeyProvider>>>()
+                    .unwrap(),
                 req.method().as_str(),
                 req.path(),
                 req.headers(),
@@ -103,7 +118,7 @@ where
 }
 
 async fn load_identity(
-    source_api: &web::Data<SourceAPI>,
+    source_api: &web::Data<Box<dyn ApiKeyProvider>>,
     method: &str,
     path: &str,
     headers: &HeaderMap,
@@ -122,6 +137,7 @@ async fn load_identity(
     }
 
     let parts = authorization_header.split(", ").collect::<Vec<&str>>();
+
     let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
     let signed_headers = parts[1]
         .split("SignedHeaders=")
@@ -344,4 +360,158 @@ fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
 
 fn hash_payload(body: &BytesMut) -> String {
     hex::encode(Sha256::digest(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_http::header::{HeaderMap, HeaderName, HeaderValue};
+    use async_trait::async_trait;
+    use common_s3_headers::S3HeadersBuilder;
+    use std::str::FromStr;
+    use url::Url;
+
+    #[derive(Clone)]
+    struct TestSourceAPI {
+        api_key: Option<APIKey>,
+    }
+
+    impl TestSourceAPI {
+        fn new(api_key: Option<APIKey>) -> Self {
+            Self { api_key }
+        }
+    }
+
+    #[async_trait]
+    impl ApiKeyProvider for TestSourceAPI {
+        async fn get_api_key(&self, _access_key_id: String) -> Result<APIKey, BackendError> {
+            let Some(key) = &self.api_key else {
+                return Err(BackendError::ApiKeyNotFound);
+            };
+            Ok(key.clone())
+        }
+    }
+
+    fn create_test_source_api(api_key: Option<APIKey>) -> web::Data<Box<dyn ApiKeyProvider>> {
+        let api: Box<dyn ApiKeyProvider> = Box::new(TestSourceAPI::new(api_key));
+        web::Data::new(api)
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_auth_header() {
+        let headers = HeaderMap::new();
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No Authorization header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_invalid_signature_method() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("INVALID Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid Signature Algorithm");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_content_hash() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("AWS4-HMAC-SHA256 Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No x-amz-content-sha256 header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_date() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("AWS4-HMAC-SHA256 Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+        headers.insert(
+            HeaderName::from_str("x-amz-content-sha256").unwrap(),
+            HeaderValue::from_str("test-hash").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No x-amz-date header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_success() {
+        let api_key = APIKey {
+            access_key_id: "test-key".to_string(),
+            secret_access_key: "test-secret".to_string(),
+        };
+        let source_api = create_test_source_api(Some(api_key.clone()));
+
+        let method = "GET";
+        let url = Url::parse("https://test.com/test").unwrap();
+        let path = url.path();
+
+        let headers = HeaderMap::from_iter(
+            S3HeadersBuilder::new(&url)
+                .set_access_key(api_key.access_key_id.as_str())
+                .set_secret_key(api_key.secret_access_key.as_str())
+                .set_region("us-east-1")
+                .set_method("GET")
+                .set_service("s3")
+                .build()
+                .iter()
+                .map(|(k, v)| {
+                    if *k == "Authorization" {
+                        // HACK: Our code expects the authorization to have spaces after the comma
+                        // This is a hack to make the test pass
+                        (
+                            HeaderName::from_str(k).unwrap(),
+                            HeaderValue::from_str(
+                                v.as_str()
+                                    .split(",")
+                                    .collect::<Vec<&str>>()
+                                    .join(", ")
+                                    .as_str(),
+                            )
+                            .unwrap(),
+                        )
+                    } else {
+                        (
+                            HeaderName::from_str(k).unwrap(),
+                            HeaderValue::from_str(v.as_str()).unwrap(),
+                        )
+                    }
+                }),
+        );
+
+        let result = load_identity(&source_api, method, path, &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().access_key_id, "test-key");
+    }
 }
