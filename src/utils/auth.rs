@@ -136,7 +136,10 @@ async fn load_identity(
         return Err("Invalid Signature Algorithm".to_string());
     }
 
-    let parts = authorization_header.split(", ").collect::<Vec<&str>>();
+    let parts = authorization_header
+        .split(",")
+        .map(|part| part.trim())
+        .collect::<Vec<&str>>();
 
     let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
     let signed_headers = parts[1]
@@ -486,26 +489,10 @@ mod tests {
                 .build()
                 .iter()
                 .map(|(k, v)| {
-                    if *k == "Authorization" {
-                        // HACK: Our code expects the authorization to have spaces after the comma
-                        // This is a hack to make the test pass
-                        (
-                            HeaderName::from_str(k).unwrap(),
-                            HeaderValue::from_str(
-                                v.as_str()
-                                    .split(",")
-                                    .collect::<Vec<&str>>()
-                                    .join(", ")
-                                    .as_str(),
-                            )
-                            .unwrap(),
-                        )
-                    } else {
-                        (
-                            HeaderName::from_str(k).unwrap(),
-                            HeaderValue::from_str(v.as_str()).unwrap(),
-                        )
-                    }
+                    (
+                        HeaderName::from_str(k).unwrap(),
+                        HeaderValue::from_str(v.as_str()).unwrap(),
+                    )
                 }),
         );
 
