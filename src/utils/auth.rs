@@ -114,16 +114,16 @@ async fn load_identity(
         return Err("No Authorization header found".to_string());
     };
 
-    let authorization_header: &str = auth.to_str().unwrap();
-    let signature_method: &str = authorization_header.split(" ").next().unwrap();
+    let authorization_header = auth.to_str().unwrap();
+    let signature_method = authorization_header.split(" ").next().unwrap();
 
     if signature_method != "AWS4-HMAC-SHA256" {
         return Err("Invalid Signature Algorithm".to_string());
     }
 
-    let parts: Vec<&str> = authorization_header.split(", ").collect();
+    let parts = authorization_header.split(", ").collect::<Vec<&str>>();
     let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
-    let signed_headers: Vec<&str> = parts[1]
+    let signed_headers = parts[1]
         .split("SignedHeaders=")
         .nth(1)
         .unwrap_or("")
@@ -131,7 +131,7 @@ async fn load_identity(
         .collect();
     let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
 
-    let parts: Vec<&str> = credential.split("/").collect();
+    let parts = credential.split("/").collect::<Vec<&str>>();
     let access_key_id = parts[0];
     let date = parts[1];
     let region = parts[2];
@@ -141,7 +141,7 @@ async fn load_identity(
         return Err("No x-amz-content-sha256 header found".to_string());
     };
 
-    let canonical_request: String = create_canonical_request(
+    let canonical_request = create_canonical_request(
         method,
         path,
         headers,
@@ -167,7 +167,7 @@ async fn load_identity(
         &credential_scope,
     );
 
-    let calculated_signature: String = calculate_signature(
+    let calculated_signature = calculate_signature(
         api_key.secret_access_key.as_str(),
         date,
         region,
