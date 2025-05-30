@@ -14,7 +14,7 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 #[derive(Clone)]
-pub struct SourceAPI {
+pub struct SourceApi {
     pub endpoint: String,
     repository_cache: Arc<Cache<String, SourceRepository>>,
     data_connection_cache: Arc<Cache<String, DataConnection>>,
@@ -105,7 +105,7 @@ pub struct SourceRepositoryList {
 }
 
 #[async_trait]
-impl Api for SourceAPI {
+impl Api for SourceApi {
     /// Creates and returns a backend client for a specific repository.
     ///
     /// This method determines the appropriate storage backend (S3 or Azure) based on
@@ -271,7 +271,7 @@ impl Api for SourceAPI {
     }
 }
 
-impl SourceAPI {
+impl SourceApi {
     pub fn new(endpoint: String) -> Self {
         let repository_cache = Arc::new(
             Cache::builder()
@@ -297,7 +297,7 @@ impl SourceAPI {
                 .build(),
         );
 
-        SourceAPI {
+        SourceApi {
             endpoint,
             repository_cache,
             data_connection_cache,
@@ -348,7 +348,7 @@ impl SourceAPI {
 
     async fn fetch_data_connection(
         &self,
-        data_connection_id: &String,
+        data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
         let client = reqwest::Client::new();
@@ -372,12 +372,9 @@ impl SourceAPI {
 
     async fn get_data_connection(
         &self,
-        data_connection_id: &String,
+        data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
-        // Try to get the cached value
-        let cache_key = data_connection_id.to_string();
-
-        if let Some(cached_repo) = self.data_connection_cache.get(&cache_key).await {
+        if let Some(cached_repo) = self.data_connection_cache.get(data_connection_id).await {
             return Ok(cached_repo);
         }
 
@@ -386,7 +383,7 @@ impl SourceAPI {
             Ok(data_connection) => {
                 // Cache the successful result
                 self.data_connection_cache
-                    .insert(cache_key, data_connection.clone())
+                    .insert(data_connection_id.to_string(), data_connection.clone())
                     .await;
                 Ok(data_connection)
             }
@@ -394,35 +391,31 @@ impl SourceAPI {
         }
     }
 
-    pub async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
-        // Try to get the cached value
-        let cache_key = access_key_id.to_string();
-
-        if let Some(cached_secret) = self.api_key_cache.get(&cache_key).await {
+    pub async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError> {
+        if let Some(cached_secret) = self.api_key_cache.get(access_key_id).await {
             return Ok(cached_secret);
         }
 
         // If not in cache, fetch it
-        let secret = self.fetch_api_key(access_key_id).await?;
-
-        // Cache the successful result
-        if let Some(secret) = secret {
-            self.api_key_cache.insert(cache_key, secret.clone()).await;
-            Ok(secret)
-        } else {
+        if access_key_id.is_empty() {
             let secret = APIKey {
                 access_key_id: "".to_string(),
                 secret_access_key: "".to_string(),
             };
-            self.api_key_cache.insert(cache_key, secret.clone()).await;
+            self.api_key_cache
+                .insert(access_key_id.to_string(), secret.clone())
+                .await;
+            Ok(secret)
+        } else {
+            let secret = self.fetch_api_key(access_key_id.to_string()).await?;
+            self.api_key_cache
+                .insert(access_key_id.to_string(), secret.clone())
+                .await;
             Ok(secret)
         }
     }
 
-    async fn fetch_api_key(&self, access_key_id: String) -> Result<Option<APIKey>, BackendError> {
-        if access_key_id.is_empty() {
-            return Ok(None);
-        }
+    async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
         let client = reqwest::Client::new();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
@@ -443,17 +436,17 @@ impl SourceAPI {
             .await?;
         let key = process_json_response::<APIKey>(response, BackendError::ApiKeyNotFound).await?;
 
-        Ok(Some(APIKey {
+        Ok(APIKey {
             access_key_id,
             secret_access_key: key.secret_access_key,
-        }))
+        })
     }
 
     pub async fn is_authorized(
         &self,
         user_identity: UserIdentity,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
         permission: RepositoryPermission,
     ) -> Result<bool, BackendError> {
         let anon: bool = user_identity.api_key.is_none();
@@ -486,8 +479,8 @@ impl SourceAPI {
     pub async fn assert_authorized(
         &self,
         user_identity: UserIdentity,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
         permission: RepositoryPermission,
     ) -> Result<bool, BackendError> {
         let authorized = self
@@ -502,8 +495,8 @@ impl SourceAPI {
     async fn fetch_permission(
         &self,
         user_identity: UserIdentity,
-        account_id: &String,
-        repository_id: &String,
+        account_id: &str,
+        repository_id: &str,
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
         let client = reqwest::Client::new();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();

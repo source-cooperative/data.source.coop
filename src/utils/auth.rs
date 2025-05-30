@@ -18,18 +18,18 @@ use std::{
 };
 use url::form_urlencoded;
 
-use crate::apis::source::{APIKey, SourceAPI};
+use crate::apis::source::{APIKey, SourceApi};
 use crate::utils::errors::BackendError;
 use async_trait::async_trait;
 
 #[async_trait]
 pub trait ApiKeyProvider: Send + Sync {
-    async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError>;
+    async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError>;
 }
 
 #[async_trait]
-impl ApiKeyProvider for SourceAPI {
-    async fn get_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
+impl ApiKeyProvider for SourceApi {
+    async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError> {
         self.get_api_key(access_key_id).await
     }
 }
@@ -173,7 +173,7 @@ async fn load_identity(
     };
 
     let api_key = source_api
-        .get_api_key(access_key_id.to_string())
+        .get_api_key(access_key_id)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -372,19 +372,19 @@ mod tests {
     use url::Url;
 
     #[derive(Clone)]
-    struct TestSourceAPI {
+    struct TestSourceApi {
         api_key: Option<APIKey>,
     }
 
-    impl TestSourceAPI {
+    impl TestSourceApi {
         fn new(api_key: Option<APIKey>) -> Self {
             Self { api_key }
         }
     }
 
     #[async_trait]
-    impl ApiKeyProvider for TestSourceAPI {
-        async fn get_api_key(&self, _access_key_id: String) -> Result<APIKey, BackendError> {
+    impl ApiKeyProvider for TestSourceApi {
+        async fn get_api_key(&self, _access_key_id: &str) -> Result<APIKey, BackendError> {
             let Some(key) = &self.api_key else {
                 return Err(BackendError::ApiKeyNotFound);
             };
@@ -393,7 +393,7 @@ mod tests {
     }
 
     fn create_test_source_api(api_key: Option<APIKey>) -> web::Data<Box<dyn ApiKeyProvider>> {
-        let api: Box<dyn ApiKeyProvider> = Box::new(TestSourceAPI::new(api_key));
+        let api: Box<dyn ApiKeyProvider> = Box::new(TestSourceApi::new(api_key));
         web::Data::new(api)
     }
 
