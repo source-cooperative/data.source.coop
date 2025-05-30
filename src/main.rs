@@ -426,7 +426,7 @@ async fn list_objects(
         .assert_authorized(
             user_identity.into_inner(),
             &account_id,
-            &repository_id.to_string(),
+            repository_id,
             RepositoryPermission::Read,
         )
         .await?;
