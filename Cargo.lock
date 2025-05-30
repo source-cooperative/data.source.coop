@@ -533,6 +533,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "common-s3-headers"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f177814b579c39ae2325720be922d21fab28ff22fe81aa27c79625326ce19db"
+dependencies = [
+ "hex",
+ "hmac 0.12.1",
+ "percent-encoding",
+ "sha2 0.10.8",
+ "time",
+ "url",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2336,6 +2350,7 @@ dependencies = [
  "azure_storage_blobs",
  "bytes",
  "chrono",
+ "common-s3-headers",
  "env_logger",
  "futures",
  "futures-core",
