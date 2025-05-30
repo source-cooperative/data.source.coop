@@ -48,3 +48,6 @@ hex = "0.4.3"
 hmac = "0.12"
 actix-http = "^3"
 thiserror = "2.0.12"
+
+[dev-dependencies]
+common-s3-headers = "1.0.0"
