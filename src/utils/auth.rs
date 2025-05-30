@@ -328,8 +328,10 @@ fn get_canonical_headers(headers: &HeaderMap, signed_headers: &Vec<&str>) -> Str
 
     canonical_headers
         .iter()
-        .map(|(name, values)| format!("{}:{}\n", name, values.join(",")))
-        .collect()
+        .fold(String::new(), |mut output, (name, values)| {
+            output.push_str(&format!("{}:{}\n", name, values.join(",")));
+            output
+        })
 }
 
 fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
