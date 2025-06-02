@@ -18,7 +18,21 @@ use std::{
 };
 use url::form_urlencoded;
 
-use crate::apis::source::{APIKey, SourceAPI};
+use crate::apis::source::{APIKey, SourceApi};
+use crate::utils::errors::BackendError;
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait ApiKeyProvider: Send + Sync {
+    async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError>;
+}
+
+#[async_trait]
+impl ApiKeyProvider for SourceApi {
+    async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError> {
+        self.get_api_key(access_key_id).await
+    }
+}
 
 #[derive(Clone)]
 pub struct UserIdentity {
@@ -73,7 +87,7 @@ where
             }
 
             let identity = match load_identity(
-                req.app_data::<web::Data<SourceAPI>>().unwrap(),
+                req.app_data::<web::Data<SourceApi>>().unwrap(),
                 req.method().as_str(),
                 req.path(),
                 req.headers(),
@@ -102,104 +116,105 @@ where
     }
 }
 
-async fn load_identity(
-    source_api: &web::Data<SourceAPI>,
+async fn load_identity<T>(
+    source_api: &web::Data<T>,
     method: &str,
     path: &str,
     headers: &HeaderMap,
     query_string: &str,
     body: &BytesMut,
-) -> Result<APIKey, String> {
-    match headers.get("Authorization") {
-        Some(auth) => {
-            let authorization_header: &str = auth.to_str().unwrap();
-            let signature_method: &str = authorization_header.split(" ").nth(0).unwrap();
+) -> Result<APIKey, String>
+where
+    T: ApiKeyProvider,
+{
+    let Some(auth) = headers.get("Authorization") else {
+        return Err("No Authorization header found".to_string());
+    };
 
-            if signature_method != "AWS4-HMAC-SHA256" {
-                return Err("Invalid Signature Algorithm".to_string());
-            }
+    let authorization_header = auth.to_str().unwrap();
+    let signature_method = authorization_header.split(" ").next().unwrap();
 
-            let parts: Vec<&str> = authorization_header.split(", ").collect();
-            let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
-            let signed_headers: Vec<&str> = parts[1]
-                .split("SignedHeaders=")
-                .nth(1)
-                .unwrap_or("")
-                .split(";")
-                .collect();
-            let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
+    if signature_method != "AWS4-HMAC-SHA256" {
+        return Err("Invalid Signature Algorithm".to_string());
+    }
 
-            let parts: Vec<&str> = credential.split("/").collect();
-            let access_key_id = parts[0];
-            let date = parts[1];
-            let region = parts[2];
-            let service = parts[3];
-            match headers.get("x-amz-content-sha256") {
-                Some(content_hash) => {
-                    let canonical_request: String = create_canonical_request(
-                        method,
-                        path,
-                        headers,
-                        signed_headers,
-                        query_string,
-                        body,
-                        content_hash.to_str().unwrap(),
-                    );
-                    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+    let parts = authorization_header
+        .split(",")
+        .map(|part| part.trim())
+        .collect::<Vec<&str>>();
 
-                    match headers.get("x-amz-date") {
-                        Some(datetime) => {
-                            match source_api.get_api_key(access_key_id.to_string()).await {
-                                Ok(api_key) => {
-                                    let string_to_sign = create_string_to_sign(
-                                        &canonical_request,
-                                        &datetime.to_str().unwrap(),
-                                        &credential_scope,
-                                    );
+    let credential = parts[0].split("Credential=").nth(1).unwrap_or("");
+    let signed_headers = parts[1]
+        .split("SignedHeaders=")
+        .nth(1)
+        .unwrap_or("")
+        .split(";")
+        .collect();
+    let signature = parts[2].split("Signature=").nth(1).unwrap_or("");
 
-                                    let calculated_signature: String = calculate_signature(
-                                        api_key.secret_access_key.as_str(),
-                                        date,
-                                        region,
-                                        service,
-                                        &string_to_sign,
-                                    );
+    let parts = credential.split("/").collect::<Vec<&str>>();
+    let access_key_id = parts[0];
+    let date = parts[1];
+    let region = parts[2];
+    let service = parts[3];
 
-                                    if calculated_signature != signature {
-                                        return Err("Signature mismatch".to_string());
-                                    } else {
-                                        return Ok(api_key);
-                                    }
-                                }
-                                Err(_) => return Err("Error".to_string()),
-                            }
-                        }
-                        None => {
-                            return Err("No x-amz-date header found".to_string());
-                        }
-                    }
-                }
-                None => Err("No x-amz-content-sha256 header found".to_string()),
-            }
-        }
-        None => Err("No Authorization header found".to_string()),
+    let Some(content_hash) = headers.get("x-amz-content-sha256") else {
+        return Err("No x-amz-content-sha256 header found".to_string());
+    };
+
+    let canonical_request = create_canonical_request(
+        method,
+        path,
+        headers,
+        signed_headers,
+        query_string,
+        body,
+        content_hash.to_str().unwrap(),
+    );
+    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+
+    let Some(datetime) = headers.get("x-amz-date") else {
+        return Err("No x-amz-date header found".to_string());
+    };
+
+    let api_key = source_api
+        .get_api_key(access_key_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let string_to_sign = create_string_to_sign(
+        &canonical_request,
+        datetime.to_str().unwrap(),
+        &credential_scope,
+    );
+
+    let calculated_signature = calculate_signature(
+        api_key.secret_access_key.as_str(),
+        date,
+        region,
+        service,
+        &string_to_sign,
+    );
+
+    if calculated_signature != signature {
+        Err("Signature mismatch".to_string())
+    } else {
+        Ok(api_key)
     }
 }
 
 fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<str> {
     let mut encoded = String::new();
-    let mut chars = input.chars().peekable();
+    let chars = input.chars().peekable();
 
-    while let Some(ch) = chars.next() {
-        if ch == '/' && !encode_forward_slash {
+    for ch in chars {
+        if (ch == '/' && !encode_forward_slash)
+            || (ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~')
+        {
             encoded.push(ch);
         } else {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
-                encoded.push(ch);
-            } else {
-                for byte in ch.to_string().as_bytes() {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
+            for byte in ch.to_string().as_bytes() {
+                encoded.push_str(&format!("%{:02X}", byte));
             }
         }
     }
@@ -245,7 +260,7 @@ fn calculate_signature(
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
 
-    hex::encode(&hmac_sha256(&k_signing, string_to_sign.as_bytes()))
+    hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()))
 }
 
 fn create_string_to_sign(
@@ -334,13 +349,15 @@ fn get_canonical_headers(headers: &HeaderMap, signed_headers: &Vec<&str>) -> Str
 
     canonical_headers
         .iter()
-        .map(|(name, values)| format!("{}:{}\n", name, values.join(",")))
-        .collect()
+        .fold(String::new(), |mut output, (name, values)| {
+            output.push_str(&format!("{}:{}\n", name, values.join(",")));
+            output
+        })
 }
 
 fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
     signed_headers
-        .into_iter()
+        .iter()
         .map(|header| lowercase(header))
         .collect::<Vec<String>>()
         .join(";")
@@ -348,4 +365,141 @@ fn get_signed_headers(signed_headers: &Vec<&str>) -> String {
 
 fn hash_payload(body: &BytesMut) -> String {
     hex::encode(Sha256::digest(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_http::header::{HeaderMap, HeaderName, HeaderValue};
+    use async_trait::async_trait;
+    use common_s3_headers::S3HeadersBuilder;
+    use std::str::FromStr;
+    use url::Url;
+
+    #[derive(Clone)]
+    struct TestSourceApi {
+        api_key: Option<APIKey>,
+    }
+
+    impl TestSourceApi {
+        fn new(api_key: Option<APIKey>) -> Self {
+            Self { api_key }
+        }
+    }
+
+    #[async_trait]
+    impl ApiKeyProvider for TestSourceApi {
+        async fn get_api_key(&self, _access_key_id: &str) -> Result<APIKey, BackendError> {
+            let Some(key) = &self.api_key else {
+                return Err(BackendError::ApiKeyNotFound);
+            };
+            Ok(key.clone())
+        }
+    }
+
+    fn create_test_source_api(api_key: Option<APIKey>) -> web::Data<TestSourceApi> {
+        web::Data::new(TestSourceApi::new(api_key))
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_auth_header() {
+        let headers = HeaderMap::new();
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No Authorization header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_invalid_signature_method() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("INVALID Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Invalid Signature Algorithm");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_content_hash() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("AWS4-HMAC-SHA256 Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No x-amz-content-sha256 header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_missing_date() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_str("Authorization").unwrap(),
+            HeaderValue::from_str("AWS4-HMAC-SHA256 Credential=test-key/20240315/us-east-1/s3, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=test-signature").unwrap(),
+        );
+        headers.insert(
+            HeaderName::from_str("x-amz-content-sha256").unwrap(),
+            HeaderValue::from_str("test-hash").unwrap(),
+        );
+
+        let source_api = create_test_source_api(None);
+
+        let result =
+            load_identity(&source_api, "GET", "/test", &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No x-amz-date header found");
+    }
+
+    #[tokio::test]
+    async fn test_load_identity_success() {
+        let api_key = APIKey {
+            access_key_id: "test-key".to_string(),
+            secret_access_key: "test-secret".to_string(),
+        };
+        let source_api = create_test_source_api(Some(api_key.clone()));
+
+        let method = "GET";
+        let url = Url::parse("https://test.com/test").unwrap();
+        let path = url.path();
+
+        let headers = HeaderMap::from_iter(
+            S3HeadersBuilder::new(&url)
+                .set_access_key(api_key.access_key_id.as_str())
+                .set_secret_key(api_key.secret_access_key.as_str())
+                .set_region("us-east-1")
+                .set_method("GET")
+                .set_service("s3")
+                .build()
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        HeaderName::from_str(k).unwrap(),
+                        HeaderValue::from_str(v.as_str()).unwrap(),
+                    )
+                }),
+        );
+
+        let result = load_identity(&source_api, method, path, &headers, "", &BytesMut::new()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().access_key_id, "test-key");
+    }
 }
