@@ -104,6 +104,27 @@ pub struct SourceRepositoryList {
     pub next: Option<String>,
 }
 
+fn source_api_headers() -> reqwest::header::HeaderMap {
+    const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
+        ("Accept", "application/json"),
+        ("Accept-Encoding", "gzip, deflate, br"),
+        ("Accept-Language", "en-US,en;q=0.9"),
+        (
+            "User-Agent",
+            concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
+        ),
+    ];
+    CORE_REQUEST_HEADERS
+        .iter()
+        .map(|(name, value)| {
+            (
+                reqwest::header::HeaderName::from_lowercase(name.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_str(value).unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Api for SourceApi {
     /// Creates and returns a backend client for a specific repository.
@@ -235,7 +256,7 @@ impl Api for SourceApi {
     ) -> Result<Account, BackendError> {
         let client = reqwest::Client::new();
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(
@@ -352,7 +373,7 @@ impl SourceApi {
     ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
         let client = reqwest::Client::new();
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
@@ -421,7 +442,7 @@ impl SourceApi {
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
@@ -502,7 +523,7 @@ impl SourceApi {
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(
