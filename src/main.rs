@@ -70,7 +70,7 @@ async fn get_object(
                 range_start = s;
                 if end.is_empty() || end.parse::<u64>().is_ok() {
                     is_range_request = true;
-                    Some(format!("bytes={}-{}", start, end))
+                    Some(format!("bytes={start}-{end}"))
                 } else {
                     None
                 }
@@ -450,7 +450,7 @@ async fn list_objects(
 
 #[get("/")]
 async fn index() -> impl Responder {
-    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{}", VERSION))
+    HttpResponse::Ok().body(format!("Source Cooperative Data Proxy v{VERSION}"))
 }
 
 // Main function to set up and run the HTTP server

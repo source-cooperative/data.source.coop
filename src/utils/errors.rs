@@ -88,7 +88,7 @@ impl error::ResponseError for BackendError {
         let status_code = self.status_code();
         let body = match status_code {
             e if e.is_client_error() => self.to_string(),
-            _ => format!("Internal Server Error: {}", self),
+            _ => format!("Internal Server Error: {self}"),
         };
         if status_code.is_server_error() {
             error!("Error: {}", self);
@@ -148,13 +148,13 @@ fn get_rusoto_error_message<T: std::error::Error>(
     error: RusotoError<T>,
 ) -> String {
     match error {
-        RusotoError::Service(e) => format!("{} Service Error: {}", operation, e),
-        RusotoError::HttpDispatch(e) => format!("{} HttpDispatch Error: {}", operation, e),
-        RusotoError::Credentials(e) => format!("{} Credentials Error: {}", operation, e),
-        RusotoError::Validation(e) => format!("{} Validation Error: {}", operation, e),
-        RusotoError::ParseError(e) => format!("{} Parse Error: {}", operation, e),
+        RusotoError::Service(e) => format!("{operation} Service Error: {e}"),
+        RusotoError::HttpDispatch(e) => format!("{operation} HttpDispatch Error: {e}"),
+        RusotoError::Credentials(e) => format!("{operation} Credentials Error: {e}"),
+        RusotoError::Validation(e) => format!("{operation} Validation Error: {e}"),
+        RusotoError::ParseError(e) => format!("{operation} Parse Error: {e}"),
         RusotoError::Unknown(e) => format!("{} Unknown Error: status {}", operation, e.status),
-        RusotoError::Blocking => format!("{} Blocking Error", operation),
+        RusotoError::Blocking => format!("{operation} Blocking Error"),
     }
 }
 macro_rules! impl_s3_errors {
@@ -202,12 +202,12 @@ impl From<RusotoError<ListObjectsV2Error>> for BackendError {
 
 impl From<DeError> for BackendError {
     fn from(error: DeError) -> BackendError {
-        BackendError::XmlParseError(format!("failed to parse xml: {}", error))
+        BackendError::XmlParseError(format!("failed to parse xml: {error}"))
     }
 }
 impl From<serde_xml_rs::Error> for BackendError {
     fn from(error: serde_xml_rs::Error) -> BackendError {
-        BackendError::XmlParseError(format!("failed to parse xml: {}", error))
+        BackendError::XmlParseError(format!("failed to parse xml: {error}"))
     }
 }
 

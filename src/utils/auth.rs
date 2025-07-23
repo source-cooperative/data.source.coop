@@ -171,7 +171,7 @@ where
         body,
         content_hash.to_str().unwrap(),
     );
-    let credential_scope = format!("{}/{}/{}/aws4_request", date, region, service);
+    let credential_scope = format!("{date}/{region}/{service}/aws4_request");
 
     let Some(datetime) = headers.get("x-amz-date") else {
         return Err("No x-amz-date header found".to_string());
@@ -214,7 +214,7 @@ fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<str> {
             encoded.push(ch);
         } else {
             for byte in ch.to_string().as_bytes() {
-                encoded.push_str(&format!("%{:02X}", byte));
+                encoded.push_str(&format!("%{byte:02X}"));
             }
         }
     }
@@ -255,7 +255,7 @@ fn calculate_signature(
     service: &str,
     string_to_sign: &str,
 ) -> String {
-    let k_date = hmac_sha256(format!("AWS4{}", key).as_bytes(), date.as_bytes());
+    let k_date = hmac_sha256(format!("AWS4{key}").as_bytes(), date.as_bytes());
     let k_region = hmac_sha256(&k_date, region.as_bytes());
     let k_service = hmac_sha256(&k_region, service.as_bytes());
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
@@ -326,7 +326,7 @@ fn get_canonical_query_string(query_string: &str) -> String {
         let encoded_key = uri_encode(&key, true);
         let encoded_value = uri_encode(&value, true);
 
-        encoded_params.push(format!("{}={}", encoded_key, encoded_value));
+        encoded_params.push(format!("{encoded_key}={encoded_value}"));
     }
 
     encoded_params.join("&")

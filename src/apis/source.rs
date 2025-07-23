@@ -344,7 +344,7 @@ impl SourceApi {
         repository_id: &str,
     ) -> Result<SourceRepository, BackendError> {
         // Try to get the cached value
-        let cache_key = format!("{}/{}", account_id, repository_id);
+        let cache_key = format!("{account_id}/{repository_id}");
 
         if let Some(cached_repo) = self.repository_cache.get(&cache_key).await {
             return Ok(cached_repo);
@@ -449,8 +449,7 @@ impl SourceApi {
         );
         let response = client
             .get(format!(
-                "{}/api/v1/api-keys/{}/auth",
-                source_api_url, access_key_id
+                "{source_api_url}/api/v1/api-keys/{access_key_id}/auth"
             ))
             .headers(headers)
             .send()
@@ -474,7 +473,7 @@ impl SourceApi {
 
         // Try to get the cached value
         let cache_key = if anon {
-            format!("{}/{}", account_id, repository_id)
+            format!("{account_id}/{repository_id}")
         } else {
             let api_key = user_identity.clone().api_key.unwrap();
             format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id)
@@ -537,8 +536,7 @@ impl SourceApi {
 
         let response = client
             .get(format!(
-                "{}/api/v1/repositories/{}/{}/permissions",
-                source_api_url, account_id, repository_id
+                "{source_api_url}/api/v1/repositories/{account_id}/{repository_id}/permissions"
             ))
             .headers(headers)
             .send()
