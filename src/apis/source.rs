@@ -355,7 +355,9 @@ impl SourceApi {
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
         );
-        let response = reqwest::get(url).await?;
+        let client = reqwest::Client::new();
+        let headers = source_api_headers();
+        let response = client.get(url).headers(headers).send().await?;
         let repository =
             process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
                 .await?;
