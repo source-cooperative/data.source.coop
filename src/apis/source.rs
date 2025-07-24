@@ -104,6 +104,27 @@ pub struct SourceRepositoryList {
     pub next: Option<String>,
 }
 
+fn source_api_headers() -> reqwest::header::HeaderMap {
+    const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
+        ("Accept", "application/json"),
+        ("Accept-Encoding", "gzip, deflate, br"),
+        ("Accept-Language", "en-US,en;q=0.9"),
+        (
+            "User-Agent",
+            concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
+        ),
+    ];
+    CORE_REQUEST_HEADERS
+        .iter()
+        .map(|(name, value)| {
+            (
+                reqwest::header::HeaderName::from_lowercase(name.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_str(value).unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[async_trait]
 impl Api for SourceApi {
     /// Creates and returns a backend client for a specific repository.
@@ -235,7 +256,7 @@ impl Api for SourceApi {
     ) -> Result<Account, BackendError> {
         let client = reqwest::Client::new();
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(
@@ -323,7 +344,7 @@ impl SourceApi {
         repository_id: &str,
     ) -> Result<SourceRepository, BackendError> {
         // Try to get the cached value
-        let cache_key = format!("{}/{}", account_id, repository_id);
+        let cache_key = format!("{account_id}/{repository_id}");
 
         if let Some(cached_repo) = self.repository_cache.get(&cache_key).await {
             return Ok(cached_repo);
@@ -352,7 +373,7 @@ impl SourceApi {
     ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
         let client = reqwest::Client::new();
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
@@ -421,15 +442,14 @@ impl SourceApi {
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
         );
         let response = client
             .get(format!(
-                "{}/api/v1/api-keys/{}/auth",
-                source_api_url, access_key_id
+                "{source_api_url}/api/v1/api-keys/{access_key_id}/auth"
             ))
             .headers(headers)
             .send()
@@ -453,7 +473,7 @@ impl SourceApi {
 
         // Try to get the cached value
         let cache_key = if anon {
-            format!("{}/{}", account_id, repository_id)
+            format!("{account_id}/{repository_id}")
         } else {
             let api_key = user_identity.clone().api_key.unwrap();
             format!("{}/{}/{}", account_id, repository_id, api_key.access_key_id)
@@ -502,7 +522,7 @@ impl SourceApi {
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = reqwest::header::HeaderMap::new();
+        let mut headers = source_api_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(
@@ -516,8 +536,7 @@ impl SourceApi {
 
         let response = client
             .get(format!(
-                "{}/api/v1/repositories/{}/{}/permissions",
-                source_api_url, account_id, repository_id
+                "{source_api_url}/api/v1/repositories/{account_id}/{repository_id}/permissions"
             ))
             .headers(headers)
             .send()
