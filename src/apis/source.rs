@@ -40,8 +40,6 @@ pub struct APIKey {
 pub struct SourceProduct {
     pub updated_at: String,
     pub metadata: SourceProductMetadata,
-    pub tags: Vec<String>,
-    pub roles: HashMap<String, SourceProductRole>,
     pub created_at: String,
     pub visibility: String,
     pub description: String,
@@ -55,6 +53,8 @@ pub struct SourceProduct {
 pub struct SourceProductMetadata {
     pub primary_mirror: String,
     pub mirrors: HashMap<String, SourceProductMirror>,
+    pub tags: Vec<String>,
+    pub roles: HashMap<String, SourceProductRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
