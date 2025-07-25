@@ -2229,9 +2229,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.124"
+version = "1.0.141"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66ad62847a56b3dba58cc891acd13884b9c61138d330c0d7b6181713d4fce38d"
+checksum = "30b9eff21ebe718216c6ec64e1d9ac57087aad11efc64e32002bce4a0d4c03d3"
 dependencies = [
  "itoa",
  "memchr",
@@ -2368,6 +2368,7 @@ dependencies = [
  "rusoto_s3",
  "serde",
  "serde-xml-rs",
+ "serde_json",
  "sha2 0.10.8",
  "thiserror 2.0.12",
  "time",
