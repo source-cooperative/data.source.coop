@@ -203,7 +203,7 @@ where
     }
 }
 
-fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<str> {
+fn uri_encode(input: &str, encode_forward_slash: bool) -> Cow<'_, str> {
     let mut encoded = String::new();
     let chars = input.chars().peekable();
 
