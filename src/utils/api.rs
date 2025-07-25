@@ -8,35 +8,37 @@ pub async fn process_json_response<T: DeserializeOwned>(
     not_found_error: BackendError,
 ) -> Result<T, BackendError> {
     let status = response.status();
+    let url = response.url().to_string();
+    let text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "<failed to read body>".to_string());
+
     if status.is_success() {
-        response.json::<T>().await.map_err(|err| {
-            log::error!("Error parsing JSON: {err}");
-            BackendError::JsonParseError {
-                url: err
-                    .url()
-                    .map(|u| u.to_string())
-                    .unwrap_or("unknown".to_string()),
+        match serde_json::from_str::<T>(&text) {
+            Ok(val) => Ok(val),
+            Err(err) => {
+                log::error!("Failed to parse JSON from {}: {}\nBody: {}", url, err, text);
+                Err(BackendError::JsonParseError { url })
             }
-        })
+        }
     } else if status == StatusCode::NOT_FOUND {
         Err(not_found_error)
     } else {
-        let url = response.url().to_string();
-        let status = response.status().as_u16();
-        let is_server_error = response.status().is_server_error();
-        let message = response.text().await.unwrap_or("unknown".to_string());
-
+        let is_server_error = status.is_server_error();
         if is_server_error {
+            log::error!("Server error from {}: {}\nBody: {}", url, status, text);
             Err(BackendError::ApiServerError {
                 url,
-                status,
-                message,
+                status: status.as_u16(),
+                message: text,
             })
         } else {
+            log::warn!("Client error from {}: {}\nBody: {}", url, status, text);
             Err(BackendError::ApiClientError {
                 url,
-                status,
-                message,
+                status: status.as_u16(),
+                message: text,
             })
         }
     }
