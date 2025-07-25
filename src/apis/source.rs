@@ -16,7 +16,7 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct SourceApi {
     pub endpoint: String,
-    repository_cache: Arc<Cache<String, SourceRepository>>,
+    product_cache: Arc<Cache<String, SourceProduct>>,
     data_connection_cache: Arc<Cache<String, DataConnection>>,
     api_key_cache: Arc<Cache<String, APIKey>>,
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
@@ -37,16 +37,86 @@ pub struct APIKey {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceRepository {
+pub struct SourceProduct {
+    pub updated_at: String,
+    pub metadata: SourceProductMetadata,
+    pub tags: Vec<String>,
+    pub roles: HashMap<String, SourceProductRole>,
+    pub created_at: String,
+    pub visibility: String,
+    pub description: String,
     pub account_id: String,
-    pub repository_id: String,
-    pub data_mode: String,
+    pub product_id: String,
+    pub title: String,
+    pub account: SourceProductAccount,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductMetadata {
+    pub primary_mirror: String,
+    pub mirrors: HashMap<String, SourceProductMirror>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductMirror {
+    pub storage_type: String,
+    pub is_primary: bool,
+    pub connection_id: String,
+    pub stats: SourceProductMirrorStats,
+    pub prefix: String,
+    pub sync_status: SourceProductMirrorSyncStatus,
+    pub config: SourceProductMirrorConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductMirrorStats {
+    pub total_size: u64,
+    pub last_verified_at: String,
+    pub total_objects: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductMirrorSyncStatus {
+    pub is_synced: bool,
+    pub last_sync_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductMirrorConfig {
+    pub region: String,
+    pub bucket: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductRole {
+    pub granted_at: String,
+    pub account_id: String,
+    pub role: String,
+    pub granted_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductAccount {
+    pub updated_at: String,
+    pub metadata_public: SourceProductAccountMetadataPublic,
+    pub flags: Vec<String>,
+    pub created_at: String,
+    pub emails: Vec<String>,
     pub disabled: bool,
-    pub featured: u8,
-    pub published: String,
-    pub state: String,
-    pub meta: SourceRepositoryMeta,
-    pub data: SourceRepositoryData,
+    pub account_id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub account_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProductAccountMetadataPublic {
+    pub bio: String,
+    pub domains: Vec<String>,
+    pub location: String,
+    pub owner_account_id: String,
+    pub admin_account_ids: Vec<String>,
+    pub member_account_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,27 +150,8 @@ pub struct DataConnection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceRepositoryMeta {
-    pub description: String,
-    pub title: String,
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceRepositoryData {
-    pub primary_mirror: String,
-    pub mirrors: HashMap<String, SourceRepositoryMirror>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceRepositoryMirror {
-    pub prefix: String,
-    pub data_connection_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceRepositoryList {
-    pub repositories: Vec<SourceRepository>,
+pub struct SourceProductList {
+    pub products: Vec<SourceProduct>,
     pub next: Option<String>,
 }
 
@@ -146,19 +197,19 @@ impl Api for SourceApi {
         account_id: &str,
         repository_id: &str,
     ) -> Result<Box<dyn Repository>, BackendError> {
-        let repository = self
+        let product = self
             .get_repository_record(account_id, repository_id)
             .await?;
 
-        let Some(repository_data) = repository
-            .data
+        let Some(repository_data) = product
+            .metadata
             .mirrors
-            .get(repository.data.primary_mirror.as_str())
+            .get(product.metadata.primary_mirror.as_str())
         else {
             return Err(BackendError::SourceRepositoryMissingPrimaryMirror);
         };
 
-        let data_connection_id = repository_data.data_connection_id.clone();
+        let data_connection_id = repository_data.connection_id.clone();
         let data_connection = self.get_data_connection(&data_connection_id).await?;
 
         match data_connection.details.provider.as_str() {
@@ -277,15 +328,13 @@ impl Api for SourceApi {
             .send()
             .await?;
 
-        let repository_list = process_json_response::<SourceRepositoryList>(
-            response,
-            BackendError::RepositoryNotFound,
-        )
-        .await?;
+        let product_list =
+            process_json_response::<SourceProductList>(response, BackendError::RepositoryNotFound)
+                .await?;
         let mut account = Account::default();
 
-        for repository in repository_list.repositories {
-            account.repositories.push(repository.repository_id);
+        for product in product_list.products {
+            account.repositories.push(product.product_id);
         }
 
         Ok(account)
@@ -294,7 +343,7 @@ impl Api for SourceApi {
 
 impl SourceApi {
     pub fn new(endpoint: String) -> Self {
-        let repository_cache = Arc::new(
+        let product_cache = Arc::new(
             Cache::builder()
                 .time_to_live(Duration::from_secs(60)) // Set TTL to 60 seconds
                 .build(),
@@ -320,7 +369,7 @@ impl SourceApi {
 
         SourceApi {
             endpoint,
-            repository_cache,
+            product_cache,
             data_connection_cache,
             api_key_cache,
             permissions_cache,
@@ -342,11 +391,11 @@ impl SourceApi {
         &self,
         account_id: &str,
         repository_id: &str,
-    ) -> Result<SourceRepository, BackendError> {
+    ) -> Result<SourceProduct, BackendError> {
         // Try to get the cached value
         let cache_key = format!("{account_id}/{repository_id}");
 
-        if let Some(cached_repo) = self.repository_cache.get(&cache_key).await {
+        if let Some(cached_repo) = self.product_cache.get(&cache_key).await {
             return Ok(cached_repo);
         }
 
@@ -359,11 +408,11 @@ impl SourceApi {
         let headers = source_api_headers();
         let response = client.get(url).headers(headers).send().await?;
         let repository =
-            process_json_response::<SourceRepository>(response, BackendError::RepositoryNotFound)
+            process_json_response::<SourceProduct>(response, BackendError::RepositoryNotFound)
                 .await?;
 
         // Cache the successful result
-        self.repository_cache
+        self.product_cache
             .insert(cache_key, repository.clone())
             .await;
         Ok(repository)
