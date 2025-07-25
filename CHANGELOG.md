@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.0.0](https://github.com/source-cooperative/data.source.coop/compare/v0.1.29...v1.0.0) (2025-07-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* update to accomodate Product in s2 API
+
+### Features
+
+* add headers to requests to source API ([#81](https://github.com/source-cooperative/data.source.coop/issues/81)) ([edda62f](https://github.com/source-cooperative/data.source.coop/commit/edda62f37d7914cb76209fe7b7209a78e1e49b3c))
+* update to accomodate Product in s2 API ([be44f43](https://github.com/source-cooperative/data.source.coop/commit/be44f43e5497fbb26d46d180162cfffb269dce1b))
+
+
+### Bug Fixes
+
+* lowercase header names ([6b141fc](https://github.com/source-cooperative/data.source.coop/commit/6b141fc34da307593d4fa2526b19becf2f4e1a12))
+
+
+### Miscellaneous Chores
+
+* fix release version ([a7cbe0f](https://github.com/source-cooperative/data.source.coop/commit/a7cbe0fbe222beca84db6d2e9ed98da2c9cda42c))
+* fix release version ([e97c41f](https://github.com/source-cooperative/data.source.coop/commit/e97c41fff7b9f5cd5645c97da4ed2c7d2d143d65))
+
 ## [0.1.29](https://github.com/source-cooperative/data.source.coop/compare/v0.1.28...v0.1.29) (2025-05-29)
 
 
