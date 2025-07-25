@@ -158,8 +158,6 @@ pub struct SourceProductList {
 fn source_api_headers() -> reqwest::header::HeaderMap {
     const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
         ("accept", "application/json"),
-        ("accept-encoding", "gzip, deflate, br"),
-        ("accept-language", "en-US,en;q=0.9"),
         (
             "user-agent",
             concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
