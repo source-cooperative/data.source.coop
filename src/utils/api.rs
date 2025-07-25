@@ -9,15 +9,15 @@ pub async fn process_json_response<T: DeserializeOwned>(
 ) -> Result<T, BackendError> {
     let status = response.status();
     if status.is_success() {
-        response
-            .json::<T>()
-            .await
-            .map_err(|err| BackendError::JsonParseError {
+        response.json::<T>().await.map_err(|err| {
+            log::error!("Error parsing JSON: {err}");
+            BackendError::JsonParseError {
                 url: err
                     .url()
                     .map(|u| u.to_string())
                     .unwrap_or("unknown".to_string()),
-            })
+            }
+        })
     } else if status == StatusCode::NOT_FOUND {
         Err(not_found_error)
     } else {
