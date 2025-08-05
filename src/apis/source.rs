@@ -303,7 +303,7 @@ impl Api for SourceApi {
         account_id: String,
         user_identity: UserIdentity,
     ) -> Result<Account, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.get_client();
         // Create headers
         let mut headers = source_api_headers();
         if user_identity.api_key.is_some() {
@@ -374,6 +374,19 @@ impl SourceApi {
         }
     }
 
+    /// Creates a new `reqwest::Client` with the appropriate proxy settings.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `reqwest::Client` with the appropriate proxy settings.
+    fn get_client(&self) -> reqwest::Client {
+        let mut client = reqwest::Client::builder();
+        if let Ok(proxy) = env::var("PROXY_URL") {
+            client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
+        }
+        client.build().unwrap()
+    }
+
     /// Retrieves the repository record for a given account and repository ID.
     ///
     /// # Arguments
@@ -402,7 +415,7 @@ impl SourceApi {
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
         );
-        let client = reqwest::Client::new();
+        let client = self.get_client();
         let headers = source_api_headers();
         let response = client.get(url).headers(headers).send().await?;
         let repository =
@@ -421,7 +434,7 @@ impl SourceApi {
         data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
-        let client = reqwest::Client::new();
+        let client = self.get_client();
         let mut headers = source_api_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
@@ -486,7 +499,7 @@ impl SourceApi {
     }
 
     async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.get_client();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
@@ -567,7 +580,7 @@ impl SourceApi {
         account_id: &str,
         repository_id: &str,
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.get_client();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
