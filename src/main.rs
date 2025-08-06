@@ -457,8 +457,13 @@ async fn index() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let source_api_url = env::var("SOURCE_API_URL").expect("SOURCE_API_URL must be set");
-    let proxy_url = env::var("SOURCE_API_PROXY_URL").ok(); // Optional proxy for the Source API
-    let source_api = web::Data::new(SourceApi::new(source_api_url, proxy_url));
+    let source_api_key = env::var("SOURCE_API_KEY").expect("SOURCE_API_KEY must be set");
+    let source_api_proxy_url = env::var("SOURCE_API_PROXY_URL").ok(); // Optional proxy for the Source API
+    let source_api = web::Data::new(SourceApi::new(
+        source_api_url,
+        source_api_key,
+        source_api_proxy_url,
+    ));
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     HttpServer::new(move || {

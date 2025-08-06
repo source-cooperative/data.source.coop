@@ -16,9 +16,10 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct SourceApi {
     pub endpoint: String,
+    api_key: String,
     product_cache: Arc<Cache<String, SourceProduct>>,
     data_connection_cache: Arc<Cache<String, DataConnection>>,
-    api_key_cache: Arc<Cache<String, APIKey>>,
+    access_key_cache: Arc<Cache<String, APIKey>>,
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
     proxy_url: Option<String>,
 }
@@ -196,31 +197,31 @@ impl Api for SourceApi {
             "s3" => {
                 let region =
                     if data_connection.authentication.clone().unwrap().auth_type == "s3_local" {
-                        Region::Custom {
-                            name: data_connection
+                    Region::Custom {
+                        name: data_connection
+                            .details
+                            .region
+                            .clone()
+                            .unwrap_or("us-west-2".to_string()),
+                        endpoint: "http://localhost:5050".to_string(),
+                    }
+                } else {
+                    Region::Custom {
+                        name: data_connection
+                            .details
+                            .region
+                            .clone()
+                            .unwrap_or("us-east-1".to_string()),
+                        endpoint: format!(
+                            "https://s3.{}.amazonaws.com",
+                            data_connection
                                 .details
                                 .region
                                 .clone()
-                                .unwrap_or("us-west-2".to_string()),
-                            endpoint: "http://localhost:5050".to_string(),
-                        }
-                    } else {
-                        Region::Custom {
-                            name: data_connection
-                                .details
-                                .region
-                                .clone()
-                                .unwrap_or("us-east-1".to_string()),
-                            endpoint: format!(
-                                "https://s3.{}.amazonaws.com",
-                                data_connection
-                                    .details
-                                    .region
-                                    .clone()
-                                    .unwrap_or("us-east-1".to_string())
-                            ),
-                        }
-                    };
+                                .unwrap_or("us-east-1".to_string())
+                        ),
+                    }
+                };
 
                 let bucket: String = data_connection.details.bucket.clone().unwrap_or_default();
                 let base_prefix: String = data_connection
@@ -322,7 +323,7 @@ impl Api for SourceApi {
 }
 
 impl SourceApi {
-    pub fn new(endpoint: String, proxy_url: Option<String>) -> Self {
+    pub fn new(endpoint: String, api_key: String, proxy_url: Option<String>) -> Self {
         let product_cache = Arc::new(
             Cache::builder()
                 .time_to_live(Duration::from_secs(60)) // Set TTL to 60 seconds
@@ -335,7 +336,7 @@ impl SourceApi {
                 .build(),
         );
 
-        let api_key_cache = Arc::new(
+        let access_key_cache = Arc::new(
             Cache::builder()
                 .time_to_live(Duration::from_secs(60)) // Set TTL to 60 seconds
                 .build(),
@@ -349,9 +350,10 @@ impl SourceApi {
 
         SourceApi {
             endpoint,
+            api_key,
             product_cache,
             data_connection_cache,
-            api_key_cache,
+            access_key_cache,
             permissions_cache,
             proxy_url,
         }
@@ -440,12 +442,11 @@ impl SourceApi {
         &self,
         data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
-        let source_key = env::var("SOURCE_KEY").unwrap();
         let client = self.build_req_client();
         let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
+            reqwest::header::HeaderValue::from_str(&self.api_key).unwrap(),
         );
 
         let response = client
@@ -482,7 +483,7 @@ impl SourceApi {
     }
 
     pub async fn get_api_key(&self, access_key_id: &str) -> Result<APIKey, BackendError> {
-        if let Some(cached_secret) = self.api_key_cache.get(access_key_id).await {
+        if let Some(cached_secret) = self.access_key_cache.get(access_key_id).await {
             return Ok(cached_secret);
         }
 
@@ -492,13 +493,13 @@ impl SourceApi {
                 access_key_id: "".to_string(),
                 secret_access_key: "".to_string(),
             };
-            self.api_key_cache
+            self.access_key_cache
                 .insert(access_key_id.to_string(), secret.clone())
                 .await;
             Ok(secret)
         } else {
             let secret = self.fetch_api_key(access_key_id.to_string()).await?;
-            self.api_key_cache
+            self.access_key_cache
                 .insert(access_key_id.to_string(), secret.clone())
                 .await;
             Ok(secret)
@@ -507,18 +508,17 @@ impl SourceApi {
 
     async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
         let client = self.build_req_client();
-        let source_key = env::var("SOURCE_KEY").unwrap();
-        let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
         let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
-            reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
+            reqwest::header::HeaderValue::from_str(&self.api_key).unwrap(),
         );
         let response = client
             .get(format!(
-                "{source_api_url}/api/v1/api-keys/{access_key_id}/auth"
+                "{}/api/v1/api-keys/{access_key_id}/auth",
+                self.endpoint
             ))
             .headers(headers)
             .send()
@@ -588,7 +588,6 @@ impl SourceApi {
         repository_id: &str,
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
         let client = self.build_req_client();
-        let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
         let mut headers = self.build_source_headers();
@@ -605,7 +604,8 @@ impl SourceApi {
 
         let response = client
             .get(format!(
-                "{source_api_url}/api/v1/repositories/{account_id}/{repository_id}/permissions"
+                "{}/api/v1/repositories/{account_id}/{repository_id}/permissions",
+                self.endpoint
             ))
             .headers(headers)
             .send()
