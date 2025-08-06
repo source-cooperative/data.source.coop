@@ -1,0 +1,42 @@
+name: Deploy API Proxy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./deploy
+    environment: api-proxy-prod
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: arn:aws:iam::417712557820:role/GithubDeployRole
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: ./deploy/package-lock.json
+      - run: npm install -g aws-cdk
+      - run: npm ci
+      - name: Set vars to env
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "$VARS_JSON" | jq -r 'keys[] as $k | "\($k)=\(.[$k])"' >> $GITHUB_ENV
+      - run: cdk deploy --all
+        env:
+          STAGE: production
