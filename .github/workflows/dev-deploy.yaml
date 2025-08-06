@@ -49,6 +49,9 @@ jobs:
 
   deploy-api-proxy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./deploy
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -61,8 +64,7 @@ jobs:
         with:
           node-version: 18
           cache: npm
+          cache-dependency-path: ./deploy/package-lock.json
       - run: npm install -g aws-cdk
       - run: npm ci
-        working-directory: ./deploy
       - run: cdk deploy --all
-        working-directory: ./deploy
