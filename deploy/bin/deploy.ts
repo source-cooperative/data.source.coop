@@ -13,4 +13,8 @@ const app = new cdk.App();
 new DataProxyStack(app, `DataProxy-${stage}`, {
   vpcId,
   proxyDomain: `vercel-api-${stage}.internal`,
+  env: {
+    account: process.env.AWS_ACCOUNT_ID,
+    region: process.env.AWS_REGION,
+  },
 });
