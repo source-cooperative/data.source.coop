@@ -79,3 +79,5 @@ jobs:
         run: |
           echo "$VARS_JSON" | jq -r 'keys[] as $k | "\($k)=\(.[$k])"' >> $GITHUB_ENV
       - run: cdk deploy --all --require-approval never
+        env:
+          STAGE: prod
