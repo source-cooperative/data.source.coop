@@ -52,6 +52,7 @@ jobs:
     defaults:
       run:
         working-directory: ./deploy
+    environment: development
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -67,4 +68,9 @@ jobs:
           cache-dependency-path: ./deploy/package-lock.json
       - run: npm install -g aws-cdk
       - run: npm ci
+      - name: Set vars to env
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "$VARS_JSON" | jq -r 'keys[] as $k | "\($k)=\(.[$k])"' >> $GITHUB_ENV
       - run: cdk deploy --all
