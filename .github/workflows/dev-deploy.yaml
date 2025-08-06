@@ -22,7 +22,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: us-east-1
-          role-to-assume: arn:aws:iam::417712557820:role/GithubDeployRole
+          role-to-assume: arn:aws:iam::417712557820:role/SourceProxyDeploy-Dev
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -60,7 +60,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: arn:aws:iam::417712557820:role/GithubDeployRole
+          role-to-assume: arn:aws:iam::417712557820:role/SourceProxyDeploy-Dev
       - uses: actions/setup-node@v4.4.0
         with:
           node-version: 18
