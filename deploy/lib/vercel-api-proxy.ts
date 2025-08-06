@@ -21,6 +21,8 @@ export class VercelApiProxy extends Construct {
   constructor(scope: Construct, id: string, props: VercelApiProxyProps) {
     super(scope, id);
 
+    const proxyPort = 3128;
+
     // Create security group for the proxy
     const proxySg = new ec2.SecurityGroup(this, "proxy-sg", {
       vpc: props.vpc,
@@ -31,7 +33,7 @@ export class VercelApiProxy extends Construct {
     // Allow ECS (internal) traffic on port 3128
     proxySg.addIngressRule(
       ec2.Peer.ipv4(props.vpc.vpcCidrBlock),
-      ec2.Port.tcp(3128),
+      ec2.Port.tcp(proxyPort),
       "Allow ECS to connect to Squid"
     );
 
@@ -43,7 +45,7 @@ export class VercelApiProxy extends Construct {
 
       // Write squid.conf using heredoc
       "cat <<'EOF' > /etc/squid/squid.conf",
-      "http_port 3128",
+      `http_port ${proxyPort}`,
       "acl all src 0.0.0.0/0",
       "http_access allow all",
       "EOF",
