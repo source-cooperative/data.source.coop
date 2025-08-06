@@ -13,7 +13,7 @@ permissions:
 jobs:
   deploy-proxy:
     runs-on: ubuntu-latest
-
+    environment: development
     steps:
       - uses: actions/checkout@v4.2.2
       - name: Set up Docker Buildx
@@ -22,7 +22,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: us-east-1
-          role-to-assume: arn:aws:iam::417712557820:role/SourceProxyDeploy-Dev
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -49,18 +49,17 @@ jobs:
 
   deploy-cdk:
     runs-on: ubuntu-latest
+    environment: development
     defaults:
       run:
         working-directory: ./deploy
-    environment: development
-
     steps:
       - uses: actions/checkout@v4.2.2
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: arn:aws:iam::417712557820:role/SourceProxyDeploy-Dev
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
       - uses: actions/setup-node@v4.4.0
         with:
           node-version: 18
