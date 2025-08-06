@@ -12,9 +12,7 @@ export class DataProxyStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: DataProxyStackProps) {
     super(scope, id, props);
 
-    const vpc = ec2.Vpc.fromLookup(this, "Vpc", {
-      vpcId: props.vpcId,
-    });
+    const vpc = ec2.Vpc.fromLookup(this, "Vpc", { vpcId: props.vpcId });
 
     new VercelApiProxy(this, "EgressProxy", {
       vpc,

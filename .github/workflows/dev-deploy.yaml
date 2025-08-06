@@ -73,4 +73,4 @@ jobs:
           VARS_JSON: ${{ toJSON(vars) }}
         run: |
           echo "$VARS_JSON" | jq -r 'keys[] as $k | "\($k)=\(.[$k])"' >> $GITHUB_ENV
-      - run: cdk deploy --all
+      - run: cdk deploy --all --require-approval never
