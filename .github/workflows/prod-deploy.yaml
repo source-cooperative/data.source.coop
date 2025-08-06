@@ -67,7 +67,7 @@ jobs:
           role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
       - uses: actions/setup-node@v4.4.0
         with:
-          node-version: 18
+          node-version: 22
           cache: npm
           cache-dependency-path: ./deploy/package-lock.json
       - run: npm install -g aws-cdk
