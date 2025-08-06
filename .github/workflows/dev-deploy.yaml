@@ -47,7 +47,7 @@ jobs:
           service: source-data-proxy
           cluster: SourceCooperative-Dev
 
-  deploy-api-proxy:
+  deploy-cdk:
     runs-on: ubuntu-latest
     defaults:
       run:
