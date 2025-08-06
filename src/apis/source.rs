@@ -20,6 +20,7 @@ pub struct SourceApi {
     data_connection_cache: Arc<Cache<String, DataConnection>>,
     api_key_cache: Arc<Cache<String, APIKey>>,
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
+    proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -321,7 +322,7 @@ impl Api for SourceApi {
 }
 
 impl SourceApi {
-    pub fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: String, proxy_url: Option<String>) -> Self {
         let product_cache = Arc::new(
             Cache::builder()
                 .time_to_live(Duration::from_secs(60)) // Set TTL to 60 seconds
@@ -352,6 +353,7 @@ impl SourceApi {
             data_connection_cache,
             api_key_cache,
             permissions_cache,
+            proxy_url,
         }
     }
 
@@ -362,7 +364,7 @@ impl SourceApi {
     /// Returns a `reqwest::Client` with the appropriate proxy settings.
     fn build_req_client(&self) -> reqwest::Client {
         let mut client = reqwest::Client::builder();
-        if let Ok(proxy) = env::var("PROXY_URL") {
+        if let Some(proxy) = &self.proxy_url {
             client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
         }
         client.build().unwrap()
