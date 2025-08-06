@@ -69,7 +69,7 @@ export class VercelApiProxy extends Construct {
       role: ssmRole,
       instanceType: ec2.InstanceType.of(
         ec2.InstanceClass.T3,
-        ec2.InstanceSize.NANO
+        ec2.InstanceSize.MICRO
       ),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
