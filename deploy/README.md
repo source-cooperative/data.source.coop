@@ -1,14 +1,5 @@
-# Welcome to your CDK TypeScript project
+# Deployment
 
-This is a blank project for CDK development with TypeScript.
+This directory contains deployment tooling to create and manage the AWS infrastructure for the Source Data Proxy.
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
-
-## Useful commands
-
-* `npm run build`   compile typescript to js
-* `npm run watch`   watch for changes and compile
-* `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+It embraces an "Infrastructure as Code" approach via [AWS CDK](https://docs.aws.amazon.com/cdk/). Deployments should be triggered via Github Actions.
