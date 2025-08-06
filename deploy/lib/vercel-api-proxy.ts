@@ -22,7 +22,7 @@ export class VercelApiProxy extends Construct {
     super(scope, id);
 
     // Create security group for the proxy
-    const proxySg = new ec2.SecurityGroup(this, "ProxySG", {
+    const proxySg = new ec2.SecurityGroup(this, "proxy-sg", {
       vpc: props.vpc,
       description: "Allow inbound from ECS for Squid proxy",
       allowAllOutbound: true,
@@ -54,7 +54,7 @@ export class VercelApiProxy extends Construct {
     );
 
     // Enable SSM access for the EC2 instance
-    const ssmRole = new iam.Role(this, "EC2SSMRole", {
+    const ssmRole = new iam.Role(this, "ec2-ssm-role", {
       assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
@@ -64,7 +64,7 @@ export class VercelApiProxy extends Construct {
     });
 
     // Launch EC2 instance
-    const instance = new ec2.Instance(this, "SquidProxy", {
+    const instance = new ec2.Instance(this, "squid-proxy", {
       vpc: props.vpc,
       role: ssmRole,
       instanceType: ec2.InstanceType.of(
@@ -75,21 +75,22 @@ export class VercelApiProxy extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroup: proxySg,
       userData,
+      disableApiTermination: true,
     });
 
     // Allocate and associate Elastic IP
-    const eip = new ec2.CfnEIP(this, "ProxyEIP", {});
-    new ec2.CfnEIPAssociation(this, "ProxyEIPAssoc", {
+    const eip = new ec2.CfnEIP(this, "proxy-eip", {});
+    new ec2.CfnEIPAssociation(this, "proxy-eip-assoc", {
       allocationId: eip.attrAllocationId,
       instanceId: instance.instanceId,
     });
 
     // Route 53 Private Hosted Zone
-    const zone = new route53.PrivateHostedZone(this, "ProxyZone", {
+    const zone = new route53.PrivateHostedZone(this, "proxy-zone", {
       vpc: props.vpc,
       zoneName: props.proxyDomain,
     });
-    new route53.ARecord(this, "ProxyARecord", {
+    new route53.ARecord(this, "proxy-a-record", {
       zone,
       target: route53.RecordTarget.fromIpAddresses(instance.instancePrivateIp),
     });
