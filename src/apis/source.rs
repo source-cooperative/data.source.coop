@@ -20,6 +20,7 @@ pub struct SourceApi {
     data_connection_cache: Arc<Cache<String, DataConnection>>,
     api_key_cache: Arc<Cache<String, APIKey>>,
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
+    proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -155,25 +156,6 @@ pub struct SourceProductList {
     pub next: Option<String>,
 }
 
-fn source_api_headers() -> reqwest::header::HeaderMap {
-    const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
-        ("accept", "application/json"),
-        (
-            "user-agent",
-            concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
-        ),
-    ];
-    CORE_REQUEST_HEADERS
-        .iter()
-        .map(|(name, value)| {
-            (
-                reqwest::header::HeaderName::from_lowercase(name.as_bytes()).unwrap(),
-                reqwest::header::HeaderValue::from_str(value).unwrap(),
-            )
-        })
-        .collect()
-}
-
 #[async_trait]
 impl Api for SourceApi {
     /// Creates and returns a backend client for a specific repository.
@@ -303,9 +285,9 @@ impl Api for SourceApi {
         account_id: String,
         user_identity: UserIdentity,
     ) -> Result<Account, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.build_req_client();
         // Create headers
-        let mut headers = source_api_headers();
+        let mut headers = self.build_source_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(
@@ -340,7 +322,7 @@ impl Api for SourceApi {
 }
 
 impl SourceApi {
-    pub fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: String, proxy_url: Option<String>) -> Self {
         let product_cache = Arc::new(
             Cache::builder()
                 .time_to_live(Duration::from_secs(60)) // Set TTL to 60 seconds
@@ -371,7 +353,45 @@ impl SourceApi {
             data_connection_cache,
             api_key_cache,
             permissions_cache,
+            proxy_url,
         }
+    }
+
+    /// Creates a new `reqwest::Client` with the appropriate proxy settings.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `reqwest::Client` with the appropriate proxy settings.
+    fn build_req_client(&self) -> reqwest::Client {
+        let mut client = reqwest::Client::builder();
+        if let Some(proxy) = &self.proxy_url {
+            client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
+        }
+        client.build().unwrap()
+    }
+
+    /// Builds the headers for the Source API.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `reqwest::header::HeaderMap` with the appropriate headers.
+    fn build_source_headers(&self) -> reqwest::header::HeaderMap {
+        const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
+            ("accept", "application/json"),
+            (
+                "user-agent",
+                concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
+            ),
+        ];
+        CORE_REQUEST_HEADERS
+            .iter()
+            .map(|(name, value)| {
+                (
+                    reqwest::header::HeaderName::from_lowercase(name.as_bytes()).unwrap(),
+                    reqwest::header::HeaderValue::from_str(value).unwrap(),
+                )
+            })
+            .collect()
     }
 
     /// Retrieves the repository record for a given account and repository ID.
@@ -402,8 +422,8 @@ impl SourceApi {
             "{}/api/v1/repositories/{}/{}",
             self.endpoint, account_id, repository_id
         );
-        let client = reqwest::Client::new();
-        let headers = source_api_headers();
+        let client = self.build_req_client();
+        let headers = self.build_source_headers();
         let response = client.get(url).headers(headers).send().await?;
         let repository =
             process_json_response::<SourceProduct>(response, BackendError::RepositoryNotFound)
@@ -421,8 +441,8 @@ impl SourceApi {
         data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
         let source_key = env::var("SOURCE_KEY").unwrap();
-        let client = reqwest::Client::new();
-        let mut headers = source_api_headers();
+        let client = self.build_req_client();
+        let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
@@ -486,12 +506,12 @@ impl SourceApi {
     }
 
     async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.build_req_client();
         let source_key = env::var("SOURCE_KEY").unwrap();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = source_api_headers();
+        let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&source_key).unwrap(),
@@ -567,11 +587,11 @@ impl SourceApi {
         account_id: &str,
         repository_id: &str,
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
-        let client = reqwest::Client::new();
+        let client = self.build_req_client();
         let source_api_url = env::var("SOURCE_API_URL").unwrap();
 
         // Create headers
-        let mut headers = source_api_headers();
+        let mut headers = self.build_source_headers();
         if user_identity.api_key.is_some() {
             let api_key = user_identity.api_key.unwrap();
             headers.insert(

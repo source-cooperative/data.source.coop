@@ -10,9 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  deploy_release:
+  deploy-proxy:
     runs-on: ubuntu-latest
-
+    environment: production
     steps:
       - id: latest
         uses: thebritican/fetch-latest-release@a36ee8ee464da77ba3e499ed6b75e3530e10f9bc # v2.0.0
@@ -27,7 +27,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: us-west-2
-          role-to-assume: arn:aws:iam::417712557820:role/PublishECRImages
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -51,3 +51,32 @@ jobs:
           task-definition: ${{ steps.render-data-proxy-container.outputs.task-definition }}
           service: source-data-proxy
           cluster: SourceCooperative-Prod
+
+  deploy-cdk:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: ./deploy
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ./deploy/package-lock.json
+      - run: npm install -g aws-cdk
+      - run: npm ci
+      - name: Set vars to env
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "$VARS_JSON" | jq -r 'keys[] as $k | "\($k)=\(.[$k])"' >> $GITHUB_ENV
+      - run: cdk deploy --all --require-approval never
+        env:
+          STAGE: prod
