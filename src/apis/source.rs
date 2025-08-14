@@ -98,13 +98,19 @@ pub struct SourceProductAccount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountDomain {
+    pub domain: String,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductAccountMetadataPublic {
-    pub bio: String,
-    pub domains: Vec<String>,
-    pub location: String,
-    pub owner_account_id: String,
-    pub admin_account_ids: Vec<String>,
-    pub member_account_ids: Vec<String>,
+    pub bio: Option<String>,
+    pub domains: Option<Vec<AccountDomain>>,
+    pub location: Option<String>,
+    pub owner_account_id: Option<String>,
+    pub admin_account_ids: Option<Vec<String>>,
+    pub member_account_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
