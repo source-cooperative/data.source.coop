@@ -10,6 +10,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: development
+  cancel-in-progress: false
+
 jobs:
   deploy-proxy:
     runs-on: ubuntu-latest
