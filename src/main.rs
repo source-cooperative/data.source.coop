@@ -245,9 +245,9 @@ async fn put_object(
             .insert_header(("ETag", res.etag))
             .finish())
     } else {
-        return Err(BackendError::InvalidRequest(
+        Err(BackendError::InvalidRequest(
             "Must provide both part number and upload id or neither.".to_string(),
-        ));
+        ))
     }
 }
 
@@ -320,9 +320,9 @@ async fn post_handler(
             .content_type("application/xml")
             .body(serialized))
     } else {
-        return Err(BackendError::InvalidRequest(
+        Err(BackendError::InvalidRequest(
             "Must provide either uploads or uploadId".to_string(),
-        ));
+        ))
     }
 }
 

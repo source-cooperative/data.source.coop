@@ -45,23 +45,23 @@ impl S3Repository {
             ))
         } else if self.auth_method == "s3_ecs_task_role" {
             let credentials = rusoto_credential::ContainerProvider::new();
-            return Ok(S3Client::new_with(
+            Ok(S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
                 self.region.clone(),
-            ));
+            ))
         } else if self.auth_method == "s3_local" {
             let credentials = rusoto_credential::ChainProvider::new();
-            return Ok(S3Client::new_with(
+            Ok(S3Client::new_with(
                 rusoto_core::request::HttpClient::new().unwrap(),
                 credentials,
                 self.region.clone(),
-            ));
+            ))
         } else {
-            return Err(BackendError::UnsupportedAuthMethod(format!(
+            Err(BackendError::UnsupportedAuthMethod(format!(
                 "Unsupported auth method: {}",
                 self.auth_method
-            )));
+            )))
         }
     }
 }
