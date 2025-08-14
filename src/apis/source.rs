@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+
 #[derive(Clone)]
 pub struct SourceApi {
     pub endpoint: String,
@@ -40,14 +41,14 @@ pub struct APIKey {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProduct {
-    pub updated_at: String,
-    pub metadata: SourceProductMetadata,
-    pub created_at: String,
-    pub visibility: String,
-    pub description: String,
-    pub account_id: String,
     pub product_id: String,
+    pub account_id: String,
     pub title: String,
+    pub description: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub visibility: String,
+    pub metadata: SourceProductMetadata,
     pub account: SourceProductAccount,
 }
 
@@ -64,23 +65,8 @@ pub struct SourceProductMirror {
     pub storage_type: String,
     pub is_primary: bool,
     pub connection_id: String,
-    pub stats: SourceProductMirrorStats,
     pub prefix: String,
-    pub sync_status: SourceProductMirrorSyncStatus,
     pub config: SourceProductMirrorConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceProductMirrorStats {
-    pub total_size: u64,
-    pub last_verified_at: String,
-    pub total_objects: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceProductMirrorSyncStatus {
-    pub is_synced: bool,
-    pub last_sync_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,31 +183,31 @@ impl Api for SourceApi {
             "s3" => {
                 let region =
                     if data_connection.authentication.clone().unwrap().auth_type == "s3_local" {
-                    Region::Custom {
-                        name: data_connection
-                            .details
-                            .region
-                            .clone()
-                            .unwrap_or("us-west-2".to_string()),
-                        endpoint: "http://localhost:5050".to_string(),
-                    }
-                } else {
-                    Region::Custom {
-                        name: data_connection
-                            .details
-                            .region
-                            .clone()
-                            .unwrap_or("us-east-1".to_string()),
-                        endpoint: format!(
-                            "https://s3.{}.amazonaws.com",
-                            data_connection
+                        Region::Custom {
+                            name: data_connection
                                 .details
                                 .region
                                 .clone()
-                                .unwrap_or("us-east-1".to_string())
-                        ),
-                    }
-                };
+                                .unwrap_or("us-west-2".to_string()),
+                            endpoint: "http://localhost:5050".to_string(),
+                        }
+                    } else {
+                        Region::Custom {
+                            name: data_connection
+                                .details
+                                .region
+                                .clone()
+                                .unwrap_or("us-east-1".to_string()),
+                            endpoint: format!(
+                                "https://s3.{}.amazonaws.com",
+                                data_connection
+                                    .details
+                                    .region
+                                    .clone()
+                                    .unwrap_or("us-east-1".to_string())
+                            ),
+                        }
+                    };
 
                 let bucket: String = data_connection.details.bucket.clone().unwrap_or_default();
                 let base_prefix: String = data_connection
