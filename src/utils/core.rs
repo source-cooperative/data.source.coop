@@ -45,24 +45,6 @@ where
     }
 }
 
-pub struct FakeBody {
-    pub size: usize,
-}
-
-impl MessageBody for FakeBody {
-    type Error = actix_web::Error;
-    fn size(&self) -> BodySize {
-        BodySize::Sized(self.size as u64)
-    }
-
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<web::Bytes, actix_web::Error>>> {
-        Poll::Ready(None)
-    }
-}
-
 pub fn replace_first(original: String, from: String, to: String) -> String {
     match original.find(&from) {
         Some(start_index) => {
