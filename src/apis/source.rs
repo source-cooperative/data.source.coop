@@ -89,7 +89,7 @@ pub struct SourceProductAccount {
     pub metadata_public: SourceProductAccountMetadataPublic,
     pub flags: Vec<String>,
     pub created_at: String,
-    pub emails: Vec<String>,
+    pub emails: Vec<SourceAccountEmail>,
     pub disabled: bool,
     pub account_id: String,
     pub name: String,
@@ -101,6 +101,14 @@ pub struct SourceProductAccount {
 pub struct AccountDomain {
     pub domain: String,
     pub verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceAccountEmail {
+    pub verified: bool,
+    pub added_at: String,
+    pub address: String,
+    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
