@@ -302,7 +302,7 @@ impl Api for SourceApi {
 
         let response = client
             .get(format!(
-                "{}/api/v1/repositories/{}",
+                "{}/api/v1/products/{}",
                 self.endpoint, account_id
             ))
             .headers(headers)
@@ -421,7 +421,7 @@ impl SourceApi {
 
         // If not in cache, fetch it
         let url = format!(
-            "{}/api/v1/repositories/{}/{}",
+            "{}/api/v1/products/{}/{}",
             self.endpoint, account_id, repository_id
         );
         let client = self.build_req_client();
@@ -604,7 +604,7 @@ impl SourceApi {
 
         let response = client
             .get(format!(
-                "{}/api/v1/repositories/{account_id}/{repository_id}/permissions",
+                "{}/api/v1/products/{account_id}/{repository_id}/permissions",
                 self.endpoint
             ))
             .headers(headers)
