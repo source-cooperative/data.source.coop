@@ -77,7 +77,6 @@ export class VercelApiProxy extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroup: proxySg,
       userData,
-      disableApiTermination: true,
     });
 
     // Allocate and associate Elastic IP
