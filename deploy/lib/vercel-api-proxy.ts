@@ -1,3 +1,4 @@
+import * as cdk from "aws-cdk-lib";
 import {
   aws_ec2 as ec2,
   aws_iam as iam,
@@ -80,7 +81,15 @@ export class VercelApiProxy extends Construct {
     });
 
     // Allocate and associate Elastic IP
-    const eip = new ec2.CfnEIP(this, "proxy-eip", {});
+    const eip = new ec2.CfnEIP(this, "proxy-eip", {
+      domain: "vpc",
+      tags: [
+        {
+          key: "Name",
+          value: `${cdk.Stack.of(this).stackName}-proxy-eip`,
+        },
+      ],
+    });
     new ec2.CfnEIPAssociation(this, "proxy-eip-assoc", {
       allocationId: eip.attrAllocationId,
       instanceId: instance.instanceId,
