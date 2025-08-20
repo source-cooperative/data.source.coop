@@ -301,10 +301,7 @@ impl Api for SourceApi {
         }
 
         let response = client
-            .get(format!(
-                "{}/api/v1/products/{}",
-                self.endpoint, account_id
-            ))
+            .get(format!("{}/api/v1/products/{}", self.endpoint, account_id))
             .headers(headers)
             .send()
             .await?;
