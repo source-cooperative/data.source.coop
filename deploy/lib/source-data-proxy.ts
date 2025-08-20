@@ -25,6 +25,12 @@ export class SourceDataProxy extends Construct {
 
     const stack = cdk.Stack.of(this);
 
+    const cluster = new ecs.Cluster(this, "cluster", {
+      clusterName: `${stack.stackName}-cluster`,
+      vpc: props.vpc,
+      enableFargateCapacityProviders: true,
+    });
+
     const sourceApiKeySecret = new secretsmanager.Secret(
       this,
       "source-api-key",
@@ -41,7 +47,7 @@ export class SourceDataProxy extends Construct {
       "service",
       {
         serviceName: `${stack.stackName}-proxy`,
-        vpc: props.vpc,
+        cluster,
         cpu: 4 * 1024, // 4 vCPU
         desiredCount: props.desiredCount,
         memoryLimitMiB: 12 * 1024, // 12 GB
@@ -84,6 +90,18 @@ export class SourceDataProxy extends Construct {
         enableExecuteCommand: true,
         circuitBreaker: { rollback: true },
         assignPublicIp: true,
+        capacityProviderStrategies: [
+          {
+            capacityProvider: "FARGATE_SPOT",
+            // Prefer spot instances over on-demand instances
+            weight: 2,
+          },
+          {
+            capacityProvider: "FARGATE",
+            // Use on-demand instances as a fallback
+            weight: 1,
+          },
+        ],
       }
     );
 
