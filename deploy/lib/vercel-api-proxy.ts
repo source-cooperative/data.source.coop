@@ -102,7 +102,8 @@ export class VercelApiProxy extends Construct {
     });
     new route53.ARecord(this, "proxy-a-record", {
       zone,
-      target: route53.RecordTarget.fromIpAddresses(instance.instancePrivateIp),
+      target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
+      ttl: cdk.Duration.seconds(60),
     });
   }
 }
