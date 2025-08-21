@@ -3,6 +3,7 @@ import {
   aws_ec2 as ec2,
   aws_iam as iam,
   aws_route53 as route53,
+  aws_route53_targets as route53_targets,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 
@@ -12,6 +13,7 @@ interface VercelApiProxyProps {
 }
 
 export class VercelApiProxy extends Construct {
+  public readonly url: string;
   /**
    * To work around Vercel's firewall, we must proxy all requests for the Proxy API through
    * a Squid proxy. This will allow us to have a stable IP address for the Proxy API which
@@ -102,8 +104,10 @@ export class VercelApiProxy extends Construct {
     });
     new route53.ARecord(this, "proxy-a-record", {
       zone,
-      target: route53.RecordTarget.fromIpAddresses(eip.attrPublicIp),
+      target: route53.RecordTarget.fromIpAddresses(instance.instancePrivateIp),
       ttl: cdk.Duration.seconds(60),
     });
+
+    this.url = `http://${props.proxyDomain}:${proxyPort}`;
   }
 }

@@ -15,45 +15,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy-proxy:
-    runs-on: ubuntu-latest
-    environment: development
-    steps:
-      - uses: actions/checkout@v4.2.2
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: us-east-1
-          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-      - name: Build, tag, and push docker image to Amazon ECR
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: source-data-proxy
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker buildx build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG --push .
-      - name: Render Amazon ECS task definition
-        id: render-data-proxy-container
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition-family: source-data-proxy
-          container-name: source-data-proxy
-          image: 417712557820.dkr.ecr.us-east-1.amazonaws.com/source-data-proxy:${{ github.sha }}
-      - name: Deploy to Amazon ECS service
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-data-proxy-container.outputs.task-definition }}
-          service: source-data-proxy
-          cluster: SourceCooperative-Dev
-
   deploy-cdk:
     runs-on: ubuntu-latest
     environment: development
+    env:
+      STAGE: dev
     defaults:
       run:
         working-directory: ./deploy
