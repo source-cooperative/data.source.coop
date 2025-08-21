@@ -15,8 +15,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
-
   deploy-cdk:
     runs-on: ubuntu-latest
     environment: development
