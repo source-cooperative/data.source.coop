@@ -17,6 +17,8 @@ jobs:
   deploy-cdk:
     runs-on: ubuntu-latest
     environment: production
+    env:
+      STAGE: prod
     defaults:
       run:
         working-directory: ./deploy
