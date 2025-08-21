@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.0.0](https://github.com/source-cooperative/data.source.coop/compare/v0.1.29...v1.0.0) (2025-08-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* update to accomodate Product in s2 API
+
+### Features
+
+* add headers to requests to source API ([#81](https://github.com/source-cooperative/data.source.coop/issues/81)) ([edda62f](https://github.com/source-cooperative/data.source.coop/commit/edda62f37d7914cb76209fe7b7209a78e1e49b3c))
+* update to accomodate Product in s2 API ([be44f43](https://github.com/source-cooperative/data.source.coop/commit/be44f43e5497fbb26d46d180162cfffb269dce1b))
+* use Squid proxy for communication with Vercel API ([#85](https://github.com/source-cooperative/data.source.coop/issues/85)) ([25438c3](https://github.com/source-cooperative/data.source.coop/commit/25438c362e9cd1c7d52f5c4d2932542466eef01a))
+
+
+### Bug Fixes
+
+* don't specify accept-encoding, letting reqwest handle decompression automatically ([c914e77](https://github.com/source-cooperative/data.source.coop/commit/c914e77b8d0495ec229a2575f8aebbeb41947e8d))
+* lowercase header names ([6b141fc](https://github.com/source-cooperative/data.source.coop/commit/6b141fc34da307593d4fa2526b19becf2f4e1a12))
+* **model:** mv tags & roles to metadata ([571eb94](https://github.com/source-cooperative/data.source.coop/commit/571eb9476cc439b04cf0ecd959e8ca83b3107ccc))
+* update data model to match API ([b6d4032](https://github.com/source-cooperative/data.source.coop/commit/b6d40327a2eda5ff8fb5f69bc7d9e7b67a5d04e2))
+* update source api emails struct ([fbdd02a](https://github.com/source-cooperative/data.source.coop/commit/fbdd02a31627a0f3deb68dc7acd613b041c00bdb))
+
+
+### Miscellaneous Chores
+
+* fix release version ([a7cbe0f](https://github.com/source-cooperative/data.source.coop/commit/a7cbe0fbe222beca84db6d2e9ed98da2c9cda42c))
+* fix release version ([e97c41f](https://github.com/source-cooperative/data.source.coop/commit/e97c41fff7b9f5cd5645c97da4ed2c7d2d143d65))
+
 ## [0.1.29](https://github.com/source-cooperative/data.source.coop/compare/v0.1.28...v0.1.29) (2025-05-29)
 
 
