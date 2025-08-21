@@ -3,7 +3,6 @@ import { aws_ec2 as ec2 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { VercelApiProxy } from "./vercel-api-proxy";
 import { SourceDataProxy } from "./source-data-proxy";
-import { VpcEndpoints } from "./vpc-endpoints";
 
 interface DataProxyStackProps extends cdk.StackProps {
   vpcId: string;
