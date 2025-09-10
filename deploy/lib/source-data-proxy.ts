@@ -29,6 +29,7 @@ export class SourceDataProxy extends Construct {
       clusterName: `${stack.stackName}-cluster`,
       vpc: props.vpc,
       enableFargateCapacityProviders: true,
+      containerInsightsV2: ecs.ContainerInsights.ENHANCED,
     });
 
     const sourceApiKeySecret = new secretsmanager.Secret(
