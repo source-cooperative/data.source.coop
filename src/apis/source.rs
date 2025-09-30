@@ -1,3 +1,59 @@
+//! Source API client and data structures for the Source Cooperative platform.
+//!
+//! This module provides types and functionality for interacting with the Source API,
+//! including product management, account handling, and storage backend integration.
+//!
+//! # Overview
+//!
+//! The Source Cooperative is a platform for sharing and collaborating on data products.
+//! This module defines the core data structures that represent products, accounts,
+//! and their associated metadata in the system.
+//!
+//! # Key Types
+//!
+//! - [`SourceProduct`] - Main product entity with metadata and configuration
+//! - [`SourceProductAccount`] - Account information for product owners
+//! - [`SourceProductMetadata`] - Product configuration including mirrors and roles
+//! - [`SourceApi`] - API client for interacting with the Source platform
+//!
+//! # Examples
+//!
+//! ## Creating a Source API client
+//!
+//! ```rust
+//! use source_data_proxy::apis::source::SourceApi;
+//!
+//! let api = SourceApi::new(
+//!     "https://api.source.coop".to_string(),
+//!     "your-api-key".to_string(),
+//!     None
+//! );
+//! ```
+//!
+//! ## Parsing product data from JSON
+//!
+//! ```rust
+//! use serde_json;
+//! use source_data_proxy::apis::source::SourceProduct;
+//!
+//! let json = r#"{
+//!   "product_id": "example-product",
+//!   "account_id": "example-account",
+//!   "title": "Example Product",
+//!   "description": "An example product",
+//!   "created_at": "2023-01-01T00:00:00Z",
+//!   "updated_at": "2023-01-01T00:00:00Z",
+//!   "visibility": "public",
+//!   "disabled": false,
+//!   "data_mode": "open",
+//!   "featured": 0,
+//!   "metadata": { ... },
+//!   "account": { ... }
+//! }"#;
+//!
+//! let product: SourceProduct = serde_json::from_str(json)?;
+//! ```
+
 use super::{Account, Api};
 use crate::backends::azure::AzureRepository;
 use crate::backends::common::Repository;
@@ -9,115 +65,459 @@ use async_trait::async_trait;
 use moka::future::Cache;
 use rusoto_core::Region;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Client for interacting with the Source Cooperative API.
+///
+/// The `SourceApi` provides methods for managing products, accounts, and storage
+/// backends. It includes built-in caching for improved performance and supports
+/// both direct API calls and proxy-based requests.
+///
+/// # Features
+///
+/// - **Caching**: Built-in caching for products, data connections, and permissions
+/// - **Multiple Storage Backends**: Support for S3, Azure, GCS, MinIO, and Ceph
+/// - **Proxy Support**: Optional proxy configuration for network requests
+/// - **Authentication**: API key-based authentication with user identity support
+///
+/// # Examples
+///
+/// ```rust
+/// use source_data_proxy::apis::source::SourceApi;
+///
+/// let api = SourceApi::new(
+///     "https://api.source.coop".to_string(),
+///     "your-api-key".to_string(),
+///     None // No proxy
+/// );
+///
+/// // Get a product
+/// let product = api.get_repository_record("account-id", "product-id").await?;
+/// ```
 #[derive(Clone)]
 pub struct SourceApi {
+    /// Base URL for the Source API endpoint
     pub endpoint: String,
+
+    /// API key for authenticating requests
     api_key: String,
+
+    /// Cache for product data to reduce API calls
     product_cache: Arc<Cache<String, SourceProduct>>,
+
+    /// Cache for data connection configurations
     data_connection_cache: Arc<Cache<String, DataConnection>>,
+
+    /// Cache for API key credentials
     access_key_cache: Arc<Cache<String, APIKey>>,
+
+    /// Cache for user permissions
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
+
+    /// Optional proxy URL for requests
     proxy_url: Option<String>,
 }
 
+/// Repository access permissions for products.
+///
+/// Defines the level of access a user or account has to a specific product.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RepositoryPermission {
+    /// Read-only access to the product data
     #[serde(rename = "read")]
     Read,
+    /// Read and write access to the product data
     #[serde(rename = "write")]
     Write,
 }
 
+/// Product visibility levels that control who can discover and access the product.
+///
+/// This determines how the product appears in listings and search results.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProductVisibility {
+    /// Product is visible to everyone and appears in public listings
+    #[serde(rename = "public")]
+    Public,
+    /// Product is not listed publicly but can be accessed with direct link
+    #[serde(rename = "unlisted")]
+    Unlisted,
+    /// Product access is restricted to specific users or groups
+    #[serde(rename = "restricted")]
+    Restricted,
+}
+
+/// Data access modes that define how users can access the product's data.
+///
+/// This controls the business model and access patterns for the product.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProductDataMode {
+    /// Data is freely accessible to anyone
+    #[serde(rename = "open")]
+    Open,
+    /// Data requires a subscription to access
+    #[serde(rename = "subscription")]
+    Subscription,
+    /// Data is private and only accessible to authorized users
+    #[serde(rename = "private")]
+    Private,
+}
+
+/// Supported storage backend types for product data mirrors.
+///
+/// Each product can have multiple mirrors across different storage providers
+/// for redundancy and performance optimization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum StorageType {
+    /// Amazon S3 compatible storage
+    #[serde(rename = "s3")]
+    S3,
+    /// Microsoft Azure Blob Storage
+    #[serde(rename = "azure")]
+    Azure,
+    /// Google Cloud Storage
+    #[serde(rename = "gcs")]
+    Gcs,
+    /// MinIO object storage
+    #[serde(rename = "minio")]
+    Minio,
+    /// Ceph distributed storage
+    #[serde(rename = "ceph")]
+    Ceph,
+}
+
+/// User roles that define permissions within a product.
+///
+/// Roles are assigned to accounts and determine what actions they can perform
+/// on the product and its data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProductRole {
+    /// Full administrative access to the product
+    #[serde(rename = "admin")]
+    Admin,
+    /// Can contribute data and manage content
+    #[serde(rename = "contributor")]
+    Contributor,
+    /// Read-only access to the product
+    #[serde(rename = "viewer")]
+    Viewer,
+}
+
+/// Account types in the Source Cooperative system.
+///
+/// Different account types have different capabilities and metadata structures.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AccountType {
+    /// Individual user account
+    #[serde(rename = "individual")]
+    Individual,
+    /// Organization or group account
+    #[serde(rename = "organization")]
+    Organization,
+}
+
+/// Domain verification status for account domains.
+///
+/// Used to track the verification state of custom domains associated with accounts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DomainStatus {
+    /// Domain has not been verified
+    #[serde(rename = "unverified")]
+    Unverified,
+    /// Domain verification is in progress
+    #[serde(rename = "pending")]
+    Pending,
+    /// Domain has been successfully verified
+    #[serde(rename = "verified")]
+    Verified,
+}
+
+/// Methods available for domain verification.
+///
+/// Different verification methods provide different levels of security and ease of use.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum VerificationMethod {
+    /// DNS-based verification using TXT records
+    #[serde(rename = "dns")]
+    Dns,
+    /// HTML-based verification using meta tags
+    #[serde(rename = "html")]
+    Html,
+    /// File-based verification using uploaded files
+    #[serde(rename = "file")]
+    File,
+}
+
+/// API key credentials for authenticating with the Source API.
+///
+/// Contains the access key ID and secret access key used for API authentication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct APIKey {
+    /// The access key ID for API authentication
     pub access_key_id: String,
+    /// The secret access key for API authentication
     pub secret_access_key: String,
 }
 
+/// Represents a product in the Source Cooperative system.
+///
+/// A product is the main entity that contains data and metadata, similar to a repository
+/// in traditional version control systems. Products can have multiple storage mirrors
+/// for redundancy and performance optimization.
+///
+/// # Examples
+///
+/// ```rust
+/// use serde_json;
+///
+/// let json = r#"{
+///   "product_id": "example-product",
+///   "account_id": "example-account",
+///   "title": "Example Product",
+///   "description": "An example product",
+///   "created_at": "2023-01-01T00:00:00Z",
+///   "updated_at": "2023-01-01T00:00:00Z",
+///   "visibility": "public",
+///   "disabled": false,
+///   "data_mode": "open",
+///   "featured": 0,
+///   "metadata": { ... },
+///   "account": { ... }
+/// }"#;
+/// let product: SourceProduct = serde_json::from_str(json)?;
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProduct {
+    /// Unique identifier for the product (3-40 chars, lowercase, alphanumeric with hyphens)
     pub product_id: String,
+
+    /// ID of the account that owns this product
     pub account_id: String,
+
+    /// Human-readable title of the product
     pub title: String,
+
+    /// Detailed description of the product
     pub description: String,
+
+    /// ISO 8601 timestamp when the product was created
     pub created_at: String,
+
+    /// ISO 8601 timestamp when the product was last updated
     pub updated_at: String,
-    pub visibility: String,
+
+    /// Visibility level of the product
+    pub visibility: ProductVisibility,
+
+    /// Whether the product is disabled
+    pub disabled: bool,
+
+    /// Data access mode for the product
+    pub data_mode: ProductDataMode,
+
+    /// Featured status (0 = not featured, 1 = featured)
+    pub featured: i32,
+
+    /// Product metadata including mirrors, tags, and roles
     pub metadata: SourceProductMetadata,
-    pub account: SourceProductAccount,
+
+    /// Optional account information
+    pub account: Option<SourceProductAccount>,
 }
 
+/// Metadata for a product including mirrors, tags, and roles.
+///
+/// Contains all the configuration and organizational information for a product
+/// that doesn't fit into the main product fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductMetadata {
-    pub primary_mirror: String,
+    /// Map of mirror names to mirror configurations
     pub mirrors: HashMap<String, SourceProductMirror>,
-    pub tags: Vec<String>,
+
+    /// Name of the primary mirror (key in the mirrors map)
+    pub primary_mirror: String,
+
+    /// Optional list of tags associated with the product
+    pub tags: Option<Vec<String>>,
+
+    /// Map of account IDs to their roles for this product
     pub roles: HashMap<String, SourceProductRole>,
 }
 
+/// Configuration for a storage mirror of a product.
+///
+/// Each product can have multiple mirrors across different storage providers
+/// for redundancy and performance optimization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductMirror {
-    pub storage_type: String,
-    pub is_primary: bool,
+    /// Type of storage backend used for this mirror
+    pub storage_type: StorageType,
+
+    /// ID of the data connection configuration
     pub connection_id: String,
+
+    /// Storage prefix/path for this mirror
     pub prefix: String,
+
+    /// Storage-specific configuration options
     pub config: SourceProductMirrorConfig,
+
+    /// Whether this is the primary mirror for the product
+    pub is_primary: bool,
 }
 
+/// Storage-specific configuration options for a mirror.
+///
+/// Different storage backends require different configuration parameters.
+/// All fields are optional and only relevant for specific storage types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductMirrorConfig {
-    pub region: String,
-    pub bucket: String,
+    /// AWS region for S3/GCS storage
+    pub region: Option<String>,
+
+    /// Bucket name for S3/GCS storage
+    pub bucket: Option<String>,
+
+    /// Container name for Azure Blob Storage
+    pub container: Option<String>,
+
+    /// Custom endpoint URL for MinIO/Ceph storage
+    pub endpoint: Option<String>,
 }
 
+/// Role assignment for product access.
+///
+/// Defines what role an account has for a specific product and when it was granted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductRole {
-    pub granted_at: String,
+    /// ID of the account that has this role
     pub account_id: String,
-    pub role: String,
+
+    /// The role assigned to the account
+    pub role: ProductRole,
+
+    /// ISO 8601 timestamp when the role was granted
+    pub granted_at: String,
+
+    /// ID of the account that granted this role
     pub granted_by: String,
 }
 
+/// Account information associated with a product.
+///
+/// Contains the account details of the product owner, including profile information,
+/// contact details, and organizational metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductAccount {
-    pub updated_at: String,
-    pub metadata_public: SourceProductAccountMetadataPublic,
-    pub flags: Vec<String>,
-    pub created_at: String,
-    pub emails: Vec<SourceAccountEmail>,
-    pub disabled: bool,
+    /// Unique identifier for the account
     pub account_id: String,
-    pub name: String,
+
+    /// Type of account (individual or organization)
     #[serde(rename = "type")]
-    pub account_type: String,
+    pub account_type: AccountType,
+
+    /// Display name of the account
+    pub name: String,
+
+    /// Identity provider ID (only for individual accounts)
+    pub identity_id: Option<String>,
+
+    /// Public metadata visible to other users
+    pub metadata_public: SourceProductAccountMetadataPublic,
+
+    /// Email addresses associated with the account
+    pub emails: Option<Vec<SourceAccountEmail>>,
+
+    /// ISO 8601 timestamp when the account was created
+    pub created_at: String,
+
+    /// ISO 8601 timestamp when the account was last updated
+    pub updated_at: String,
+
+    /// Whether the account is disabled
+    pub disabled: bool,
+
+    /// Account capability flags
+    pub flags: Vec<String>,
+
+    /// Private metadata not visible to other users
+    pub metadata_private: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// Domain verification information for an account.
+///
+/// Tracks the verification status and process for custom domains associated with accounts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountDomain {
+    /// The domain name being verified
     pub domain: String,
-    pub verified: bool,
+
+    /// Current verification status of the domain
+    pub status: DomainStatus,
+
+    /// Method used for verification (if applicable)
+    pub verification_method: Option<VerificationMethod>,
+
+    /// Token used for verification (if applicable)
+    pub verification_token: Option<String>,
+
+    /// ISO 8601 timestamp when verification was completed
+    pub verified_at: Option<String>,
+
+    /// ISO 8601 timestamp when domain was added
+    pub created_at: String,
+
+    /// ISO 8601 timestamp when verification expires (if applicable)
+    pub expires_at: Option<String>,
 }
 
+/// Email address information for an account.
+///
+/// Tracks email addresses associated with an account, including verification status
+/// and primary email designation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceAccountEmail {
-    pub verified: bool,
-    pub added_at: String,
+    /// The email address
     pub address: String,
+
+    /// Whether the email address has been verified
+    pub verified: bool,
+
+    /// ISO 8601 timestamp when verification was completed
+    pub verified_at: Option<String>,
+
+    /// Whether this is the primary email address for the account
     pub is_primary: bool,
+
+    /// ISO 8601 timestamp when the email was added
+    pub added_at: String,
 }
 
+/// Public metadata for an account.
+///
+/// Information that is visible to other users and can be displayed in public profiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceProductAccountMetadataPublic {
+    /// Optional biographical information
     pub bio: Option<String>,
+
+    /// Verified domains associated with the account
     pub domains: Option<Vec<AccountDomain>>,
+
+    /// Geographic location of the account holder
     pub location: Option<String>,
+
+    /// Owner account ID (for organizational accounts)
     pub owner_account_id: Option<String>,
+
+    /// List of admin account IDs (for organizational accounts)
     pub admin_account_ids: Option<Vec<String>>,
+
+    /// List of member account IDs (for organizational accounts)
     pub member_account_ids: Option<Vec<String>>,
 }
 
@@ -320,6 +720,25 @@ impl Api for SourceApi {
 }
 
 impl SourceApi {
+    /// Creates a new Source API client with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - Base URL for the Source API (e.g., "https://api.source.coop")
+    /// * `api_key` - API key for authenticating requests
+    /// * `proxy_url` - Optional proxy URL for requests (e.g., "http://proxy:8080")
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use source_data_proxy::apis::source::SourceApi;
+    ///
+    /// let api = SourceApi::new(
+    ///     "https://api.source.coop".to_string(),
+    ///     "your-api-key".to_string(),
+    ///     None
+    /// );
+    /// ```
     pub fn new(endpoint: String, api_key: String, proxy_url: Option<String>) -> Self {
         let product_cache = Arc::new(
             Cache::builder()
@@ -393,17 +812,36 @@ impl SourceApi {
             .collect()
     }
 
-    /// Retrieves the repository record for a given account and repository ID.
+    /// Retrieves a product record by account and product ID.
+    ///
+    /// This method fetches product information from the Source API, including
+    /// metadata, account details, and configuration. Results are cached for
+    /// improved performance.
     ///
     /// # Arguments
     ///
-    /// * `account_id` - The ID of the account owning the repository.
-    /// * `repository_id` - The ID of the repository.
+    /// * `account_id` - The ID of the account that owns the product
+    /// * `repository_id` - The ID of the product to retrieve
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing either a `SourceRepository` struct with the
-    /// repository information or a BackendError if the request fails.
+    /// Returns a `Result` containing either a `SourceProduct` struct with the
+    /// product information or a `BackendError` if the request fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use source_data_proxy::apis::source::SourceApi;
+    ///
+    /// let api = SourceApi::new(
+    ///     "https://api.source.coop".to_string(),
+    ///     "your-api-key".to_string(),
+    ///     None
+    /// );
+    ///
+    /// let product = api.get_repository_record("example-account", "example-product").await?;
+    /// println!("Product: {}", product.title);
+    /// ```
     pub async fn get_repository_record(
         &self,
         account_id: &str,
