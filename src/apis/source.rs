@@ -615,3 +615,86 @@ impl SourceApi {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_json_parsing() {
+        let json_str = r#"
+        {
+          "updated_at": "2023-01-15T10:30:00.000Z",
+          "metadata": {
+            "primary_mirror": "aws-us-east-1",
+            "mirrors": {
+              "aws-us-east-1": {
+                "storage_type": "s3",
+                "is_primary": true,
+                "connection_id": "aws-connection-123",
+                "config": { "region": "us-east-1", "bucket": "example-bucket" },
+                "prefix": "example-account/sample-product/"
+              }
+            },
+            "tags": ["example", "test"],
+            "roles": {
+              "example-account": {
+                "granted_at": "2023-01-15T10:30:00.000Z",
+                "account_id": "example-account",
+                "role": "admin",
+                "granted_by": "example-account"
+              }
+            }
+          },
+          "created_at": "2023-01-01T00:00:00.000Z",
+          "disabled": false,
+          "visibility": "public",
+          "data_mode": "open",
+          "account_id": "example-account",
+          "description": "An example product for testing purposes.",
+          "product_id": "sample-product",
+          "featured": 0,
+          "title": "Sample Product",
+          "account": {
+            "identity_id": "12345678-1234-1234-1234-123456789abc",
+            "metadata_public": {
+              "domains": [
+                {
+                  "created_at": "2023-01-10T12:00:00.000Z",
+                  "domain": "example.com",
+                  "status": "unverified"
+                }
+              ],
+              "location": "Example City"
+            },
+            "updated_at": "2023-01-15T10:30:00.000Z",
+            "flags": ["create_repositories", "create_organizations"],
+            "created_at": "2023-01-01T00:00:00.000Z",
+            "emails": [
+              {
+                "verified": false,
+                "added_at": "2023-01-01T00:00:00.000Z",
+                "address": "user@example.com",
+                "is_primary": true
+              }
+            ],
+            "disabled": false,
+            "metadata_private": {},
+            "account_id": "example-account",
+            "name": "Example User",
+            "type": "individual"
+          }
+        }
+        "#;
+
+        match serde_json::from_str::<SourceProduct>(json_str) {
+            Ok(_product) => {
+                println!("✅ JSON parsed successfully!");
+            }
+            Err(e) => {
+                panic!("❌ JSON parsing failed: {}", e);
+            }
+        }
+    }
+}
