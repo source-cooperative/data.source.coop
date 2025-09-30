@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/source-cooperative/data.source.coop/compare/v1.0.0...v1.0.1) (2025-09-30)
+
+
+### Bug Fixes
+
+* update source api types to match S2 codebase ([#90](https://github.com/source-cooperative/data.source.coop/issues/90)) ([6dec35d](https://github.com/source-cooperative/data.source.coop/commit/6dec35d60563943fac1d40ce48139859631e540f))
+
 ## [1.0.0](https://github.com/source-cooperative/data.source.coop/compare/v0.1.29...v1.0.0) (2025-08-21)
 
 
