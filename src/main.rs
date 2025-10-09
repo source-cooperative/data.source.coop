@@ -123,15 +123,17 @@ async fn get_object(
         .insert_header(("ETag", res.etag));
 
     if is_range_request {
-        response = response.insert_header((
-            "Content-Range",
-            format!(
-                "bytes {}-{}/{}",
-                range_start,
-                range_start + res.content_length - 1,
-                content_length
-            ),
-        ));
+        response = response
+            .insert_header((
+                "Content-Range",
+                format!(
+                    "bytes {}-{}/{}",
+                    range_start,
+                    range_start + res.content_length - 1,
+                    content_length
+                ),
+            ))
+            .insert_header(("Access-Control-Expose-Headers", "Content-Range"));
     }
 
     Ok(response.body(streaming_response))
