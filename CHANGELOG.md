@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/source-cooperative/data.source.coop/compare/v1.0.1...v1.0.2) (2025-10-09)
+
+
+### Bug Fixes
+
+* expose content-range header ([#93](https://github.com/source-cooperative/data.source.coop/issues/93)) ([f3fbc3d](https://github.com/source-cooperative/data.source.coop/commit/f3fbc3d650140d28a2c876c9e63fab6004c1c68b))
+
 ## [1.0.1](https://github.com/source-cooperative/data.source.coop/compare/v1.0.0...v1.0.1) (2025-09-30)
 
 
