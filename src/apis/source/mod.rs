@@ -119,8 +119,8 @@ pub struct SourceApi {
     /// Cache for user permissions
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
 
-    /// Optional proxy URL for requests
-    proxy_url: Option<String>,
+    // API Client
+    client: reqwest::Client,
 }
 
 #[async_trait]
@@ -252,7 +252,6 @@ impl Api for SourceApi {
         account_id: String,
         user_identity: UserIdentity,
     ) -> Result<Account, BackendError> {
-        let client = self.build_req_client();
         // Create headers
         let mut headers = self.build_source_headers();
         if user_identity.api_key.is_some() {
@@ -266,7 +265,8 @@ impl Api for SourceApi {
             );
         }
 
-        let response = client
+        let response = self
+            .client
             .get(format!("{}/api/v1/products/{}", self.endpoint, account_id))
             .headers(headers)
             .send()
@@ -330,6 +330,15 @@ impl SourceApi {
                 .build(),
         );
 
+        let client = {
+            let mut client = reqwest::Client::builder()
+                .user_agent(concat!("source-proxy/", env!("CARGO_PKG_VERSION")));
+            if let Some(proxy) = proxy_url {
+                client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
+            }
+            client.build().unwrap()
+        };
+
         SourceApi {
             endpoint,
             api_key,
@@ -337,21 +346,8 @@ impl SourceApi {
             data_connection_cache,
             access_key_cache,
             permissions_cache,
-            proxy_url,
+            client,
         }
-    }
-
-    /// Creates a new `reqwest::Client` with the appropriate proxy settings.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `reqwest::Client` with the appropriate proxy settings.
-    fn build_req_client(&self) -> reqwest::Client {
-        let mut client = reqwest::Client::builder();
-        if let Some(proxy) = &self.proxy_url {
-            client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
-        }
-        client.build().unwrap()
     }
 
     /// Builds the headers for the Source API.
@@ -360,13 +356,7 @@ impl SourceApi {
     ///
     /// Returns a `reqwest::header::HeaderMap` with the appropriate headers.
     fn build_source_headers(&self) -> reqwest::header::HeaderMap {
-        const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[
-            ("accept", "application/json"),
-            (
-                "user-agent",
-                concat!("source-proxy/", env!("CARGO_PKG_VERSION")),
-            ),
-        ];
+        const CORE_REQUEST_HEADERS: &[(&str, &str)] = &[("accept", "application/json")];
         CORE_REQUEST_HEADERS
             .iter()
             .map(|(name, value)| {
@@ -425,9 +415,8 @@ impl SourceApi {
             "{}/api/v1/products/{}/{}",
             self.endpoint, account_id, repository_id
         );
-        let client = self.build_req_client();
         let headers = self.build_source_headers();
-        let response = client.get(url).headers(headers).send().await?;
+        let response = self.client.get(url).headers(headers).send().await?;
         let repository =
             process_json_response::<SourceProduct>(response, BackendError::RepositoryNotFound)
                 .await?;
@@ -443,14 +432,14 @@ impl SourceApi {
         &self,
         data_connection_id: &str,
     ) -> Result<DataConnection, BackendError> {
-        let client = self.build_req_client();
         let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&self.api_key).unwrap(),
         );
 
-        let response = client
+        let response = self
+            .client
             .get(format!(
                 "{}/api/v1/data-connections/{}",
                 self.endpoint, data_connection_id
@@ -508,15 +497,14 @@ impl SourceApi {
     }
 
     async fn fetch_api_key(&self, access_key_id: String) -> Result<APIKey, BackendError> {
-        let client = self.build_req_client();
-
         // Create headers
         let mut headers = self.build_source_headers();
         headers.insert(
             reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&self.api_key).unwrap(),
         );
-        let response = client
+        let response = self
+            .client
             .get(format!(
                 "{}/api/v1/api-keys/{access_key_id}/auth",
                 self.endpoint
@@ -588,8 +576,6 @@ impl SourceApi {
         account_id: &str,
         repository_id: &str,
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
-        let client = self.build_req_client();
-
         // Create headers
         let mut headers = self.build_source_headers();
         if user_identity.api_key.is_some() {
@@ -603,7 +589,8 @@ impl SourceApi {
             );
         }
 
-        let response = client
+        let response = self
+            .client
             .get(format!(
                 "{}/api/v1/products/{account_id}/{repository_id}/permissions",
                 self.endpoint
