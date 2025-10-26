@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/source-cooperative/data.source.coop/compare/v1.0.2...v1.0.3) (2025-10-24)
+
+
+### Performance Improvements
+
+* persist source client across requests ([#95](https://github.com/source-cooperative/data.source.coop/issues/95)) ([453b2a8](https://github.com/source-cooperative/data.source.coop/commit/453b2a80ff22fc6953f879019aafa77163b4b2b8))
+
 ## [1.0.2](https://github.com/source-cooperative/data.source.coop/compare/v1.0.1...v1.0.2) (2025-10-09)
 
 
