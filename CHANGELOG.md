@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/source-cooperative/data.source.coop/compare/v1.0.3...v1.0.4) (2025-10-29)
+
+
+### Bug Fixes
+
+* update to no longer expect roles in product metadata ([8a8c630](https://github.com/source-cooperative/data.source.coop/commit/8a8c6300cadccbca57f401e3471915b413666f02))
+
 ## [1.0.3](https://github.com/source-cooperative/data.source.coop/compare/v1.0.2...v1.0.3) (2025-10-24)
 
 
