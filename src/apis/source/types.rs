@@ -75,23 +75,6 @@ pub enum StorageType {
     Ceph,
 }
 
-/// User roles that define permissions within a product.
-///
-/// Roles are assigned to accounts and determine what actions they can perform
-/// on the product and its data.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProductRole {
-    /// Full administrative access to the product
-    #[serde(rename = "admin")]
-    Admin,
-    /// Can contribute data and manage content
-    #[serde(rename = "contributor")]
-    Contributor,
-    /// Read-only access to the product
-    #[serde(rename = "viewer")]
-    Viewer,
-}
-
 /// Account types in the Source Cooperative system.
 ///
 /// Different account types have different capabilities and metadata structures.
@@ -228,9 +211,6 @@ pub struct SourceProductMetadata {
 
     /// Optional list of tags associated with the product
     pub tags: Option<Vec<String>>,
-
-    /// Map of account IDs to their roles for this product
-    pub roles: HashMap<String, SourceProductRole>,
 }
 
 /// Configuration for a storage mirror of a product.
@@ -272,24 +252,6 @@ pub struct SourceProductMirrorConfig {
 
     /// Custom endpoint URL for MinIO/Ceph storage
     pub endpoint: Option<String>,
-}
-
-/// Role assignment for product access.
-///
-/// Defines what role an account has for a specific product and when it was granted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceProductRole {
-    /// ID of the account that has this role
-    pub account_id: String,
-
-    /// The role assigned to the account
-    pub role: ProductRole,
-
-    /// ISO 8601 timestamp when the role was granted
-    pub granted_at: String,
-
-    /// ID of the account that granted this role
-    pub granted_by: String,
 }
 
 /// Account information associated with a product.
