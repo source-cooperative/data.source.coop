@@ -2,6 +2,8 @@ mod apis;
 mod backends;
 mod utils;
 use crate::utils::core::{split_at_first_slash, StreamingResponse};
+use crate::utils::telemetry;
+use crate::utils::tracing_middleware::TracingMiddleware;
 use actix_cors::Cors;
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::error::ErrorInternalServerError;
@@ -15,7 +17,6 @@ use apis::Api;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
 use core::num::NonZeroU32;
-use env_logger::Env;
 use futures_util::StreamExt;
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
@@ -458,6 +459,12 @@ async fn index() -> impl Responder {
 // Main function to set up and run the HTTP server
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize OpenTelemetry tracing before anything else
+    // This is optional - if it fails (e.g., no OTLP collector running locally), we'll log a warning
+    if let Err(e) = telemetry::init_telemetry() {
+        eprintln!("Warning: Failed to initialize OpenTelemetry: {}. Continuing without distributed tracing.", e);
+    }
+
     let source_api_url = env::var("SOURCE_API_URL").expect("SOURCE_API_URL must be set");
     let source_api_key = env::var("SOURCE_API_KEY").expect("SOURCE_API_KEY must be set");
     let source_api_proxy_url = env::var("SOURCE_API_PROXY_URL").ok(); // Optional proxy for the Source API
@@ -466,9 +473,10 @@ async fn main() -> std::io::Result<()> {
         source_api_key,
         source_api_proxy_url,
     ));
-    env_logger::init_from_env(Env::default().default_filter_or("info"));
 
-    HttpServer::new(move || {
+    tracing::info!("Starting Source Data Proxy v{}", VERSION);
+
+    let server = HttpServer::new(move || {
         App::new()
             .app_data(web::PayloadConfig::new(1024 * 1024 * 50))
             .app_data(source_api.clone())
@@ -486,6 +494,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::NormalizePath::trim())
             .wrap(middleware::DefaultHeaders::new().add(("X-Version", VERSION)))
             .wrap(middleware::Logger::default())
+            .wrap(TracingMiddleware::new())
             .wrap(LoadIdentity)
             // Register the endpoints
             .service(get_object)
@@ -497,6 +506,16 @@ async fn main() -> std::io::Result<()> {
             .service(index)
     })
     .bind("0.0.0.0:8080")?
-    .run()
-    .await
+    .run();
+
+    tracing::info!("Server listening on 0.0.0.0:8080");
+
+    // Run the server and capture the result
+    let result = server.await;
+
+    // Gracefully shutdown OpenTelemetry to flush remaining spans
+    tracing::info!("Shutting down server...");
+    telemetry::shutdown_telemetry();
+
+    result
 }

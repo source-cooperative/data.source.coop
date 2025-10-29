@@ -1,4 +1,4 @@
-use actix_web::http::header::RANGE;
+use reqwest::header::RANGE;
 use async_trait::async_trait;
 use azure_core::request_options::NextMarker;
 use azure_storage::StorageCredentials;

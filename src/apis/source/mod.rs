@@ -68,6 +68,9 @@ use crate::utils::auth::UserIdentity;
 use crate::utils::errors::BackendError;
 use async_trait::async_trait;
 use moka::future::Cache;
+use reqwest_middleware::ClientBuilder;
+use reqwest_middleware::ClientWithMiddleware;
+use reqwest_tracing::TracingMiddleware as ReqwestTracingMiddleware;
 use rusoto_core::Region;
 use std::sync::Arc;
 use std::time::Duration;
@@ -119,8 +122,8 @@ pub struct SourceApi {
     /// Cache for user permissions
     permissions_cache: Arc<Cache<String, Vec<RepositoryPermission>>>,
 
-    // API Client
-    client: reqwest::Client,
+    /// Instrumented HTTP client with distributed tracing support
+    client: ClientWithMiddleware,
 }
 
 #[async_trait]
@@ -330,14 +333,20 @@ impl SourceApi {
                 .build(),
         );
 
-        let client = {
-            let mut client = reqwest::Client::builder()
+        // Build the base reqwest client
+        let reqwest_client = {
+            let mut builder = reqwest::Client::builder()
                 .user_agent(concat!("source-proxy/", env!("CARGO_PKG_VERSION")));
             if let Some(proxy) = proxy_url {
-                client = client.proxy(reqwest::Proxy::all(proxy).unwrap());
+                builder = builder.proxy(reqwest::Proxy::all(proxy).unwrap());
             }
-            client.build().unwrap()
+            builder.build().unwrap()
         };
+
+        // Wrap with middleware for distributed tracing
+        let client = ClientBuilder::new(reqwest_client)
+            .with(ReqwestTracingMiddleware::default())
+            .build();
 
         SourceApi {
             endpoint,

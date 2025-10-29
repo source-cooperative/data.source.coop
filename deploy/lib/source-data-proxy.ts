@@ -9,6 +9,7 @@ import {
 } from "aws-cdk-lib";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
+import { AdotCollector } from "./adot-collector";
 
 interface SourceDataProxyProps {
   vpc: ec2.IVpc;
@@ -61,7 +62,17 @@ export class SourceDataProxy extends Construct {
           }),
           containerPort: 8080,
           family: `${stack.stackName}-proxy`,
-          environment: props.environment,
+          environment: {
+            ...props.environment,
+            // OpenTelemetry configuration
+            OTEL_SERVICE_NAME: "source-data-proxy",
+            OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+            OTEL_TRACE_SAMPLE_RATE: "0.1",
+            OTEL_TRACES_SAMPLER: "parentbased_traceidratio",
+            RUST_LOG: "info,source_data_proxy=debug",
+            TRACING_SKIP_PATHS: "/",
+            DEPLOYMENT_ENV: stack.stackName,
+          },
           secrets: {
             SOURCE_API_KEY: ecs.Secret.fromSecretsManager(sourceApiKeySecret),
           },
@@ -109,6 +120,12 @@ export class SourceDataProxy extends Construct {
     if (this.service.taskDefinition.executionRole) {
       sourceApiKeySecret.grantRead(this.service.taskDefinition.executionRole);
     }
+
+    // Add AWS Distro for OpenTelemetry (ADOT) Collector sidecar
+    // This receives traces from the application on localhost:4317 and forwards to AWS X-Ray
+    new AdotCollector(this, "adot-collector", {
+      taskDefinition: this.service.taskDefinition,
+    });
 
     // Output the ALB DNS name
     new cdk.CfnOutput(this, "alb-dns", {

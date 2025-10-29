@@ -5,7 +5,7 @@ use crate::backends::common::{
 };
 use crate::utils::core::replace_first;
 use crate::utils::errors::BackendError;
-use actix_web::http::header::RANGE;
+use reqwest::header::RANGE;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::Utc;

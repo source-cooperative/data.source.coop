@@ -8,6 +8,7 @@ use azure_core::{
 use log::error;
 use quick_xml::DeError;
 use reqwest::Error as ReqwestError;
+use reqwest_middleware::Error as ReqwestMiddlewareError;
 use rusoto_core::RusotoError;
 use rusoto_s3::{
     AbortMultipartUploadError, CompleteMultipartUploadError, CreateMultipartUploadError,
@@ -40,6 +41,9 @@ pub enum BackendError {
 
     #[error("reqwest error (url {}, message {})", .0.url().map(|u| u.to_string()).unwrap_or("unknown".to_string()), .0.to_string())]
     ReqwestError(#[from] ReqwestError),
+
+    #[error("reqwest middleware error: {0}")]
+    ReqwestMiddlewareError(#[from] ReqwestMiddlewareError),
 
     #[error("api threw a server error (url {}, status {}, message {})", .url, .status, .message)]
     ApiServerError {
@@ -118,6 +122,7 @@ impl error::ResponseError for BackendError {
 
             // 502
             BackendError::ReqwestError(_)
+            | BackendError::ReqwestMiddlewareError(_)
             | BackendError::ApiServerError { .. }
             | BackendError::RepositoryPermissionsNotFound
             | BackendError::AzureError(_)
