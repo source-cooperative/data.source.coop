@@ -1,5 +1,5 @@
 # Build stage - target x86_64 for ECS Fargate compatibility
-FROM --platform=linux/amd64 rust:1.82.0 AS builder
+FROM --platform=linux/amd64 rust:1.90.0 AS builder
 
 # Set environment variables for consistent builds
 ENV CARGO_TARGET_DIR=/app/target
