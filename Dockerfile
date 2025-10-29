@@ -1,5 +1,6 @@
 # Build stage - target x86_64 for ECS Fargate compatibility
-FROM --platform=linux/amd64 rust:1.90.0 AS builder
+# Use bookworm variant to match runtime stage GLIBC version
+FROM --platform=linux/amd64 rust:1.90.0-bookworm AS builder
 
 # Set environment variables for consistent builds
 ENV CARGO_TARGET_DIR=/app/target
@@ -40,9 +41,9 @@ USER appuser
 WORKDIR /app
 EXPOSE 8080
 
-# Health check endpoint
+# Health check endpoint (using root path which returns version info)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/ || exit 1
 
 # Run the binary directly
 ENTRYPOINT ["/app/source-data-proxy"]
