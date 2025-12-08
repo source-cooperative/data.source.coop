@@ -15,8 +15,10 @@ use apis::Api;
 use backends::common::{CommonPrefix, CompleteMultipartUpload, ListBucketResult};
 use bytes::Bytes;
 use core::num::NonZeroU32;
-use env_logger::Env;
 use futures_util::StreamExt;
+use log::info;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::trace::{SdkTracerProvider, SpanExporter};
 use quick_xml::se::to_string_with_root;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
@@ -25,6 +27,8 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::str::from_utf8;
 use std::task::{Context, Poll};
+use tracing_actix_web::TracingLogger;
+use tracing_subscriber::prelude::*;
 use utils::auth::{LoadIdentity, UserIdentity};
 use utils::errors::BackendError;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -466,13 +470,22 @@ async fn main() -> std::io::Result<()> {
         source_api_key,
         source_api_proxy_url,
     ));
-    env_logger::init_from_env(Env::default().default_filter_or("info"));
+
+    let provider = create_otlp_tracer_provider().expect("failed to create provider");
+    let tracer = provider.tracer("data.source.coop");
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .init();
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::PayloadConfig::new(1024 * 1024 * 50))
             .app_data(source_api.clone())
             .app_data(web::Data::new(UserIdentity { api_key: None }))
+            .wrap(TracingLogger::default())
             .wrap(
                 // Configure CORS
                 Cors::default()
@@ -499,4 +512,32 @@ async fn main() -> std::io::Result<()> {
     .bind("0.0.0.0:8080")?
     .run()
     .await
+}
+
+fn create_otlp_tracer_provider() -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+    let protocol = std::env::var("OTEL_EXPORTER_OTLP_PROTOCOL").unwrap_or("stdout".to_string());
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder();
+
+    Some(match protocol.as_str() {
+        "stdout" => provider
+            .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+            .build(),
+        "grpc" => {
+            let se = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .build()
+                .expect("Failed to create tonic exporter");
+
+            provider.with_batch_exporter(se).build()
+        }
+        "http/protobuf" => {
+            let se = opentelemetry_otlp::SpanExporter::builder()
+                .with_http()
+                .build()
+                .expect("Failed to create http exporter");
+
+            provider.with_batch_exporter(se).build()
+        }
+        p => panic!("Unsupported protocol {}", p),
+    })
 }
