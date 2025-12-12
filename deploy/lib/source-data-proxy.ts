@@ -6,6 +6,7 @@ import {
   aws_logs as logs,
   aws_secretsmanager as secretsmanager,
   aws_elasticloadbalancingv2 as elbv2,
+  aws_iam as iam,
 } from "aws-cdk-lib";
 import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import { Construct } from "constructs";
@@ -61,7 +62,10 @@ export class SourceDataProxy extends Construct {
           }),
           containerPort: 8080,
           family: `${stack.stackName}-proxy`,
-          environment: props.environment,
+          environment: {
+            ...props.environment,
+            OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+          },
           secrets: {
             SOURCE_API_KEY: ecs.Secret.fromSecretsManager(sourceApiKeySecret),
           },
@@ -104,6 +108,54 @@ export class SourceDataProxy extends Construct {
           },
         ],
       }
+    );
+
+    // Add ADOT collector sidecar
+    this.service.taskDefinition.addContainer('aws-otel-collector', {
+      image: ecs.ContainerImage.fromRegistry(
+        'public.ecr.aws/aws-observability/aws-otel-collector:latest'
+      ),
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: 'adot',
+        logGroup: new logs.LogGroup(this, 'adot-log-group', {
+          logGroupName: `/ecs/${stack.stackName}-adot`,
+          retention: logs.RetentionDays.ONE_WEEK,
+        }),
+      }),
+      environment: {
+        AOT_CONFIG_CONTENT: JSON.stringify({
+          receivers: {
+            otlp: {
+              protocols: {
+                grpc: { endpoint: '0.0.0.0:4317' },
+              },
+            },
+          },
+          processors: { batch: {} },
+          exporters: {
+            awsxray: { region: stack.region },
+          },
+          service: {
+            pipelines: {
+              traces: {
+                receivers: ['otlp'],
+                processors: ['batch'],
+                exporters: ['awsxray'],
+              },
+            },
+          },
+        }),
+      },
+      memoryReservationMiB: 512,
+      cpu: 256,
+    });
+
+    // Add X-Ray permissions to task role
+    this.service.taskDefinition.addToTaskRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'],
+        resources: ['*'],
+      })
     );
 
     if (this.service.taskDefinition.executionRole) {
