@@ -1,4 +1,4 @@
-name: Deploy to Dev
+name: Deploy to Staging
 
 on:
   push:
@@ -11,15 +11,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: development
+  group: staging
   cancel-in-progress: false
 
 jobs:
   deploy-cdk:
     runs-on: ubuntu-latest
-    environment: development
+    environment: staging
     env:
-      STAGE: dev
+      STAGE: dev  # in AWS, we call this environment "dev", but outside of that (vercel, github, URLs) it's called "staging"
     defaults:
       run:
         working-directory: ./deploy
