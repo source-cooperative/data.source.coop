@@ -65,6 +65,7 @@ export class SourceDataProxy extends Construct {
           environment: {
             ...props.environment,
             OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+            OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
           },
           secrets: {
             SOURCE_API_KEY: ecs.Secret.fromSecretsManager(sourceApiKeySecret),
@@ -148,6 +149,10 @@ export class SourceDataProxy extends Construct {
       },
       memoryReservationMiB: 512,
       cpu: 256,
+      portMappings: [{
+        containerPort: 4317,
+        protocol: ecs.Protocol.TCP,
+      }],
     });
 
     // Add X-Ray permissions to task role
