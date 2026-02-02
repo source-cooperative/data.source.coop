@@ -64,7 +64,7 @@ export class SourceDataProxy extends Construct {
           family: `${stack.stackName}-proxy`,
           environment: {
             ...props.environment,
-            OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317",
+            OTEL_EXPORTER_OTLP_ENDPOINT: "https://xray.us-west-2.amazonaws.com",
           },
           secrets: {
             SOURCE_API_KEY: ecs.Secret.fromSecretsManager(sourceApiKeySecret),
