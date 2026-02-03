@@ -117,6 +117,8 @@ async fn get_object(
     };
 
     let mut response = response
+        .insert_header(("Accept-Ranges", "bytes"))
+        .insert_header(("Access-Control-Expose-Headers", "Accept-Ranges"))
         .insert_header(("Content-Type", res.content_type))
         .insert_header(("Last-Modified", res.last_modified))
         .insert_header(("Content-Length", res.content_length.to_string()))
@@ -133,7 +135,10 @@ async fn get_object(
                     content_length
                 ),
             ))
-            .insert_header(("Access-Control-Expose-Headers", "Content-Range"));
+            .insert_header((
+                "Access-Control-Expose-Headers",
+                "Accept-Ranges, Content-Range",
+            ));
     }
 
     Ok(response.body(streaming_response))
@@ -351,6 +356,8 @@ async fn head_object(
 
     let res = client.head_object(key.clone()).await?;
     Ok(HttpResponse::Ok()
+        .insert_header(("Accept-Ranges", "bytes"))
+        .insert_header(("Access-Control-Expose-Headers", "Accept-Ranges"))
         .insert_header(("Content-Type", res.content_type))
         .insert_header(("Last-Modified", res.last_modified))
         .insert_header(("ETag", res.etag))
