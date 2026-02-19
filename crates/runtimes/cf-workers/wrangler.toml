@@ -1,0 +1,80 @@
+name = "s3-proxy-cf-workers"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-09-23"
+
+[build]
+command = "cargo install worker-build && worker-build --release"
+
+[vars]
+VIRTUAL_HOST_DOMAIN = "s3.local"
+
+# For production, consider storing this in Workers KV or a Secrets binding.
+[vars.PROXY_CONFIG]
+roles = []
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_access_key_id = "minioadmin"
+backend_bucket = "public-data"
+backend_endpoint = "http://localhost:9000"
+backend_region = "us-east-1"
+backend_secret_access_key = "minioadmin"
+name = "public-data"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = false
+backend_access_key_id = "minioadmin"
+backend_bucket = "private-uploads"
+backend_endpoint = "http://localhost:9000"
+backend_region = "us-east-1"
+backend_secret_access_key = "minioadmin"
+name = "private-uploads"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_access_key_id = ""
+backend_bucket = "us-west-2.opendata.source.coop"
+backend_endpoint = "https://s3.us-west-2.amazonaws.com"
+backend_prefix = "cholmes/"
+backend_region = "us-west-2"
+backend_secret_access_key = ""
+name = "cholmes"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_access_key_id = ""
+backend_bucket = "us-west-2.opendata.source.coop"
+backend_endpoint = "https://s3.us-west-2.amazonaws.com"
+backend_prefix = "harvard-lil/"
+backend_region = "us-west-2"
+backend_secret_access_key = ""
+name = "harvard-lil"
+
+[[vars.PROXY_CONFIG.credentials]]
+access_key_id = "AKLOCAL0000000000001"
+created_at = "2024-01-01T00:00:00Z"
+enabled = true
+principal_name = "dev-user"
+secret_access_key = "localdev/secret/key/00000000000000000000"
+
+[[vars.PROXY_CONFIG.credentials.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"]
+bucket = "public-data"
+prefixes = []
+
+[[vars.PROXY_CONFIG.credentials.allowed_scopes]]
+actions = [
+  "get_object",
+  "head_object",
+  "put_object",
+  "list_bucket",
+  "create_multipart_upload",
+  "upload_part",
+  "complete_multipart_upload",
+]
+bucket = "private-uploads"
+prefixes = []

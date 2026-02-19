@@ -1,0 +1,38 @@
+[package]
+name = "s3-proxy-cf-workers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cloudflare Workers runtime for the S3 proxy gateway"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+s3-proxy-core = { workspace = true, features = [] }
+s3-proxy-auth.workspace = true
+bytes.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+quick-xml.workspace = true
+url.workspace = true
+
+# Cloudflare Workers SDK
+worker = "0.7"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Headers",
+    "ReadableStream",
+    "Request",
+    "RequestInit",
+    "Response",
+    "ResponseInit",
+] }
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.2", features = ["js"] }
