@@ -130,16 +130,16 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
         }
 
         // Get bucket name and look up config
-        let bucket_name = operation_bucket(&operation)
+        let bucket_name = operation.bucket()
             .ok_or_else(|| ProxyError::InvalidRequest("no bucket in request".into()))?;
 
         let bucket_config = self
             .config
-            .get_bucket(&bucket_name)
+            .get_bucket(bucket_name)
             .await?
             .ok_or_else(|| {
                 tracing::warn!(bucket = %bucket_name, "bucket not found in config");
-                ProxyError::BucketNotFound(bucket_name.clone())
+                ProxyError::BucketNotFound(bucket_name.to_string())
             })?;
 
         tracing::debug!(
@@ -161,22 +161,6 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
             bucket_config,
             list_rewrite: None,
         })
-    }
-}
-
-fn operation_bucket(op: &S3Operation) -> Option<String> {
-    match op {
-        S3Operation::GetObject { bucket, .. }
-        | S3Operation::HeadObject { bucket, .. }
-        | S3Operation::PutObject { bucket, .. }
-        | S3Operation::ListBucket { bucket, .. }
-        | S3Operation::CreateMultipartUpload { bucket, .. }
-        | S3Operation::UploadPart { bucket, .. }
-        | S3Operation::CompleteMultipartUpload { bucket, .. }
-        | S3Operation::AbortMultipartUpload { bucket, .. }
-        | S3Operation::DeleteObject { bucket, .. } => Some(bucket.clone()),
-        S3Operation::ListBuckets => None,
-        S3Operation::AssumeRoleWithWebIdentity { .. } => None,
     }
 }
 

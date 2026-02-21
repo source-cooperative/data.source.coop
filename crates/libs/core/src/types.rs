@@ -176,3 +176,125 @@ pub enum S3Operation {
         duration_seconds: Option<u64>,
     },
 }
+
+impl S3Operation {
+    /// The authorization action for this operation.
+    pub fn action(&self) -> Action {
+        match self {
+            S3Operation::GetObject { .. } => Action::GetObject,
+            S3Operation::HeadObject { .. } => Action::HeadObject,
+            S3Operation::PutObject { .. } => Action::PutObject,
+            S3Operation::ListBucket { .. } => Action::ListBucket,
+            S3Operation::CreateMultipartUpload { .. } => Action::CreateMultipartUpload,
+            S3Operation::UploadPart { .. } => Action::UploadPart,
+            S3Operation::CompleteMultipartUpload { .. } => Action::CompleteMultipartUpload,
+            S3Operation::AbortMultipartUpload { .. } => Action::AbortMultipartUpload,
+            S3Operation::DeleteObject { .. } => Action::DeleteObject,
+            S3Operation::ListBuckets => Action::ListBucket,
+            S3Operation::AssumeRoleWithWebIdentity { .. } => Action::GetObject, // STS is handled separately
+        }
+    }
+
+    /// The bucket name, if any.
+    pub fn bucket(&self) -> Option<&str> {
+        match self {
+            S3Operation::GetObject { bucket, .. }
+            | S3Operation::HeadObject { bucket, .. }
+            | S3Operation::PutObject { bucket, .. }
+            | S3Operation::ListBucket { bucket, .. }
+            | S3Operation::CreateMultipartUpload { bucket, .. }
+            | S3Operation::UploadPart { bucket, .. }
+            | S3Operation::CompleteMultipartUpload { bucket, .. }
+            | S3Operation::AbortMultipartUpload { bucket, .. }
+            | S3Operation::DeleteObject { bucket, .. } => Some(bucket),
+            S3Operation::ListBuckets => None,
+            S3Operation::AssumeRoleWithWebIdentity { .. } => None,
+        }
+    }
+
+    /// The object key, if any. Returns empty string for non-object operations.
+    pub fn key(&self) -> &str {
+        match self {
+            S3Operation::GetObject { key, .. }
+            | S3Operation::HeadObject { key, .. }
+            | S3Operation::PutObject { key, .. }
+            | S3Operation::CreateMultipartUpload { key, .. }
+            | S3Operation::UploadPart { key, .. }
+            | S3Operation::CompleteMultipartUpload { key, .. }
+            | S3Operation::AbortMultipartUpload { key, .. }
+            | S3Operation::DeleteObject { key, .. } => key,
+            S3Operation::ListBucket { .. }
+            | S3Operation::ListBuckets
+            | S3Operation::AssumeRoleWithWebIdentity { .. } => "",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_action() {
+        let op = S3Operation::GetObject {
+            bucket: "b".into(),
+            key: "k".into(),
+        };
+        assert_eq!(op.action(), Action::GetObject);
+
+        let op = S3Operation::PutObject {
+            bucket: "b".into(),
+            key: "k".into(),
+        };
+        assert_eq!(op.action(), Action::PutObject);
+
+        let op = S3Operation::ListBucket {
+            bucket: "b".into(),
+            raw_query: None,
+        };
+        assert_eq!(op.action(), Action::ListBucket);
+
+        assert_eq!(S3Operation::ListBuckets.action(), Action::ListBucket);
+
+        let op = S3Operation::DeleteObject {
+            bucket: "b".into(),
+            key: "k".into(),
+        };
+        assert_eq!(op.action(), Action::DeleteObject);
+    }
+
+    #[test]
+    fn test_bucket() {
+        let op = S3Operation::GetObject {
+            bucket: "my-bucket".into(),
+            key: "k".into(),
+        };
+        assert_eq!(op.bucket(), Some("my-bucket"));
+
+        assert_eq!(S3Operation::ListBuckets.bucket(), None);
+
+        let op = S3Operation::AssumeRoleWithWebIdentity {
+            role_arn: "arn".into(),
+            web_identity_token: "tok".into(),
+            duration_seconds: None,
+        };
+        assert_eq!(op.bucket(), None);
+    }
+
+    #[test]
+    fn test_key() {
+        let op = S3Operation::GetObject {
+            bucket: "b".into(),
+            key: "my/key.txt".into(),
+        };
+        assert_eq!(op.key(), "my/key.txt");
+
+        let op = S3Operation::ListBucket {
+            bucket: "b".into(),
+            raw_query: Some("prefix=foo/".into()),
+        };
+        assert_eq!(op.key(), "");
+
+        assert_eq!(S3Operation::ListBuckets.key(), "");
+    }
+}

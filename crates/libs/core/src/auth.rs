@@ -209,7 +209,7 @@ pub fn authorize(
     if matches!(identity, ResolvedIdentity::Anonymous) {
         if bucket_config.anonymous_access {
             // Anonymous users can only read
-            let action = operation_to_action(operation);
+            let action = operation.action();
             if matches!(action, Action::GetObject | Action::HeadObject | Action::ListBucket) {
                 return Ok(());
             }
@@ -223,8 +223,22 @@ pub fn authorize(
         ResolvedIdentity::Temporary { credentials } => &credentials.allowed_scopes,
     };
 
-    let action = operation_to_action(operation);
-    let (bucket, key) = operation_bucket_key(operation);
+    let action = operation.action();
+    let bucket = operation.bucket().unwrap_or_default().to_string();
+    let key = match operation {
+        S3Operation::ListBucket { raw_query, .. } => {
+            // Extract prefix from raw query for authorization checks
+            raw_query
+                .as_deref()
+                .and_then(|q| {
+                    url::form_urlencoded::parse(q.as_bytes())
+                        .find(|(k, _)| k == "prefix")
+                        .map(|(_, v)| v.to_string())
+                })
+                .unwrap_or_default()
+        }
+        _ => operation.key().to_string(),
+    };
 
     // Check if any scope grants access
     let authorized = scopes.iter().any(|scope| {
@@ -251,47 +265,3 @@ pub fn authorize(
     }
 }
 
-fn operation_to_action(op: &S3Operation) -> Action {
-    match op {
-        S3Operation::GetObject { .. } => Action::GetObject,
-        S3Operation::HeadObject { .. } => Action::HeadObject,
-        S3Operation::PutObject { .. } => Action::PutObject,
-        S3Operation::ListBucket { .. } => Action::ListBucket,
-        S3Operation::CreateMultipartUpload { .. } => Action::CreateMultipartUpload,
-        S3Operation::UploadPart { .. } => Action::UploadPart,
-        S3Operation::CompleteMultipartUpload { .. } => Action::CompleteMultipartUpload,
-        S3Operation::AbortMultipartUpload { .. } => Action::AbortMultipartUpload,
-        S3Operation::DeleteObject { .. } => Action::DeleteObject,
-        S3Operation::ListBuckets => Action::ListBucket, // Treated as a list operation
-        S3Operation::AssumeRoleWithWebIdentity { .. } => Action::GetObject, // STS is handled separately
-    }
-}
-
-fn operation_bucket_key(op: &S3Operation) -> (String, String) {
-    match op {
-        S3Operation::GetObject { bucket, key }
-        | S3Operation::HeadObject { bucket, key }
-        | S3Operation::PutObject { bucket, key }
-        | S3Operation::CreateMultipartUpload { bucket, key }
-        | S3Operation::UploadPart { bucket, key, .. }
-        | S3Operation::CompleteMultipartUpload { bucket, key, .. }
-        | S3Operation::AbortMultipartUpload { bucket, key, .. }
-        | S3Operation::DeleteObject { bucket, key } => {
-            (bucket.clone(), key.clone())
-        }
-        S3Operation::ListBucket { bucket, raw_query } => {
-            // Extract prefix from raw query for authorization checks
-            let prefix = raw_query
-                .as_deref()
-                .and_then(|q| {
-                    url::form_urlencoded::parse(q.as_bytes())
-                        .find(|(k, _)| k == "prefix")
-                        .map(|(_, v)| v.to_string())
-                })
-                .unwrap_or_default();
-            (bucket.clone(), prefix)
-        }
-        S3Operation::ListBuckets => (String::new(), String::new()),
-        S3Operation::AssumeRoleWithWebIdentity { .. } => (String::new(), String::new()),
-    }
-}
