@@ -4,18 +4,20 @@ A multi-runtime S3 gateway that streams requests to and from backing object stor
 
 ## Architecture
 
-```
-┌──────────────┐         ┌──────────────────────────────────────┐
-│  S3 Clients  │────────▶│            s3-proxy-rs               │
-│  (aws cli,   │         │                                      │
-│   boto3,     │         │  ┌────────────┐  ┌────────────────┐  │         ┌──────────────┐
-│   sdk, etc.) │         │  │  Auth      │  │  Config        │  │────────▶│  Backend S3  │
-│              │◀────────│  │  (SigV4,   │  │  (Static,      │  │         │  (AWS, MinIO │
-│              │         │  │   STS,     │  │   HTTP API,    │  │◀────────│   R2, etc.)  │
-│              │         │  │   OIDC)    │  │   DynamoDB,    │  │         └──────────────┘
-│              │         │  └────────────┘  │   Postgres)    │  │
-└──────────────┘         │                  └────────────────┘  │
-                         └──────────────────────────────────────┘
+```mermaid
+flowchart LR
+    Clients["S3 Clients<br />(aws cli, boto3, sdk, etc.)"]
+
+    subgraph Proxy["s3-proxy-rs"]
+        Auth["Auth<br />(SigV4, STS, OIDC)"]
+        Config["Config<br />(Static, HTTP API, DynamoDB, Postgres)"]
+    end
+
+    Backend["Backend S3<br />(AWS, MinIO, R2, etc.)"]
+    
+    Proxy <--> Clients
+    Backend <--> Proxy
+
 ```
 
 ### Crate Layout
@@ -30,7 +32,7 @@ crates/
     └── cf-workers/ (s3-proxy-cf-workers) # Cloudflare Workers for edge deployments
 ```
 
-Libraries define trait abstractions (`BodyStream`, `BackendClient`, `ConfigProvider`, `RequestResolver`). Runtimes implement those traits with platform-native primitives: Hyper/reqwest on the server, JS Fetch API with `ReadableStream` passthrough on Workers.
+Libraries define trait abstractions (`ProxyBackend`, `ConfigProvider`, `RequestResolver`). Runtimes implement `ProxyBackend` with platform-native primitives: the server runtime uses `object_store` with its default HTTP connector and `reqwest` for raw multipart requests; the Workers runtime uses a custom `FetchConnector` that bridges `object_store` to the JS Fetch API.
 
 The `RequestResolver` trait decouples "what to do with a request" from the proxy handler. A `DefaultResolver` handles standard S3 proxy behavior (parse, auth, authorize via `ConfigProvider`), while custom resolvers like `SourceCoopResolver` can implement entirely different namespace mapping and authorization schemes.
 
@@ -245,7 +247,7 @@ Wire it into the proxy handler in your runtime:
 
 ```rust
 let resolver = MyResolver::new(/* ... */);
-let handler = ProxyHandler::new(backend_client, resolver);
+let handler = ProxyHandler::new(backend, resolver);
 let result = handler.handle_request(method, path, query, &headers, body).await;
 ```
 
@@ -314,11 +316,11 @@ The proxy validates the JWT against the OIDC provider's JWKS, checks the trust p
 
 The crate workspace separates concerns so the core logic compiles to both native and WASM targets:
 
-**`s3-proxy-core`** has zero runtime dependencies. No `tokio`, no `worker`. All async trait methods use `impl Future` (RPITIT) rather than `#[async_trait]` with `Send` bounds, so they compile on single-threaded WASM runtimes.
+**`s3-proxy-core`** has zero runtime dependencies. No `tokio`, no `worker`. It uses `object_store` for high-level operations (GET, HEAD, PUT, LIST) and a `ProxyBackend` trait for runtime-specific store creation and raw HTTP (multipart). All async trait methods use `impl Future` (RPITIT) rather than `#[async_trait]` with `Send` bounds, so they compile on single-threaded WASM runtimes.
 
-**`s3-proxy-server`** adds Tokio, Hyper, and reqwest. It implements `BodyStream` with `http_body_util` types and `BackendClient` with reqwest's streaming HTTP client.
+**`s3-proxy-server`** adds Tokio, Hyper, and reqwest. It implements `ProxyBackend` using `object_store`'s default HTTP connector for high-level operations and reqwest for raw multipart requests. GET responses stream from `object_store` through Hyper without buffering.
 
-**s3-proxy-cf-workers** adds `worker-rs`, `wasm-bindgen`, and `web-sys`. It implements `BodyStream` wrapping JS `ReadableStream` and `BackendClient` using the Fetch API. The critical optimization: for GET requests, the JS `ReadableStream` from the backend response is passed directly to the outbound worker `Response` — bytes never touch Rust/WASM memory.
+**`s3-proxy-cf-workers`** adds `worker-rs`, `wasm-bindgen`, and `web-sys`. It implements `ProxyBackend` with a custom `FetchConnector` that bridges `object_store` to the Workers Fetch API via `spawn_local` + channel patterns (since JS interop types are `!Send`). Response body streams are converted to JS `ReadableStream` via `TransformStream` for efficient delivery.
 
 ## License
 

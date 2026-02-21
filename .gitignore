@@ -1,3 +1,4 @@
-/target
 .DS_Store
 scripts/task_definition.json
+target
+.wrangler

@@ -1,63 +1,48 @@
-//! Server-side body type implementing `BodyStream`.
+//! Response body conversion for the server runtime.
+//!
+//! Converts [`ProxyResponseBody`] to a streaming hyper response body.
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Empty};
-use s3_proxy_core::stream::BodyStream;
+use futures::TryStreamExt;
+use http::Response;
+use http_body_util::{Either, Empty, Full, StreamBody};
+use hyper::body::Frame;
+use s3_proxy_core::proxy::ProxyResult;
+use s3_proxy_core::response_body::ProxyResponseBody;
 
-/// A body type for the server runtime.
+/// A boxed streaming body type that erases concrete stream types.
+type BoxedStreamBody = StreamBody<
+    std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>,
+    >,
+>;
+
+/// The server response body type: either a stream, fixed bytes, or empty.
+pub type ServerResponseBody = Either<BoxedStreamBody, Either<Full<Bytes>, Empty<Bytes>>>;
+
+/// Convert a `ProxyResult` to a hyper `Response` with a streaming body.
 ///
-/// Wraps either an incoming request body or a constructed response body.
-/// Uses `http_body_util` types which integrate natively with Hyper.
-pub enum ServerBody {
-    /// A body constructed from known bytes.
-    Full(Full<Bytes>),
-    /// An empty body.
-    Empty(Empty<Bytes>),
-    /// A streaming body from reqwest (for backend responses).
-    Streaming(reqwest::Response),
-}
+/// This is an improvement over the old implementation: GET responses now
+/// stream through without buffering the entire body in memory.
+pub fn build_hyper_response(
+    result: ProxyResult,
+) -> Result<Response<ServerResponseBody>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut builder = Response::builder().status(result.status);
 
-/// Error type for server body operations.
-#[derive(Debug, thiserror::Error)]
-pub enum ServerBodyError {
-    #[error("hyper error: {0}")]
-    Hyper(String),
-    #[error("reqwest error: {0}")]
-    Reqwest(#[from] reqwest::Error),
-}
+    for (key, value) in result.headers.iter() {
+        builder = builder.header(key, value);
+    }
 
-impl BodyStream for ServerBody {
-    type Error = ServerBodyError;
-
-    async fn read_to_bytes(self) -> Result<Bytes, Self::Error> {
-        match self {
-            ServerBody::Full(full) => {
-                let collected = full.collect().await.map_err(|e| ServerBodyError::Hyper(e.to_string()))?;
-                Ok(collected.to_bytes())
-            }
-            ServerBody::Empty(_) => Ok(Bytes::new()),
-            ServerBody::Streaming(resp) => {
-                resp.bytes().await.map_err(ServerBodyError::Reqwest)
-            }
+    let body = match result.body {
+        ProxyResponseBody::Stream(stream) => {
+            let framed = stream
+                .map_ok(Frame::data)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+            Either::Left(StreamBody::new(Box::pin(framed) as std::pin::Pin<Box<dyn futures::Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>))
         }
-    }
+        ProxyResponseBody::Bytes(b) => Either::Right(Either::Left(Full::new(b))),
+        ProxyResponseBody::Empty => Either::Right(Either::Right(Empty::new())),
+    };
 
-    fn from_bytes(bytes: Bytes) -> Self {
-        ServerBody::Full(Full::new(bytes))
-    }
-
-    fn empty() -> Self {
-        ServerBody::Empty(Empty::new())
-    }
-
-    fn content_length(&self) -> Option<u64> {
-        match self {
-            ServerBody::Full(f) => {
-                use hyper::body::Body;
-                f.size_hint().exact()
-            }
-            ServerBody::Empty(_) => Some(0),
-            ServerBody::Streaming(resp) => resp.content_length(),
-        }
-    }
+    Ok(builder.body(body)?)
 }

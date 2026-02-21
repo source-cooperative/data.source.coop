@@ -3,8 +3,8 @@
 //! This crate provides concrete implementations of the core traits for a
 //! standard server environment using Tokio and Hyper.
 //!
-//! - [`body::ServerBody`] — implements `BodyStream` using `http-body-util`
-//! - [`client::HyperBackendClient`] — implements `BackendClient` using `reqwest`
+//! - [`client::ServerBackend`] — implements `ProxyBackend` using reqwest + object_store
+//! - [`body`] — converts `ProxyResponseBody` to streaming hyper responses
 //! - [`server::run`] — starts the Hyper HTTP server
 
 pub mod body;

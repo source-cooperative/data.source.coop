@@ -1,13 +1,19 @@
-//! Backend client using the Cloudflare Workers Fetch API.
+//! Backend client and HTTP helpers for the Cloudflare Workers runtime.
 //!
-//! Uses `worker::Fetch` for subrequests. Response bodies for proxied S3
-//! requests are extracted as `ReadableStream` via `web_sys` for zero-copy
-//! passthrough — bytes never enter Rust memory.
+//! Contains:
+//! - `WorkerBackend` — implements `ProxyBackend` using the Fetch API + FetchConnector
+//! - `fetch_json` — helper for server-to-server API calls (used by `source_api`)
 
-use crate::body::WorkerBody;
-use s3_proxy_core::backend::{BackendClient, BackendRequest, BackendResponse};
+use crate::fetch_connector::FetchConnector;
+use bytes::Bytes;
+use http::HeaderMap;
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
+use s3_proxy_core::backend::{ProxyBackend, RawResponse};
 use s3_proxy_core::error::ProxyError;
+use s3_proxy_core::types::BucketConfig;
 use serde::de::DeserializeOwned;
+use std::sync::Arc;
 use worker::{Cache, Fetch};
 
 /// Options for Cache API caching.
@@ -105,70 +111,92 @@ pub(crate) async fn fetch_json<T: DeserializeOwned>(
         .map_err(|e| ProxyError::Internal(format!("failed to deserialize response: {}", e)))
 }
 
-/// Backend client that uses the Workers Fetch API.
+/// Backend for the Cloudflare Workers runtime.
 ///
-/// Response bodies remain as opaque JS ReadableStreams — bytes never touch
-/// Rust memory for passthrough requests (GET, PUT, etc.).
-pub struct WorkerBackendClient;
+/// Uses `FetchConnector` for `object_store` HTTP requests and `web_sys::fetch`
+/// for raw multipart operations.
+#[derive(Clone)]
+pub struct WorkerBackend;
 
-impl BackendClient for WorkerBackendClient {
-    type Body = WorkerBody;
+impl ProxyBackend for WorkerBackend {
+    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
+        let mut builder = AmazonS3Builder::new()
+            .with_endpoint(&config.backend_endpoint)
+            .with_bucket_name(&config.backend_bucket)
+            .with_region(&config.backend_region)
+            .with_http_connector(FetchConnector);
 
-    async fn send_request(
+        if !config.backend_access_key_id.is_empty() {
+            builder = builder
+                .with_access_key_id(&config.backend_access_key_id)
+                .with_secret_access_key(&config.backend_secret_access_key);
+        } else {
+            builder = builder.with_skip_signature(true);
+        }
+
+        Ok(Arc::new(
+            builder
+                .build()
+                .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
+        ))
+    }
+
+    async fn send_raw(
         &self,
-        request: BackendRequest<WorkerBody>,
-    ) -> Result<BackendResponse<WorkerBody>, ProxyError> {
+        method: http::Method,
+        url: String,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Result<RawResponse, ProxyError> {
         tracing::debug!(
-            method = %request.method,
-            url = %request.url,
-            "worker: sending backend request via Fetch API"
+            method = %method,
+            url = %url,
+            "worker: sending raw backend request via Fetch API"
         );
 
-        // Build web_sys::Headers directly
+        // Build web_sys::Headers
         let ws_headers = web_sys::Headers::new()
             .map_err(|e| ProxyError::Internal(format!("failed to create Headers: {:?}", e)))?;
 
-        for (key, value) in request.headers.iter() {
+        for (key, value) in headers.iter() {
             if let Ok(v) = value.to_str() {
                 let _ = ws_headers.set(key.as_str(), v);
             }
         }
 
-        // Build web_sys::RequestInit — we use web_sys types here because
-        // WorkerBody needs to pass JS ReadableStream/Uint8Array as the body.
+        // Build web_sys::RequestInit
         let init = web_sys::RequestInit::new();
-        init.set_method(request.method.as_str());
+        init.set_method(method.as_str());
         init.set_headers(&ws_headers.into());
 
-        // Set body for methods that carry one.
-        // Pass streams and bytes through as JS values — no materialization.
-        if matches!(request.method, http::Method::PUT | http::Method::POST) {
-            if let Some(js_body) = request.body.into_js_body() {
-                init.set_body(&js_body);
-            }
+        // Set body for methods that carry one
+        if !body.is_empty() {
+            let uint8 = js_sys::Uint8Array::from(body.as_ref());
+            init.set_body(&uint8.into());
         }
 
         let ws_request =
-            web_sys::Request::new_with_str_and_init(&request.url, &init).map_err(|e| {
-                tracing::error!(error = ?e, "failed to create web_sys::Request");
+            web_sys::Request::new_with_str_and_init(&url, &init).map_err(|e| {
                 ProxyError::BackendError(format!("failed to create request: {:?}", e))
             })?;
 
-        // Convert to worker::Request and fetch via worker::Fetch.
+        // Fetch via worker
         let worker_req: worker::Request = ws_request.into();
-        let worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
-            tracing::error!(url = %request.url, error = %e, "fetch to backend failed");
+        let mut worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
             ProxyError::BackendError(format!("fetch failed: {}", e))
         })?;
 
         let status = worker_resp.status_code();
-        tracing::debug!(status = status, "worker: backend response received");
 
-        // Convert back to web_sys::Response to extract ReadableStream body.
-        let ws_response: web_sys::Response = worker_resp.into();
+        // Read response body as bytes (multipart responses are small)
+        let resp_bytes = worker_resp
+            .bytes()
+            .await
+            .map_err(|e| ProxyError::Internal(format!("failed to read response: {}", e)))?;
 
         // Convert response headers
-        let mut resp_headers = http::HeaderMap::new();
+        let ws_response: web_sys::Response = worker_resp.into();
+        let mut resp_headers = HeaderMap::new();
         let response_headers = ws_response.headers();
         for name in &[
             "content-type",
@@ -177,8 +205,7 @@ impl BackendClient for WorkerBackendClient {
             "last-modified",
             "x-amz-request-id",
             "x-amz-version-id",
-            "accept-ranges",
-            "content-range",
+            "location",
         ] {
             if let Ok(Some(value)) = response_headers.get(name) {
                 if let Ok(parsed) = value.parse() {
@@ -187,13 +214,10 @@ impl BackendClient for WorkerBackendClient {
             }
         }
 
-        // Extract response body as a ReadableStream — zero-copy passthrough.
-        let body = WorkerBody::from_ws_response(&ws_response);
-
-        Ok(BackendResponse {
+        Ok(RawResponse {
             status,
             headers: resp_headers,
-            body,
+            body: Bytes::from(resp_bytes),
         })
     }
 }

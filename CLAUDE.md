@@ -1,6 +1,6 @@
 # S3 Proxy Gateway
 
-Multi-runtime S3 gateway proxy in Rust. Proxies S3-compatible API requests to backend object stores with authentication, authorization, and streaming passthrough.
+Multi-runtime S3 gateway proxy in Rust. Proxies S3-compatible API requests to backend object stores with authentication, authorization, and streaming passthrough. Uses the `object_store` crate for high-level operations (GET, HEAD, PUT, LIST) and raw signed HTTP for multipart uploads.
 
 ## Workspace Structure
 
@@ -25,9 +25,26 @@ cargo test
 
 ## Key Architecture Notes
 
-- **RequestResolver pattern**: `ProxyHandler<C, R>` is generic over a `RequestResolver` trait. The resolver decides what to do with each request (parse, auth, authorize, return proxy action or synthetic response). `DefaultResolver<P: ConfigProvider>` handles standard S3 proxy behavior. Custom resolvers (e.g., `SourceCoopResolver` in cf-workers) implement product-specific namespace mapping and auth. Runtimes are thin adapters that pick a resolver and call `handler.handle_request()`.
+- **ProxyBackend trait**: `ProxyHandler<B, R>` is generic over `B: ProxyBackend` and `R: RequestResolver`. The backend trait has two methods: `create_store()` returns an `Arc<dyn ObjectStore>` for high-level operations, and `send_raw()` sends pre-signed HTTP requests for multipart operations. Each runtime provides its own implementation:
+  - **Server**: `ServerBackend` uses the default `object_store` HTTP connector (reqwest-based) and reqwest for raw HTTP.
+  - **CF Workers**: `WorkerBackend` uses a custom `FetchConnector` (implementing `object_store::client::HttpConnector`) that bridges the Workers Fetch API to `object_store`, and `web_sys::fetch` for raw HTTP.
+- **Operation dispatch**: The proxy handler dispatches S3 operations to different backends:
+  - **GET** → `store.get_opts()` with Range/If-Match/If-None-Match header parsing; returns `ProxyResponseBody::Stream`.
+  - **HEAD** → `store.head()`; returns metadata headers + empty body.
+  - **PUT** → `store.put()`; request body materialized to `Bytes` by the runtime before calling the handler.
+  - **LIST** → `store.list_with_delimiter()`; builds S3 ListObjectsV2 XML directly from `ListResult` (no XML rewriting needed). `IsTruncated` is always `false` (object_store fetches all pages internally).
+  - **Multipart** (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMultipartUpload) → raw signed HTTP via `backend.send_raw()` + `S3RequestSigner`. These use raw HTTP because `object_store`'s `MultipartUpload` API manages state internally and doesn't expose upload IDs for stateless proxying.
+- **ProxyResponseBody**: A concrete enum (`Stream`, `Bytes`, `Empty`) replacing the old generic `B: BodyStream` type parameter. Runtimes convert this to their native response type at the edge. `Stream` wraps a `BoxStream<'static, Result<Bytes, object_store::Error>>`.
+- **RequestResolver pattern**: The resolver decides what to do with each request (parse, auth, authorize, return proxy action or synthetic response). `DefaultResolver<P: ConfigProvider>` handles standard S3 proxy behavior. Custom resolvers (e.g., `SourceCoopResolver` in cf-workers) implement product-specific namespace mapping and auth. Runtimes are thin adapters that pick a resolver and call `handler.handle_request()`.
 - **MaybeSend pattern**: Core traits use `MaybeSend`/`MaybeSync` (defined in `crates/libs/core/src/maybe_send.rs`) instead of `Send`/`Sync`. On native targets these resolve to `Send`/`Sync`; on `wasm32` they are no-op blanket traits. This allows the CF Workers runtime to use `!Send` JS interop types (`JsValue`, `ReadableStream`, etc.).
+- **FetchConnector** (CF Workers): `crates/runtimes/cf-workers/src/fetch_connector.rs` implements `object_store::client::HttpConnector` and `HttpService` using the Workers Fetch API. Since `worker::Fetch::send()` is `!Send`, each call is wrapped in `spawn_local` with a oneshot channel to bridge back to the `Send` context that `object_store` expects. Response body streaming uses an mpsc channel: a `spawn_local` task reads from the Workers `ByteStream` and sends chunks through the channel, whose receiver is wrapped as an `HttpResponseBody`.
+- **Streaming**: The server runtime now streams GET responses (previously buffered). The CF Workers runtime bridges `object_store`'s `BoxStream<Bytes>` to a JS `ReadableStream` via `TransformStream` — a `spawn_local` task reads Rust stream chunks and writes them to the writable side; the readable side is returned in the Response. Bytes cross the WASM boundary in chunks (lazy, not buffered).
 - **cf-workers is excluded from `default-members`** in the root `Cargo.toml` because WASM types are `!Send` and will fail to compile on native targets. Always use `--target wasm32-unknown-unknown` when working with this crate.
-- **Streaming passthrough**: The CF Workers runtime passes `ReadableStream` bodies through opaquely — bytes never enter Rust memory for GET/PUT requests. The `WorkerBody` enum wraps `Bytes`, `ReadableStream`, or `Empty`.
 - **Config loading** (CF Workers): `PROXY_CONFIG` can be either a JSON string (via `wrangler secret`) or a JS object (via `[vars.PROXY_CONFIG]` table in `wrangler.toml`). Both formats are handled.
-- **List response rewriting**: When a resolver returns `ResolvedAction::Proxy` with a `ListRewrite`, the proxy handler buffers the (small) list XML response and rewrites `<Key>` and `<Prefix>` element values — stripping a backend prefix and optionally prepending a new one. This is handled in `crates/libs/core/src/s3/list_rewrite.rs`.
+- **List response construction**: LIST responses are built directly from `object_store::ListResult` as S3 XML. When a resolver returns a `ListRewrite`, prefix stripping/adding is applied to `ObjectMeta.location` and `common_prefixes` paths before XML generation. The `list_rewrite` module in `crates/libs/core/src/s3/list_rewrite.rs` is retained for backward compatibility.
+
+## Known Limitations
+
+1. **Multipart uses raw HTTP**: `object_store`'s `MultipartUpload` API doesn't expose upload IDs. Multipart operations use `S3RequestSigner` + raw HTTP, which is S3-specific.
+2. **LIST returns all results**: `object_store::list_with_delimiter()` fetches all pages internally. No S3-style pagination (continuation tokens, max-keys truncation). `IsTruncated` is always `false`.
+3. **S3 only**: `BucketConfig` and store creation assume S3. Adding GCS/Azure requires a `backend_type` field and builder dispatch.

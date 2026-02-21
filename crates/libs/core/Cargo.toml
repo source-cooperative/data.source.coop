@@ -28,6 +28,8 @@ hmac.workspace = true
 sha2.workspace = true
 quick-xml.workspace = true
 tracing.workspace = true
+object_store.workspace = true
+futures.workspace = true
 
 # Optional config backend deps
 aws-sdk-dynamodb = { workspace = true, optional = true }

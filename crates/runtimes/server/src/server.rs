@@ -1,11 +1,10 @@
 //! HTTP server using Hyper, wiring everything together.
 
-use crate::body::ServerBody;
-use crate::client::ReqwestBackendClient;
+use crate::body::{build_hyper_response, ServerResponseBody};
+use crate::client::ServerBackend;
 use bytes::Bytes;
-use s3_proxy_core::stream::BodyStream;
 use http::{Request, Response};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Either, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -55,9 +54,9 @@ pub async fn run<P>(config: P, server_config: ServerConfig) -> Result<(), Box<dy
 where
     P: ConfigProvider + Send + Sync + 'static,
 {
-    let client = ReqwestBackendClient::new();
+    let backend = ServerBackend::new();
     let resolver = DefaultResolver::new(config, server_config.virtual_host_domain);
-    let handler = Arc::new(ProxyHandler::new(client, resolver));
+    let handler = Arc::new(ProxyHandler::new(backend, resolver));
 
     let listener = TcpListener::bind(server_config.listen_addr).await?;
     tracing::info!("listening on {}", server_config.listen_addr);
@@ -85,7 +84,7 @@ where
                             let body = Full::new(Bytes::from(format!("Internal error: {}", e)));
                             Ok(Response::builder()
                                 .status(500)
-                                .body(body)
+                                .body(Either::Right(Either::Left(body)))
                                 .unwrap())
                         }
                     }
@@ -104,8 +103,8 @@ where
 
 async fn handle_hyper_request<R>(
     req: Request<Incoming>,
-    handler: &ProxyHandler<ReqwestBackendClient, R>,
-) -> Result<Response<Full<Bytes>>, Box<dyn std::error::Error + Send + Sync>>
+    handler: &ProxyHandler<ServerBackend, R>,
+) -> Result<Response<ServerResponseBody>, Box<dyn std::error::Error + Send + Sync>>
 where
     R: s3_proxy_core::resolver::RequestResolver + Send + Sync,
 {
@@ -115,27 +114,12 @@ where
     let query = uri.query();
     let headers = req.headers().clone();
 
-    // Convert incoming body to ServerBody
+    // Materialize incoming body to Bytes
     let incoming_bytes = req.into_body().collect().await?.to_bytes();
-    let body = ServerBody::from_bytes(incoming_bytes);
 
     let result = handler
-        .handle_request(method, path, query, &headers, body)
+        .handle_request(method, path, query, &headers, incoming_bytes)
         .await;
 
-    // Convert ProxyResult to hyper Response
-    let mut response = Response::builder().status(result.status);
-
-    for (key, value) in result.headers.iter() {
-        response = response.header(key, value);
-    }
-
-    // Get the response body bytes
-    let body_bytes = match result.body {
-        ServerBody::Streaming(resp) => resp.bytes().await.unwrap_or_default(),
-        ServerBody::Full(full) => full.collect().await.map(|c| c.to_bytes()).unwrap_or_default(),
-        ServerBody::Empty(_) => Bytes::new(),
-    };
-
-    Ok(response.body(Full::new(body_bytes))?)
+    build_hyper_response(result)
 }

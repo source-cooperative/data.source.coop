@@ -4,11 +4,9 @@ Tokio/Hyper runtime for the S3 proxy gateway. This is the container-deployment c
 
 ## What This Crate Provides
 
-Three concrete implementations of core traits, plus a server binary:
+A `ProxyBackend` implementation plus a server binary:
 
-**`ServerBody`** — implements `BodyStream` using `http-body-util`. Wraps `Full<Bytes>`, `Empty<Bytes>`, or a streaming `reqwest::Response` for backend responses. Backend response bodies remain as reqwest's streaming type until consumed, avoiding unnecessary buffering.
-
-**`ReqwestBackendClient`** — implements `BackendClient` using `reqwest`. Sends signed requests to backing object stores with connection pooling (`pool_max_idle_per_host = 20`).
+**`ServerBackend`** — implements `ProxyBackend`. Uses `object_store` with its default HTTP connector for high-level operations (GET, HEAD, PUT, LIST) and `reqwest` for raw multipart requests. GET responses stream from `object_store` through Hyper without buffering.
 
 **`server::run()`** — starts a Hyper HTTP server that accepts connections and delegates to `ProxyHandler` with a `DefaultResolver`. Supports both path-style (`/bucket/key`) and virtual-hosted-style (`bucket.s3.example.com/key`) routing via the resolver's `virtual_host_domain` setting.
 
@@ -17,8 +15,8 @@ Three concrete implementations of core traits, plus a server binary:
 ```
 src/
 ├── lib.rs           Crate root
-├── body.rs          ServerBody implementing BodyStream
-├── client.rs        ReqwestBackendClient implementing BackendClient
+├── body.rs          ProxyResponseBody → Hyper streaming response conversion
+├── client.rs        ServerBackend implementing ProxyBackend
 ├── server.rs        Hyper server setup, request routing
 └── bin/
     └── s3-proxy.rs  CLI binary entry point
@@ -98,8 +96,8 @@ impl RequestResolver for MyResolver {
 }
 
 // Then create the handler directly:
-let client = ReqwestBackendClient::new();
-let handler = ProxyHandler::new(client, MyResolver::new());
+let backend = ServerBackend::new();
+let handler = ProxyHandler::new(backend, MyResolver::new());
 
 // Use handler.handle_request() in your Hyper service.
 ```
@@ -108,8 +106,10 @@ See `s3-proxy-cf-workers/src/source_resolver.rs` for a complete example.
 
 ## Streaming Behavior
 
-For **GET/HEAD** responses, the backend response body stays as a `reqwest::Response` (streaming) and is forwarded to the client. The proxy does not buffer the full object in memory.
+For **GET** responses, `object_store` returns a `BoxStream<Bytes>` which is bridged to a Hyper streaming response body. Bytes flow through without buffering the entire object in memory.
 
-For **PUT** request bodies, the current implementation collects the incoming body before forwarding. A follow-up optimization would pipe the incoming Hyper body directly to the reqwest request body using `reqwest::Body::wrap_stream`.
+For **HEAD** responses, only metadata is returned (empty body).
 
-For **multipart uploads**, each part is individually streamed. The `CompleteMultipartUpload` request body (a small XML manifest) is the only body the proxy fully reads and parses.
+For **PUT** request bodies, the incoming Hyper body is collected to `Bytes` before passing to `object_store::put()`.
+
+For **multipart uploads**, operations are sent as raw signed HTTP requests via `reqwest`. The `CompleteMultipartUpload` request body (a small XML manifest) is the only body the proxy fully reads and parses.

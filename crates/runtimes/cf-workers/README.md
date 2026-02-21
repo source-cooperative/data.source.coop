@@ -1,6 +1,6 @@
 # s3-proxy-cf-workers
 
-Cloudflare Workers runtime for the S3 proxy gateway. Deploys the proxy to the edge using Cloudflare's global network, with JS `ReadableStream` passthrough — response bytes from the backing store never touch WASM memory.
+Cloudflare Workers runtime for the S3 proxy gateway. Deploys the proxy to the edge using Cloudflare's global network, using `object_store` with a custom `FetchConnector` that bridges to the Workers Fetch API.
 
 ## How It Works
 
@@ -12,19 +12,20 @@ Client request
        - SOURCE_API_URL set? -> SourceCoopResolver (dynamic Source Cooperative backends)
        - Otherwise           -> DefaultResolver (static PROXY_CONFIG)
     -> ProxyHandler::handle_request() (from s3-proxy-core)
-    -> WorkerBackendClient sends fetch() to backend
-    -> Response returned to client (ReadableStream passthrough)
+    -> object_store (via FetchConnector) or raw fetch for multipart
+    -> ProxyResponseBody converted to worker::Response
 ```
 
-The `WorkerBackendClient` uses the Workers Fetch API for outbound requests. For GET responses, the JS `ReadableStream` from the backend is passed directly to the outbound `Response` — bytes never cross the WASM boundary.
+`WorkerBackend` implements `ProxyBackend` using a custom `FetchConnector` that bridges `object_store` HTTP requests to the Workers Fetch API. Since JS interop types are `!Send`, `spawn_local` + channel patterns are used to bridge to the `Send` context that `object_store` expects. Response body streams are converted to JS `ReadableStream` via `TransformStream` for delivery to clients.
 
 ## Module Overview
 
 ```
 src/
 ├── lib.rs              Worker entry point, request/response conversion (thin adapter)
-├── body.rs             WorkerBody implementing BodyStream (Bytes | ReadableStream | Empty)
-├── client.rs           WorkerBackendClient implementing BackendClient via Fetch API
+├── body.rs             ProxyResponseBody → worker::Response conversion
+├── client.rs           WorkerBackend implementing ProxyBackend, fetch_json helper
+├── fetch_connector.rs  FetchConnector/FetchService bridging object_store to Fetch API
 ├── source_api.rs       HTTP client for the Source Cooperative API
 └── source_resolver.rs  SourceCoopResolver implementing RequestResolver
 ```
@@ -93,7 +94,7 @@ Then add a branch in `lib.rs`:
 ```rust
 if let Ok(my_config) = env.var("MY_MODE") {
     let resolver = MyResolver::new(/* ... */);
-    let handler = ProxyHandler::new(client::WorkerBackendClient, resolver);
+    let handler = ProxyHandler::new(client::WorkerBackend, resolver);
     let result = handler.handle_request(method, &path, query.as_deref(), &headers, body).await;
     return build_worker_response(result);
 }

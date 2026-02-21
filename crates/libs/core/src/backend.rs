@@ -1,46 +1,56 @@
-//! Backend client abstraction for making signed requests to backing object stores.
+//! Backend abstraction for proxying requests to backing object stores.
+//!
+//! [`ProxyBackend`] is the main trait runtimes implement. It provides two
+//! capabilities:
+//!
+//! 1. **`create_store()`** — build an `ObjectStore` for high-level operations
+//!    (GET, HEAD, PUT, LIST) routed through `object_store`.
+//! 2. **`send_raw()`** — send a pre-signed HTTP request for operations not
+//!    covered by `ObjectStore` (multipart uploads).
+//!
+//! [`S3RequestSigner`] is retained for signing multipart requests.
 
 use crate::error::ProxyError;
 use crate::maybe_send::{MaybeSend, MaybeSync};
-use crate::stream::BodyStream;
+use bytes::Bytes;
 use http::HeaderMap;
+use object_store::ObjectStore;
 use std::future::Future;
+use std::sync::Arc;
 
-/// A fully prepared request to send to a backend object store.
-#[derive(Debug)]
-pub struct BackendRequest<B> {
-    pub method: http::Method,
-    pub url: String,
-    pub headers: HeaderMap,
-    pub body: B,
-}
+use crate::types::BucketConfig;
 
-/// The response from a backend object store.
-pub struct BackendResponse<B> {
-    pub status: u16,
-    pub headers: HeaderMap,
-    pub body: B,
-}
-
-/// Trait for making outbound HTTP requests to backing object stores.
+/// Trait for runtime-specific backend operations.
 ///
 /// Each runtime provides its own implementation:
-/// - Server runtime: uses `hyper` client with native async streaming
-/// - Worker runtime: uses the Fetch API, keeping JS `ReadableStream` intact
-///
-/// The body type `B` is the runtime's native stream type. This ensures
-/// zero-copy passthrough: the proxy never materializes the full response
-/// body in memory.
-pub trait BackendClient: MaybeSend + MaybeSync + 'static {
-    type Body: BodyStream;
+/// - Server runtime: uses `reqwest` for raw HTTP, default `object_store` HTTP connector
+/// - Worker runtime: uses `web_sys::fetch` for raw HTTP, custom `FetchConnector` for `object_store`
+pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
+    /// Create an `ObjectStore` for the given bucket configuration.
+    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError>;
 
-    fn send_request(
+    /// Send a raw HTTP request (used for multipart operations that
+    /// `ObjectStore` doesn't expose at the right abstraction level).
+    fn send_raw(
         &self,
-        request: BackendRequest<Self::Body>,
-    ) -> impl Future<Output = Result<BackendResponse<Self::Body>, ProxyError>> + MaybeSend;
+        method: http::Method,
+        url: String,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> impl Future<Output = Result<RawResponse, ProxyError>> + MaybeSend;
+}
+
+/// Response from a raw HTTP request to a backend.
+pub struct RawResponse {
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: Bytes,
 }
 
 /// Helper to build a signed URL + headers for an outbound request to S3.
+///
+/// Used for multipart operations (CreateMultipartUpload, UploadPart,
+/// CompleteMultipartUpload, AbortMultipartUpload) that go through raw HTTP.
 pub struct S3RequestSigner {
     pub access_key_id: String,
     pub secret_access_key: String,

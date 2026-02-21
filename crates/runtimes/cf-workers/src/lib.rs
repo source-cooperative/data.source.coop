@@ -1,21 +1,18 @@
 //! Cloudflare Workers runtime for the S3 proxy gateway.
 //!
 //! This crate provides implementations of core traits using Cloudflare Workers
-//! primitives. The key advantage: response bodies from backend object stores
-//! remain as JS `ReadableStream` objects throughout the proxy pipeline, avoiding
-//! any conversion to/from Rust byte streams.
+//! primitives. Response bodies from `object_store` are bridged from Rust
+//! `Stream<Bytes>` to JS `ReadableStream` via a `TransformStream`.
 //!
 //! # Architecture
 //!
 //! ```text
 //! Client -> Worker (JS Request)
 //!   -> resolve request (core resolver or Source Cooperative resolver)
-//!   -> fetch from backend (JS Fetch API -> JS Response with ReadableStream body)
-//!   -> return JS Response with ReadableStream body directly
+//!   -> object_store operation (via FetchConnector -> Fetch API)
+//!   -> ProxyResponseBody::Stream -> TransformStream -> JS ReadableStream
+//!   -> return JS Response
 //! ```
-//!
-//! The body bytes never touch Rust memory for GET requests. This is the primary
-//! performance advantage of the multi-runtime architecture.
 //!
 //! # Configuration
 //!
@@ -27,15 +24,15 @@
 
 mod body;
 mod client;
+mod fetch_connector;
 mod source_api;
 mod source_resolver;
 mod tracing_layer;
 
-use body::WorkerBody;
+use body::build_worker_response;
 use s3_proxy_core::config::static_file::{StaticConfig, StaticProvider};
 use s3_proxy_core::proxy::ProxyHandler;
 use s3_proxy_core::resolver::DefaultResolver;
-use s3_proxy_core::stream::BodyStream;
 use worker::*;
 
 /// The Worker entry point.
@@ -58,11 +55,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let query = url.query().map(|q| q.to_string());
     let headers = convert_headers(&req);
 
-    // Extract the request body as a JS ReadableStream — zero CPU cost.
+    // Materialize request body to Bytes for PUT/POST, empty for others
     let body = if matches!(method, http::Method::PUT | http::Method::POST) {
-        WorkerBody::from_ws_request(req.inner())
+        read_request_body(&req).await?
     } else {
-        WorkerBody::empty()
+        bytes::Bytes::new()
     };
 
     // Source Cooperative API mode: when SOURCE_API_URL is set, resolve backends
@@ -108,7 +105,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         let api_client =
             source_api::SourceApiClient::new(source_api_url.to_string(), source_api_key, cache_ttls);
         let resolver = source_resolver::SourceCoopResolver::new(api_client);
-        let handler = ProxyHandler::new(client::WorkerBackendClient, resolver);
+        let handler = ProxyHandler::new(client::WorkerBackend, resolver);
 
         let result = handler
             .handle_request(method, &path, query.as_deref(), &headers, body)
@@ -136,7 +133,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     let virtual_host_domain = env.var("VIRTUAL_HOST_DOMAIN").ok().map(|v| v.to_string());
     let resolver = DefaultResolver::new(config, virtual_host_domain);
-    let handler = ProxyHandler::new(client::WorkerBackendClient, resolver);
+    let handler = ProxyHandler::new(client::WorkerBackend, resolver);
 
     let result = handler
         .handle_request(method, &path, query.as_deref(), &headers, body)
@@ -147,54 +144,27 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
-/// Build a `worker::Response` from a `ProxyResult`, preserving stream bodies.
-fn build_worker_response(
-    result: s3_proxy_core::proxy::ProxyResult<WorkerBody>,
-) -> Result<Response> {
-    match result.body {
-        WorkerBody::Stream(stream) => {
-            let ws_headers = web_sys::Headers::new()
-                .map_err(|e| worker::Error::RustError(format!("headers error: {:?}", e)))?;
-            for (key, value) in result.headers.iter() {
-                if let Ok(v) = value.to_str() {
-                    let _ = ws_headers.set(key.as_str(), v);
-                }
-            }
+/// Read a Worker request body into Bytes.
+async fn read_request_body(req: &Request) -> Result<bytes::Bytes> {
+    // Extract body as ReadableStream, consume to bytes
+    let ws_request = req.inner();
+    match ws_request.body() {
+        Some(stream) => {
+            let response = web_sys::Response::new_with_opt_readable_stream(Some(&stream))
+                .map_err(|e| worker::Error::RustError(format!("failed to wrap stream: {:?}", e)))?;
 
-            let init = web_sys::ResponseInit::new();
-            init.set_status(result.status);
-            init.set_headers(&ws_headers.into());
+            let array_buffer_promise = response
+                .array_buffer()
+                .map_err(|e| worker::Error::RustError(format!("failed to get arrayBuffer: {:?}", e)))?;
 
-            let ws_response =
-                web_sys::Response::new_with_opt_readable_stream_and_init(Some(&stream), &init)
-                    .map_err(|e| {
-                        worker::Error::RustError(format!("failed to build response: {:?}", e))
-                    })?;
+            let array_buffer = wasm_bindgen_futures::JsFuture::from(array_buffer_promise)
+                .await
+                .map_err(|e| worker::Error::RustError(format!("failed to read arrayBuffer: {:?}", e)))?;
 
-            Ok(ws_response.into())
+            let uint8 = js_sys::Uint8Array::new(&array_buffer);
+            Ok(bytes::Bytes::from(uint8.to_vec()))
         }
-        WorkerBody::Bytes(b) => {
-            let resp_headers = Headers::new();
-            for (key, value) in result.headers.iter() {
-                if let Ok(v) = value.to_str() {
-                    let _ = resp_headers.set(key.as_str(), v);
-                }
-            }
-            Ok(Response::from_bytes(b.to_vec())?
-                .with_status(result.status)
-                .with_headers(resp_headers))
-        }
-        WorkerBody::Empty => {
-            let resp_headers = Headers::new();
-            for (key, value) in result.headers.iter() {
-                if let Ok(v) = value.to_str() {
-                    let _ = resp_headers.set(key.as_str(), v);
-                }
-            }
-            Ok(Response::from_bytes(vec![])?
-                .with_status(result.status)
-                .with_headers(resp_headers))
-        }
+        None => Ok(bytes::Bytes::new()),
     }
 }
 

@@ -20,6 +20,11 @@ thiserror.workspace = true
 chrono.workspace = true
 quick-xml.workspace = true
 url.workspace = true
+object_store.workspace = true
+futures.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+async-trait.workspace = true
 
 # Cloudflare Workers SDK
 worker = "0.7"
@@ -35,4 +40,13 @@ web-sys = { version = "0.3", features = [
     "ResponseInit",
 ] }
 console_error_panic_hook = "0.1.7"
-getrandom = { version = "0.2", features = ["js"] }
+
+[dependencies.getrandom_v02]
+package = "getrandom"
+version = "0.2"
+features = ["js"]
+
+[dependencies.getrandom_v03]
+package = "getrandom"
+version = "0.3"
+features = ["wasm_js"]

@@ -7,6 +7,9 @@ pub enum ProxyError {
     #[error("bucket not found: {0}")]
     BucketNotFound(String),
 
+    #[error("no such key: {0}")]
+    NoSuchKey(String),
+
     #[error("access denied")]
     AccessDenied,
 
@@ -31,6 +34,12 @@ pub enum ProxyError {
     #[error("backend error: {0}")]
     BackendError(String),
 
+    #[error("precondition failed")]
+    PreconditionFailed,
+
+    #[error("not modified")]
+    NotModified,
+
     #[error("config error: {0}")]
     ConfigError(String),
 
@@ -43,6 +52,7 @@ impl ProxyError {
     pub fn s3_error_code(&self) -> &'static str {
         match self {
             Self::BucketNotFound(_) => "NoSuchBucket",
+            Self::NoSuchKey(_) => "NoSuchKey",
             Self::AccessDenied => "AccessDenied",
             Self::SignatureDoesNotMatch => "SignatureDoesNotMatch",
             Self::InvalidRequest(_) => "InvalidRequest",
@@ -51,6 +61,8 @@ impl ProxyError {
             Self::InvalidOidcToken(_) => "InvalidIdentityToken",
             Self::RoleNotFound(_) => "AccessDenied",
             Self::BackendError(_) => "InternalError",
+            Self::PreconditionFailed => "PreconditionFailed",
+            Self::NotModified => "NotModified",
             Self::ConfigError(_) => "InternalError",
             Self::Internal(_) => "InternalError",
         }
@@ -59,13 +71,25 @@ impl ProxyError {
     /// HTTP status code for this error.
     pub fn status_code(&self) -> u16 {
         match self {
-            Self::BucketNotFound(_) => 404,
+            Self::BucketNotFound(_) | Self::NoSuchKey(_) => 404,
             Self::AccessDenied | Self::MissingAuth | Self::ExpiredCredentials => 403,
             Self::SignatureDoesNotMatch => 403,
             Self::InvalidRequest(_) => 400,
             Self::InvalidOidcToken(_) => 400,
             Self::RoleNotFound(_) => 403,
+            Self::PreconditionFailed => 412,
+            Self::NotModified => 304,
             Self::BackendError(_) | Self::ConfigError(_) | Self::Internal(_) => 500,
+        }
+    }
+
+    /// Convert an `object_store::Error` into a `ProxyError`.
+    pub fn from_object_store_error(e: object_store::Error) -> Self {
+        match e {
+            object_store::Error::NotFound { path, .. } => Self::NoSuchKey(path),
+            object_store::Error::Precondition { .. } => Self::PreconditionFailed,
+            object_store::Error::NotModified { .. } => Self::NotModified,
+            _ => Self::BackendError(e.to_string()),
         }
     }
 }

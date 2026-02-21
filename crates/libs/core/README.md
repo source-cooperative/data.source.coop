@@ -8,11 +8,9 @@ The proxy needs to run on fundamentally different runtimes: Tokio/Hyper in conta
 
 ## Key Abstractions
 
-The core defines four trait boundaries that runtime crates implement:
+The core defines three trait boundaries that runtime crates implement:
 
-**`BodyStream`** — A streaming body type. The core almost never reads body bytes; it passes them through opaquely from client to backend and back. Each runtime provides its own type (Hyper's `Body`, JS `ReadableStream`, etc.).
-
-**`BackendClient`** — Makes signed outbound HTTP requests to backing object stores. The server runtime uses `reqwest`; the worker runtime uses the JS Fetch API.
+**`ProxyBackend`** — Creates `object_store` instances for high-level S3 operations (GET, HEAD, PUT, LIST) and provides a `send_raw()` method for multipart operations that require signed HTTP requests. The server runtime uses `object_store`'s default HTTP connector + reqwest; the worker runtime uses a custom `FetchConnector` that bridges to the JS Fetch API.
 
 **`ConfigProvider`** — Retrieves bucket, role, and credential configuration. Ships with four implementations behind feature flags:
 
@@ -34,7 +32,7 @@ Any provider can be wrapped with `CachedProvider` for in-memory TTL caching.
 ```
 src/
 ├── auth.rs          SigV4 verification, identity resolution, authorization
-├── backend.rs       BackendClient trait, S3RequestSigner, outbound SigV4 signing
+├── backend.rs       ProxyBackend trait, S3RequestSigner (multipart), RawResponse
 ├── config/
 │   ├── mod.rs       ConfigProvider trait definition
 │   ├── cached.rs    TTL caching wrapper for any provider
@@ -49,13 +47,13 @@ src/
 │   ├── request.rs   Parse incoming HTTP → S3Operation enum
 │   ├── response.rs  Serialize S3 XML responses
 │   └── list_rewrite.rs  Rewrite <Key>/<Prefix> values in list response XML
-├── stream.rs        BodyStream trait
+├── response_body.rs ProxyResponseBody enum (Stream, Bytes, Empty)
 └── types.rs         BucketConfig, RoleConfig, StoredCredential, etc.
 ```
 
 ## Usage
 
-This crate is not used directly. Runtime crates (`s3-proxy-server`, `s3-proxy-cf-workers`) depend on it and provide concrete trait implementations. If you're building a custom runtime integration, depend on this crate and implement `BodyStream`, `BackendClient`, and optionally `ConfigProvider` or `RequestResolver`.
+This crate is not used directly. Runtime crates (`s3-proxy-server`, `s3-proxy-cf-workers`) depend on it and provide concrete `ProxyBackend` implementations. If you're building a custom runtime integration, depend on this crate and implement `ProxyBackend`, and optionally `ConfigProvider` or `RequestResolver`.
 
 ### Standard usage with a ConfigProvider
 
@@ -66,15 +64,15 @@ use s3_proxy_core::proxy::ProxyHandler;
 use s3_proxy_core::resolver::DefaultResolver;
 use s3_proxy_core::config::static_file::StaticProvider;
 
-let backend_client = MyBackendClient::new();
+let backend = MyBackend::new();
 let config = StaticProvider::from_file("config.toml")?;
 let resolver = DefaultResolver::new(config, Some("s3.example.com".into()));
 
-let handler = ProxyHandler::new(backend_client, resolver);
+let handler = ProxyHandler::new(backend, resolver);
 
 // In your HTTP handler:
 let result = handler.handle_request(method, path, query, &headers, body).await;
-// Convert `result` (ProxyResult<YourBodyType>) to your runtime's HTTP response.
+// Convert `result` (ProxyResult with ProxyResponseBody) to your runtime's HTTP response.
 ```
 
 ### Custom resolver
@@ -103,7 +101,7 @@ impl RequestResolver for MyResolver {
     }
 }
 
-let handler = ProxyHandler::new(backend_client, MyResolver::new());
+let handler = ProxyHandler::new(backend, MyResolver::new());
 ```
 
 See `s3-proxy-cf-workers/src/source_resolver.rs` for a real-world example that maps a `/{account}/{repo}/{key}` namespace to dynamically-resolved S3 backends with external API authorization.

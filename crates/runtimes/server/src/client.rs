@@ -1,19 +1,24 @@
-//! Backend client using reqwest for outbound HTTP requests.
+//! Server backend using reqwest for raw HTTP and default object_store connector.
 
-use crate::body::ServerBody;
-use s3_proxy_core::backend::{BackendClient, BackendRequest, BackendResponse};
+use bytes::Bytes;
+use http::HeaderMap;
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
+use s3_proxy_core::backend::{ProxyBackend, RawResponse};
 use s3_proxy_core::error::ProxyError;
+use s3_proxy_core::types::BucketConfig;
+use std::sync::Arc;
 
-/// Backend client that uses `reqwest` to make outbound requests.
+/// Backend for the Tokio/Hyper server runtime.
 ///
-/// This keeps the response body as a `reqwest::Response` which can be
-/// streamed back to the client without buffering.
+/// Uses reqwest for raw HTTP (multipart operations) and the default
+/// object_store HTTP connector for high-level operations.
 #[derive(Clone)]
-pub struct ReqwestBackendClient {
+pub struct ServerBackend {
     client: reqwest::Client,
 }
 
-impl ReqwestBackendClient {
+impl ServerBackend {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::builder()
@@ -24,70 +29,72 @@ impl ReqwestBackendClient {
     }
 }
 
-impl Default for ReqwestBackendClient {
+impl Default for ServerBackend {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BackendClient for ReqwestBackendClient {
-    type Body = ServerBody;
+impl ProxyBackend for ServerBackend {
+    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
+        let mut builder = AmazonS3Builder::new()
+            .with_endpoint(&config.backend_endpoint)
+            .with_bucket_name(&config.backend_bucket)
+            .with_region(&config.backend_region);
 
-    async fn send_request(
+        if !config.backend_access_key_id.is_empty() {
+            builder = builder
+                .with_access_key_id(&config.backend_access_key_id)
+                .with_secret_access_key(&config.backend_secret_access_key);
+        } else {
+            builder = builder.with_skip_signature(true);
+        }
+
+        Ok(Arc::new(
+            builder
+                .build()
+                .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
+        ))
+    }
+
+    async fn send_raw(
         &self,
-        request: BackendRequest<ServerBody>,
-    ) -> Result<BackendResponse<ServerBody>, ProxyError> {
+        method: http::Method,
+        url: String,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Result<RawResponse, ProxyError> {
         tracing::debug!(
-            method = %request.method,
-            url = %request.url,
-            "server: sending backend request via reqwest"
+            method = %method,
+            url = %url,
+            "server: sending raw backend request via reqwest"
         );
 
-        let mut req_builder = self.client.request(request.method, &request.url);
+        let mut req_builder = self.client.request(method, &url);
 
-        // Set headers
-        for (key, value) in request.headers.iter() {
+        for (key, value) in headers.iter() {
             req_builder = req_builder.header(key, value);
         }
 
-        // Set body
-        req_builder = match request.body {
-            ServerBody::Full(full) => {
-                use http_body_util::BodyExt;
-                let bytes = full
-                    .collect()
-                    .await
-                    .map_err(|e| ProxyError::BackendError(e.to_string()))?
-                    .to_bytes();
-                req_builder.body(bytes)
-            }
-            ServerBody::Empty(_) => req_builder,
-            ServerBody::Streaming(resp) => {
-                let bytes = resp
-                    .bytes()
-                    .await
-                    .map_err(|e| ProxyError::BackendError(e.to_string()))?;
-                req_builder.body(bytes)
-            }
-        };
+        if !body.is_empty() {
+            req_builder = req_builder.body(body);
+        }
 
-        let response = req_builder
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "reqwest backend request failed");
-                ProxyError::BackendError(e.to_string())
-            })?;
+        let response = req_builder.send().await.map_err(|e| {
+            tracing::error!(error = %e, "reqwest raw request failed");
+            ProxyError::BackendError(e.to_string())
+        })?;
 
         let status = response.status().as_u16();
-        let headers = response.headers().clone();
+        let resp_headers = response.headers().clone();
+        let resp_body = response.bytes().await.map_err(|e| {
+            ProxyError::BackendError(format!("failed to read raw response body: {}", e))
+        })?;
 
-        tracing::debug!(status = status, "server: backend response received");
-
-        Ok(BackendResponse {
+        Ok(RawResponse {
             status,
-            headers,
-            body: ServerBody::Streaming(response),
+            headers: resp_headers,
+            body: resp_body,
         })
     }
 }
