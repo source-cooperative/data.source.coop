@@ -8,7 +8,9 @@ use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLO
 use crate::error::ProxyError;
 use crate::resolver::{ListRewrite, ResolvedAction, RequestResolver};
 use crate::response_body::ProxyResponseBody;
-use crate::s3::response::ErrorResponse;
+use crate::s3::response::{
+    ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents,
+};
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
@@ -555,52 +557,44 @@ fn build_list_xml(
         format!("{}/", backend_prefix)
     };
 
-    let mut xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
-         <ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\
-         <Name>{}</Name>\
-         <Prefix>{}</Prefix>\
-         <Delimiter>{}</Delimiter>\
-         <MaxKeys>1000</MaxKeys>\
-         <IsTruncated>false</IsTruncated>\
-         <KeyCount>{}</KeyCount>",
-        bucket_name,
-        client_prefix,
-        delimiter,
-        list_result.objects.len() + list_result.common_prefixes.len()
-    );
+    let contents: Vec<ListContents> = list_result
+        .objects
+        .iter()
+        .map(|obj| {
+            let raw_key = obj.location.to_string();
+            ListContents {
+                key: rewrite_key(&raw_key, &strip_prefix, list_rewrite),
+                last_modified: obj.last_modified.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                etag: obj.e_tag.as_deref().unwrap_or("\"\"").to_string(),
+                size: obj.size,
+                storage_class: "STANDARD",
+            }
+        })
+        .collect();
 
-    for obj in &list_result.objects {
-        let raw_key = obj.location.to_string();
-        let key = rewrite_key(&raw_key, &strip_prefix, list_rewrite);
+    let common_prefixes: Vec<ListCommonPrefix> = list_result
+        .common_prefixes
+        .iter()
+        .map(|p| {
+            let raw_prefix = format!("{}/", p);
+            ListCommonPrefix {
+                prefix: rewrite_key(&raw_prefix, &strip_prefix, list_rewrite),
+            }
+        })
+        .collect();
 
-        let last_modified = obj.last_modified.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-        let etag = obj.e_tag.as_deref().unwrap_or("\"\"");
-
-        xml.push_str(&format!(
-            "<Contents>\
-             <Key>{}</Key>\
-             <LastModified>{}</LastModified>\
-             <ETag>{}</ETag>\
-             <Size>{}</Size>\
-             <StorageClass>STANDARD</StorageClass>\
-             </Contents>",
-            key, last_modified, etag, obj.size
-        ));
+    ListBucketResult {
+        xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+        name: bucket_name.to_string(),
+        prefix: client_prefix.to_string(),
+        delimiter: delimiter.to_string(),
+        max_keys: 1000,
+        is_truncated: false,
+        key_count: contents.len() + common_prefixes.len(),
+        contents,
+        common_prefixes,
     }
-
-    for prefix_path in &list_result.common_prefixes {
-        let raw_prefix = format!("{}/", prefix_path);
-        let prefix = rewrite_key(&raw_prefix, &strip_prefix, list_rewrite);
-
-        xml.push_str(&format!(
-            "<CommonPrefixes><Prefix>{}</Prefix></CommonPrefixes>",
-            prefix
-        ));
-    }
-
-    xml.push_str("</ListBucketResult>");
-    xml
+    .to_xml()
 }
 
 /// Apply strip/add prefix rewriting to a key or prefix value.

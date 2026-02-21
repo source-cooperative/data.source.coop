@@ -138,6 +138,59 @@ impl ListAllMyBucketsResult {
     }
 }
 
+/// S3 ListObjectsV2 response.
+#[derive(Debug, Serialize)]
+#[serde(rename = "ListBucketResult")]
+pub struct ListBucketResult {
+    #[serde(rename = "@xmlns")]
+    pub xmlns: &'static str,
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Prefix")]
+    pub prefix: String,
+    #[serde(rename = "Delimiter")]
+    pub delimiter: String,
+    #[serde(rename = "MaxKeys")]
+    pub max_keys: usize,
+    #[serde(rename = "IsTruncated")]
+    pub is_truncated: bool,
+    #[serde(rename = "KeyCount")]
+    pub key_count: usize,
+    #[serde(rename = "Contents", default)]
+    pub contents: Vec<ListContents>,
+    #[serde(rename = "CommonPrefixes", default)]
+    pub common_prefixes: Vec<ListCommonPrefix>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListContents {
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "LastModified")]
+    pub last_modified: String,
+    #[serde(rename = "ETag")]
+    pub etag: String,
+    #[serde(rename = "Size")]
+    pub size: u64,
+    #[serde(rename = "StorageClass")]
+    pub storage_class: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListCommonPrefix {
+    #[serde(rename = "Prefix")]
+    pub prefix: String,
+}
+
+impl ListBucketResult {
+    pub fn to_xml(&self) -> String {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}",
+            xml_to_string(self).unwrap_or_default()
+        )
+    }
+}
+
 /// STS AssumeRoleWithWebIdentity response.
 #[derive(Debug, Serialize)]
 #[serde(rename = "AssumeRoleWithWebIdentityResponse")]
@@ -180,5 +233,61 @@ impl AssumeRoleWithWebIdentityResponse {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}",
             xml_to_string(self).unwrap_or_default()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_bucket_result_xml() {
+        let result = ListBucketResult {
+            xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+            name: "my-bucket".to_string(),
+            prefix: "photos/".to_string(),
+            delimiter: "/".to_string(),
+            max_keys: 1000,
+            is_truncated: false,
+            key_count: 1,
+            contents: vec![ListContents {
+                key: "photos/image.jpg".to_string(),
+                last_modified: "2024-01-01T00:00:00.000Z".to_string(),
+                etag: "\"abc123\"".to_string(),
+                size: 1024,
+                storage_class: "STANDARD",
+            }],
+            common_prefixes: vec![ListCommonPrefix {
+                prefix: "photos/thumbs/".to_string(),
+            }],
+        };
+
+        let xml = result.to_xml();
+        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(xml.contains("<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"));
+        assert!(xml.contains("<Name>my-bucket</Name>"));
+        assert!(xml.contains("<Key>photos/image.jpg</Key>"));
+        assert!(xml.contains("<Size>1024</Size>"));
+        assert!(xml.contains("<CommonPrefixes><Prefix>photos/thumbs/</Prefix></CommonPrefixes>"));
+    }
+
+    #[test]
+    fn test_list_bucket_result_empty() {
+        let result = ListBucketResult {
+            xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+            name: "bucket".to_string(),
+            prefix: String::new(),
+            delimiter: "/".to_string(),
+            max_keys: 1000,
+            is_truncated: false,
+            key_count: 0,
+            contents: vec![],
+            common_prefixes: vec![],
+        };
+
+        let xml = result.to_xml();
+        assert!(xml.contains("<KeyCount>0</KeyCount>"));
+        assert!(!xml.contains("<Contents>"));
+        assert!(!xml.contains("<CommonPrefixes>"));
     }
 }
