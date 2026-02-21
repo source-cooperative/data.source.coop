@@ -2,6 +2,8 @@
 
 Multi-runtime S3 gateway proxy in Rust. Proxies S3-compatible API requests to backend object stores with authentication, authorization, and streaming passthrough. Uses the `object_store` crate for high-level operations (GET, HEAD, PUT, LIST) and raw signed HTTP for multipart uploads.
 
+The intention of this codebase is to serve as a data proxy for the Source Cooperative. However, it should be structured in a way for others to use and build upon for their individual proxy needs. As such, a modular approach should be utilized to enable others to compose similar but different sytems.
+
 ## Workspace Structure
 
 - `crates/libs/core` — Core proxy logic, traits, config, S3 request parsing
