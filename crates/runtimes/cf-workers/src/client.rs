@@ -2,25 +2,19 @@
 //!
 //! Contains:
 //! - `WorkerBackend` — implements `ProxyBackend` using the Fetch API + FetchConnector
-//! - `fetch_json` — helper for server-to-server API calls (used by `source_api`)
+//! - `WorkerHttpClient` — implements `HttpClient` for server-to-server API calls
 
 use crate::fetch_connector::FetchConnector;
 use bytes::Bytes;
 use http::HeaderMap;
-use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{ProxyBackend, RawResponse};
+use s3_proxy_core::backend::{build_object_store, ProxyBackend, RawResponse, StoreBuilder};
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::BucketConfig;
+use s3_proxy_source_coop::api::{CacheOptions, HttpClient};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use worker::{Cache, Fetch};
-
-/// Options for Cache API caching.
-pub(crate) struct CacheOptions {
-    pub cache_ttl: u32,
-    pub cache_key: Option<String>,
-}
 
 /// Build the cache key URL for the Cache API.
 ///
@@ -33,82 +27,86 @@ fn cache_key_url(url: &str, opts: &CacheOptions) -> String {
     }
 }
 
-/// Fetch a URL and deserialize the JSON response body.
+/// HTTP client for the Cloudflare Workers runtime.
 ///
-/// Used by `source_api` for server-to-server calls to the Source Cooperative API.
-/// When `cache` is provided, responses are cached using the Cloudflare Workers
-/// Cache API with explicit `cache.get()` / `cache.put()` calls.
-pub(crate) async fn fetch_json<T: DeserializeOwned>(
-    url: &str,
-    headers: &[(&str, &str)],
-    cache: Option<&CacheOptions>,
-) -> Result<T, ProxyError> {
-    // Check cache for a hit before making the request.
-    let cache_state = if let Some(opts) = cache {
-        let key = cache_key_url(url, opts);
-        let cf_cache = Cache::default();
-        match cf_cache.get(&key, false).await {
-            Ok(Some(mut cached)) => {
-                if let Ok(text) = cached.text().await {
-                    if let Ok(value) = serde_json::from_str(&text) {
-                        return Ok(value);
+/// Uses the Workers Fetch API for requests and the Cache API for caching.
+#[derive(Clone)]
+pub struct WorkerHttpClient;
+
+impl HttpClient for WorkerHttpClient {
+    async fn fetch_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        cache: Option<&CacheOptions>,
+    ) -> Result<T, ProxyError> {
+        // Check cache for a hit before making the request.
+        let cache_state = if let Some(opts) = cache {
+            let key = cache_key_url(url, opts);
+            let cf_cache = Cache::default();
+            match cf_cache.get(&key, false).await {
+                Ok(Some(mut cached)) => {
+                    if let Ok(text) = cached.text().await {
+                        if let Ok(value) = serde_json::from_str(&text) {
+                            return Ok(value);
+                        }
                     }
+                    // Cache hit but couldn't deserialize — fall through to fetch.
+                    Some((cf_cache, key))
                 }
-                // Cache hit but couldn't deserialize — fall through to fetch.
-                Some((cf_cache, key))
+                _ => Some((cf_cache, key)),
             }
-            _ => Some((cf_cache, key)),
+        } else {
+            None
+        };
+
+        // Build and execute the fetch request.
+        let mut req_init = worker::RequestInit::new();
+        let worker_headers = worker::Headers::new();
+        for (k, v) in headers {
+            worker_headers
+                .set(k, v)
+                .map_err(|e| ProxyError::Internal(format!("failed to set header: {}", e)))?;
         }
-    } else {
-        None
-    };
+        req_init.with_headers(worker_headers);
 
-    // Build and execute the fetch request.
-    let mut req_init = worker::RequestInit::new();
-    let worker_headers = worker::Headers::new();
-    for (k, v) in headers {
-        worker_headers
-            .set(k, v)
-            .map_err(|e| ProxyError::Internal(format!("failed to set header: {}", e)))?;
-    }
-    req_init.with_headers(worker_headers);
+        let req = worker::Request::new_with_init(url, &req_init)
+            .map_err(|e| ProxyError::Internal(format!("failed to create request: {}", e)))?;
 
-    let req = worker::Request::new_with_init(url, &req_init)
-        .map_err(|e| ProxyError::Internal(format!("failed to create request: {}", e)))?;
+        let mut resp = Fetch::Request(req)
+            .send()
+            .await
+            .map_err(|e| ProxyError::BackendError(format!("fetch failed: {}", e)))?;
 
-    let mut resp = Fetch::Request(req)
-        .send()
-        .await
-        .map_err(|e| ProxyError::BackendError(format!("fetch failed: {}", e)))?;
+        let status = resp.status_code();
 
-    let status = resp.status_code();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ProxyError::Internal(format!("failed to read text: {}", e)))?;
 
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("failed to read text: {}", e)))?;
-
-    if status < 200 || status >= 300 {
-        return Err(ProxyError::BackendError(format!(
-            "API request to {} returned status {}",
-            url, status
-        )));
-    }
-
-    // Cache successful responses via the Cache API.
-    if let Some((cf_cache, key)) = cache_state {
-        let ttl = cache.unwrap().cache_ttl;
-        if let Ok(mut response) = worker::Response::ok(&text) {
-            let _ = response
-                .headers_mut()
-                .set("Cache-Control", &format!("max-age={}", ttl));
-            // cache.put is fire-and-forget; ignore errors.
-            let _ = cf_cache.put(&key, response).await;
+        if status < 200 || status >= 300 {
+            return Err(ProxyError::BackendError(format!(
+                "API request to {} returned status {}",
+                url, status
+            )));
         }
-    }
 
-    serde_json::from_str(&text)
-        .map_err(|e| ProxyError::Internal(format!("failed to deserialize response: {}", e)))
+        // Cache successful responses via the Cache API.
+        if let Some((cf_cache, key)) = cache_state {
+            let ttl = cache.unwrap().cache_ttl;
+            if let Ok(mut response) = worker::Response::ok(&text) {
+                let _ = response
+                    .headers_mut()
+                    .set("Cache-Control", &format!("max-age={}", ttl));
+                // cache.put is fire-and-forget; ignore errors.
+                let _ = cf_cache.put(&key, response).await;
+            }
+        }
+
+        serde_json::from_str(&text)
+            .map_err(|e| ProxyError::Internal(format!("failed to deserialize response: {}", e)))
+    }
 }
 
 /// Backend for the Cloudflare Workers runtime.
@@ -120,25 +118,9 @@ pub struct WorkerBackend;
 
 impl ProxyBackend for WorkerBackend {
     fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
-        let mut builder = AmazonS3Builder::new()
-            .with_endpoint(&config.backend_endpoint)
-            .with_bucket_name(&config.backend_bucket)
-            .with_region(&config.backend_region)
-            .with_http_connector(FetchConnector);
-
-        if !config.backend_access_key_id.is_empty() {
-            builder = builder
-                .with_access_key_id(&config.backend_access_key_id)
-                .with_secret_access_key(&config.backend_secret_access_key);
-        } else {
-            builder = builder.with_skip_signature(true);
-        }
-
-        Ok(Arc::new(
-            builder
-                .build()
-                .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
-        ))
+        build_object_store(config, |b| match b {
+            StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)),
+        })
     }
 
     async fn send_raw(

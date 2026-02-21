@@ -10,6 +10,8 @@ default = []
 config-dynamodb = ["aws-sdk-dynamodb", "tokio"]
 config-postgres = ["sqlx"]
 config-http = ["reqwest"]
+azure = ["object_store/azure"]
+gcp = ["object_store/gcp"]
 
 [dependencies]
 async-trait.workspace = true

@@ -1,0 +1,135 @@
+{
+    "Items": [
+        {
+            "prefix_template": {
+                "S": "{{repository.account_id}}/{{repository.repository_id}}/"
+            },
+            "details": {
+                "M": {
+                    "base_prefix": {
+                        "S": ""
+                    },
+                    "container_name": {
+                        "S": "mlhub"
+                    },
+                    "region": {
+                        "S": "westeurope"
+                    },
+                    "provider": {
+                        "S": "az"
+                    },
+                    "account_name": {
+                        "S": "radiantearth"
+                    }
+                }
+            },
+            "allowed_data_modes": {
+                "L": [
+                    {
+                        "S": "open"
+                    }
+                ]
+            },
+            "name": {
+                "S": "Azure Open Data (West Europe)"
+            },
+            "read_only": {
+                "BOOL": true
+            },
+            "data_connection_id": {
+                "S": "azure-opendata-west-europe"
+            }
+        },
+        {
+            "prefix_template": {
+                "S": "{{repository.account_id}}/{{repository.repository_id}}/"
+            },
+            "authentication": {
+                "M": {
+                    "type": {
+                        "S": "s3_ecs_task_role"
+                    }
+                }
+            },
+            "details": {
+                "M": {
+                    "bucket": {
+                        "S": "ap-south-1.opendata.source.coop"
+                    },
+                    "base_prefix": {
+                        "S": ""
+                    },
+                    "region": {
+                        "S": "ap-south-1"
+                    },
+                    "provider": {
+                        "S": "s3"
+                    }
+                }
+            },
+            "allowed_data_modes": {
+                "L": [
+                    {
+                        "S": "open"
+                    }
+                ]
+            },
+            "read_only": {
+                "BOOL": false
+            },
+            "name": {
+                "S": "AWS Open Data (AP-South-1)"
+            },
+            "data_connection_id": {
+                "S": "aws-opendata-ap-south-1"
+            }
+        },
+        {
+            "prefix_template": {
+                "S": "{{repository.account_id}}/{{repository.repository_id}}/"
+            },
+            "authentication": {
+                "M": {
+                    "type": {
+                        "S": "s3_ecs_task_role"
+                    }
+                }
+            },
+            "details": {
+                "M": {
+                    "bucket": {
+                        "S": "us-west-2.opendata.source.coop"
+                    },
+                    "base_prefix": {
+                        "S": ""
+                    },
+                    "region": {
+                        "S": "us-west-2"
+                    },
+                    "provider": {
+                        "S": "s3"
+                    }
+                }
+            },
+            "allowed_data_modes": {
+                "L": [
+                    {
+                        "S": "open"
+                    }
+                ]
+            },
+            "read_only": {
+                "BOOL": false
+            },
+            "name": {
+                "S": "AWS Open Data (US-West-2)"
+            },
+            "data_connection_id": {
+                "S": "aws-opendata-us-west-2"
+            }
+        }
+    ],
+    "Count": 3,
+    "ScannedCount": 3,
+    "ConsumedCapacity": null
+}

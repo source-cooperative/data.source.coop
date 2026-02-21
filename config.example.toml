@@ -7,39 +7,59 @@
 # Virtual Buckets
 # =============================================================================
 
-# A publicly accessible bucket (anonymous reads allowed)
+# A publicly accessible S3 bucket (anonymous reads allowed)
 [[buckets]]
 name = "public-data"
-backend_endpoint = "https://s3.us-east-1.amazonaws.com"
-backend_bucket = "my-company-public-assets"
-backend_region = "us-east-1"
-backend_access_key_id = "AKIAIOSFODNN7EXAMPLE"
-backend_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+backend_type = "s3"
 anonymous_access = true
 allowed_roles = []
 
-# A private bucket backed by MinIO
+[buckets.backend_options]
+endpoint = "https://s3.us-east-1.amazonaws.com"
+bucket_name = "my-company-public-assets"
+region = "us-east-1"
+access_key_id = "AKIAIOSFODNN7EXAMPLE"
+secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+# A private S3 bucket backed by MinIO
 [[buckets]]
 name = "ml-artifacts"
-backend_endpoint = "https://minio.internal:9000"
-backend_bucket = "ml-pipeline-artifacts"
+backend_type = "s3"
 backend_prefix = "v2"
-backend_region = "us-east-1"
-backend_access_key_id = "minioadmin"
-backend_secret_access_key = "minioadmin"
 anonymous_access = false
 allowed_roles = ["github-actions-deployer"]
 
-# Another private bucket on a different S3-compatible service
+[buckets.backend_options]
+endpoint = "https://minio.internal:9000"
+bucket_name = "ml-pipeline-artifacts"
+region = "us-east-1"
+access_key_id = "minioadmin"
+secret_access_key = "minioadmin"
+
+# An S3 bucket on a different region
 [[buckets]]
 name = "deploy-bundles"
-backend_endpoint = "https://s3.us-west-2.amazonaws.com"
-backend_bucket = "prod-deploy-bundles"
-backend_region = "us-west-2"
-backend_access_key_id = "AKIAI44QH8DHBEXAMPLE"
-backend_secret_access_key = "je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY"
+backend_type = "s3"
 anonymous_access = false
 allowed_roles = ["github-actions-deployer", "ci-readonly"]
+
+[buckets.backend_options]
+endpoint = "https://s3.us-west-2.amazonaws.com"
+bucket_name = "prod-deploy-bundles"
+region = "us-west-2"
+access_key_id = "AKIAI44QH8DHBEXAMPLE"
+secret_access_key = "je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY"
+
+# An Azure Blob Storage backend
+[[buckets]]
+name = "azure-data"
+backend_type = "az"
+anonymous_access = true
+allowed_roles = []
+
+[buckets.backend_options]
+account_name = "mystorageaccount"
+container_name = "public-datasets"
 
 # =============================================================================
 # IAM Roles (for STS AssumeRoleWithWebIdentity)

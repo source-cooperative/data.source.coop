@@ -15,44 +15,54 @@ roles = []
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
 anonymous_access = true
-backend_access_key_id = "minioadmin"
-backend_bucket = "public-data"
-backend_endpoint = "http://localhost:9000"
-backend_region = "us-east-1"
-backend_secret_access_key = "minioadmin"
+backend_type = "s3"
 name = "public-data"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+access_key_id = "minioadmin"
+bucket_name = "public-data"
+endpoint = "http://localhost:9000"
+region = "us-east-1"
+secret_access_key = "minioadmin"
 
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
 anonymous_access = false
-backend_access_key_id = "minioadmin"
-backend_bucket = "private-uploads"
-backend_endpoint = "http://localhost:9000"
-backend_region = "us-east-1"
-backend_secret_access_key = "minioadmin"
+backend_type = "s3"
 name = "private-uploads"
 
-[[vars.PROXY_CONFIG.buckets]]
-allowed_roles = []
-anonymous_access = true
-backend_access_key_id = ""
-backend_bucket = "us-west-2.opendata.source.coop"
-backend_endpoint = "https://s3.us-west-2.amazonaws.com"
-backend_prefix = "cholmes/"
-backend_region = "us-west-2"
-backend_secret_access_key = ""
-name = "cholmes"
+[vars.PROXY_CONFIG.buckets.backend_options]
+access_key_id = "minioadmin"
+bucket_name = "private-uploads"
+endpoint = "http://localhost:9000"
+region = "us-east-1"
+secret_access_key = "minioadmin"
 
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
 anonymous_access = true
-backend_access_key_id = ""
-backend_bucket = "us-west-2.opendata.source.coop"
-backend_endpoint = "https://s3.us-west-2.amazonaws.com"
+backend_type = "s3"
+backend_prefix = "cholmes/"
+name = "cholmes"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+bucket_name = "us-west-2.opendata.source.coop"
+endpoint = "https://s3.us-west-2.amazonaws.com"
+region = "us-west-2"
+skip_signature = "true"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_type = "s3"
 backend_prefix = "harvard-lil/"
-backend_region = "us-west-2"
-backend_secret_access_key = ""
 name = "harvard-lil"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+bucket_name = "us-west-2.opendata.source.coop"
+endpoint = "https://s3.us-west-2.amazonaws.com"
+region = "us-west-2"
+skip_signature = "true"
 
 [[vars.PROXY_CONFIG.credentials]]
 access_key_id = "AKLOCAL0000000000001"

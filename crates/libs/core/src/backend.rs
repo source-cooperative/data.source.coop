@@ -9,16 +9,23 @@
 //!    covered by `ObjectStore` (multipart uploads).
 //!
 //! [`S3RequestSigner`] is retained for signing multipart requests.
+//! [`build_object_store`] dispatches on `BucketConfig::backend_type` to build
+//! the appropriate provider store.
 
 use crate::error::ProxyError;
 use crate::maybe_send::{MaybeSend, MaybeSync};
+use crate::types::{BackendType, BucketConfig};
 use bytes::Bytes;
 use http::HeaderMap;
+use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::types::BucketConfig;
+#[cfg(feature = "azure")]
+use object_store::azure::MicrosoftAzureBuilder;
+#[cfg(feature = "gcp")]
+use object_store::gcp::GoogleCloudStorageBuilder;
 
 /// Trait for runtime-specific backend operations.
 ///
@@ -45,6 +52,100 @@ pub struct RawResponse {
     pub status: u16,
     pub headers: HeaderMap,
     pub body: Bytes,
+}
+
+/// Wrapper around provider-specific `object_store` builders.
+///
+/// Runtimes use [`build_object_store`] and inject their HTTP connector via
+/// a closure that receives this enum.
+pub enum StoreBuilder {
+    S3(AmazonS3Builder),
+    #[cfg(feature = "azure")]
+    Azure(MicrosoftAzureBuilder),
+    #[cfg(feature = "gcp")]
+    Gcs(GoogleCloudStorageBuilder),
+}
+
+impl StoreBuilder {
+    /// Build the final `ObjectStore`.
+    pub fn build(self) -> Result<Arc<dyn ObjectStore>, ProxyError> {
+        match self {
+            StoreBuilder::S3(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
+            )),
+            #[cfg(feature = "azure")]
+            StoreBuilder::Azure(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build Azure store: {}", e)))?,
+            )),
+            #[cfg(feature = "gcp")]
+            StoreBuilder::Gcs(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build GCS store: {}", e)))?,
+            )),
+        }
+    }
+}
+
+/// Build an `ObjectStore` from a [`BucketConfig`], dispatching on `backend_type`.
+///
+/// The `configure` closure lets each runtime inject its HTTP connector:
+/// - Server runtime passes `|b| b` (default connector)
+/// - CF Workers passes `|b| match b { StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)), .. }`
+pub fn build_object_store<F>(config: &BucketConfig, configure: F) -> Result<Arc<dyn ObjectStore>, ProxyError>
+where
+    F: FnOnce(StoreBuilder) -> StoreBuilder,
+{
+    let backend_type = config
+        .parsed_backend_type()
+        .ok_or_else(|| ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type)))?;
+
+    let builder = match backend_type {
+        BackendType::S3 => {
+            let mut b = AmazonS3Builder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            StoreBuilder::S3(b)
+        }
+        #[cfg(feature = "azure")]
+        BackendType::Azure => {
+            let mut b = MicrosoftAzureBuilder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            StoreBuilder::Azure(b)
+        }
+        #[cfg(not(feature = "azure"))]
+        BackendType::Azure => {
+            return Err(ProxyError::ConfigError(
+                "Azure backend support not enabled (requires 'azure' feature)".into(),
+            ));
+        }
+        #[cfg(feature = "gcp")]
+        BackendType::Gcs => {
+            let mut b = GoogleCloudStorageBuilder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            StoreBuilder::Gcs(b)
+        }
+        #[cfg(not(feature = "gcp"))]
+        BackendType::Gcs => {
+            return Err(ProxyError::ConfigError(
+                "GCS backend support not enabled (requires 'gcp' feature)".into(),
+            ));
+        }
+    };
+
+    configure(builder).build()
 }
 
 /// Helper to build a signed URL + headers for an outbound request to S3.

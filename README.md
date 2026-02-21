@@ -5,7 +5,7 @@ A multi-runtime S3 gateway that streams requests to and from backing object stor
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart
     Clients["S3 Clients<br />(aws cli, boto3, sdk, etc.)"]
 
     subgraph Proxy["s3-proxy-rs"]
@@ -22,7 +22,7 @@ flowchart LR
 
 ### Crate Layout
 
-```
+```sh
 crates/
 ├── libs/                         # Libraries — not directly runnable
 │   ├── core/  (s3-proxy-core)    # Runtime-agnostic: traits, S3 parsing, SigV4, config providers

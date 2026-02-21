@@ -28,8 +28,9 @@ cargo test
 ## Key Architecture Notes
 
 - **ProxyBackend trait**: `ProxyHandler<B, R>` is generic over `B: ProxyBackend` and `R: RequestResolver`. The backend trait has two methods: `create_store()` returns an `Arc<dyn ObjectStore>` for high-level operations, and `send_raw()` sends pre-signed HTTP requests for multipart operations. Each runtime provides its own implementation:
-  - **Server**: `ServerBackend` uses the default `object_store` HTTP connector (reqwest-based) and reqwest for raw HTTP.
-  - **CF Workers**: `WorkerBackend` uses a custom `FetchConnector` (implementing `object_store::client::HttpConnector`) that bridges the Workers Fetch API to `object_store`, and `web_sys::fetch` for raw HTTP.
+  - **Server**: `ServerBackend` delegates to `build_object_store()` with identity connector and uses reqwest for raw HTTP.
+  - **CF Workers**: `WorkerBackend` delegates to `build_object_store()` injecting `FetchConnector`, and uses `web_sys::fetch` for raw HTTP.
+- **Multi-provider support**: `BucketConfig` uses a `backend_type: String` discriminator (`"s3"`, `"az"`, `"gcs"`) and a `backend_options: HashMap<String, String>` for provider-specific config. The `build_object_store()` function in `crates/libs/core/src/backend.rs` dispatches on `backend_type`, iterates `backend_options` calling `with_config()` on the appropriate builder (`AmazonS3Builder`, `MicrosoftAzureBuilder`, `GoogleCloudStorageBuilder`). Azure and GCS builders are gated behind cargo features (`azure`, `gcp`) on `s3-proxy-core`. The server runtime enables both; the CF Workers runtime enables neither (only S3 is supported on WASM). Runtimes inject their HTTP connector via a closure over `StoreBuilder`.
 - **Operation dispatch**: The proxy handler dispatches S3 operations to different backends:
   - **GET** → `store.get_opts()` with Range/If-Match/If-None-Match header parsing; returns `ProxyResponseBody::Stream`.
   - **HEAD** → `store.head()`; returns metadata headers + empty body.
@@ -47,6 +48,6 @@ cargo test
 
 ## Known Limitations
 
-1. **Multipart uses raw HTTP**: `object_store`'s `MultipartUpload` API doesn't expose upload IDs. Multipart operations use `S3RequestSigner` + raw HTTP, which is S3-specific.
+1. **Multipart uses raw HTTP (S3 only)**: `object_store`'s `MultipartUpload` API doesn't expose upload IDs. Multipart operations use `S3RequestSigner` + raw HTTP. They are gated to `backend_type == "s3"` — non-S3 backends return an error for multipart requests and should use `PUT` (object_store handles chunking internally).
 2. **LIST returns all results**: `object_store::list_with_delimiter()` fetches all pages internally. No S3-style pagination (continuation tokens, max-keys truncation). `IsTruncated` is always `false`.
-3. **S3 only**: `BucketConfig` and store creation assume S3. Adding GCS/Azure requires a `backend_type` field and builder dispatch.
+3. **Azure/GCS require feature flags**: `MicrosoftAzureBuilder` and `GoogleCloudStorageBuilder` are gated behind cargo features (`azure`, `gcp`) on `s3-proxy-core`. The server runtime enables both; the CF Workers runtime only supports S3. Requesting an unsupported backend_type returns a `ConfigError`.

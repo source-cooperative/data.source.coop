@@ -150,11 +150,17 @@ where
                 self.handle_list(bucket_config, raw_query.as_deref(), list_rewrite)
                     .await
             }
-            // Multipart operations go through raw signed HTTP
+            // Multipart operations go through raw signed HTTP (S3 only)
             S3Operation::CreateMultipartUpload { .. }
             | S3Operation::UploadPart { .. }
             | S3Operation::CompleteMultipartUpload { .. }
             | S3Operation::AbortMultipartUpload { .. } => {
+                if !bucket_config.supports_s3_multipart() {
+                    return Err(ProxyError::InvalidRequest(format!(
+                        "multipart operations not supported for '{}' backends",
+                        bucket_config.backend_type
+                    )));
+                }
                 self.handle_multipart(method, operation, bucket_config, original_headers, body)
                     .await
             }
@@ -443,8 +449,10 @@ where
         }
 
         // Sign the request if credentials are configured
-        let has_credentials = !bucket_config.backend_access_key_id.is_empty()
-            && !bucket_config.backend_secret_access_key.is_empty();
+        let access_key = bucket_config.option("access_key_id").unwrap_or("");
+        let secret_key = bucket_config.option("secret_access_key").unwrap_or("");
+        let region = bucket_config.option("region").unwrap_or("us-east-1");
+        let has_credentials = !access_key.is_empty() && !secret_key.is_empty();
 
         let parsed_url = Url::parse(&backend_url)
             .map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
@@ -457,9 +465,9 @@ where
 
         if has_credentials {
             let signer = S3RequestSigner::new(
-                bucket_config.backend_access_key_id.clone(),
-                bucket_config.backend_secret_access_key.clone(),
-                bucket_config.backend_region.clone(),
+                access_key.to_string(),
+                secret_key.to_string(),
+                region.to_string(),
             );
             signer.sign_request(method, &parsed_url, &mut headers, &payload_hash)?;
         } else {
@@ -654,8 +662,9 @@ fn build_backend_url(
     config: &BucketConfig,
     operation: &S3Operation,
 ) -> Result<String, ProxyError> {
-    let base = config.backend_endpoint.trim_end_matches('/');
-    let bucket = &config.backend_bucket;
+    let endpoint = config.option("endpoint").unwrap_or("");
+    let base = endpoint.trim_end_matches('/');
+    let bucket = config.option("bucket_name").unwrap_or("");
     let bucket_is_empty = bucket.is_empty();
 
     let mut key = String::new();
