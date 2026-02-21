@@ -664,21 +664,12 @@ fn build_backend_url(
     let bucket = &config.backend_bucket;
     let bucket_is_empty = bucket.is_empty();
 
-    let key = match operation {
-        S3Operation::CreateMultipartUpload { key, .. }
-        | S3Operation::UploadPart { key, .. }
-        | S3Operation::CompleteMultipartUpload { key, .. }
-        | S3Operation::AbortMultipartUpload { key, .. } => {
-            let mut full_key = String::new();
-            if let Some(prefix) = &config.backend_prefix {
-                full_key.push_str(prefix.trim_end_matches('/'));
-                full_key.push('/');
-            }
-            full_key.push_str(key);
-            full_key
-        }
-        _ => return Err(ProxyError::Internal("unexpected operation for multipart URL".into())),
-    };
+    let mut key = String::new();
+    if let Some(prefix) = &config.backend_prefix {
+        key.push_str(prefix.trim_end_matches('/'));
+        key.push('/');
+    }
+    key.push_str(operation.key());
 
     let mut url = if bucket_is_empty {
         format!("{}/{}", base, key)
