@@ -81,6 +81,7 @@ pub enum Action {
     UploadPart,
     CompleteMultipartUpload,
     AbortMultipartUpload,
+    DeleteObject,
 }
 
 /// A long-lived access credential stored in the config backend.
@@ -154,6 +155,10 @@ pub enum S3Operation {
         bucket: String,
         key: String,
         upload_id: String,
+    },
+    DeleteObject {
+        bucket: String,
+        key: String,
     },
     ListBucket {
         bucket: String,

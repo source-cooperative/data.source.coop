@@ -141,6 +141,9 @@ where
             S3Operation::PutObject { key, .. } => {
                 self.handle_put(bucket_config, key, body).await
             }
+            S3Operation::DeleteObject { key, .. } => {
+                self.handle_delete(bucket_config, key).await
+            }
             S3Operation::ListBucket { raw_query, .. } => {
                 self.handle_list(bucket_config, raw_query.as_deref(), list_rewrite)
                     .await
@@ -316,6 +319,29 @@ where
         Ok(ProxyResult {
             status: 200,
             headers: resp_headers,
+            body: ProxyResponseBody::Empty,
+        })
+    }
+
+    /// DELETE via object_store
+    async fn handle_delete(
+        &self,
+        config: &BucketConfig,
+        key: &str,
+    ) -> Result<ProxyResult, ProxyError> {
+        let store = self.backend.create_store(config)?;
+        let path = build_object_path(config, key);
+
+        tracing::debug!(path = %path, "DELETE via object_store");
+
+        store
+            .delete(&path)
+            .await
+            .map_err(ProxyError::from_object_store_error)?;
+
+        Ok(ProxyResult {
+            status: 204,
+            headers: HeaderMap::new(),
             body: ProxyResponseBody::Empty,
         })
     }

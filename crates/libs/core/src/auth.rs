@@ -261,6 +261,7 @@ fn operation_to_action(op: &S3Operation) -> Action {
         S3Operation::UploadPart { .. } => Action::UploadPart,
         S3Operation::CompleteMultipartUpload { .. } => Action::CompleteMultipartUpload,
         S3Operation::AbortMultipartUpload { .. } => Action::AbortMultipartUpload,
+        S3Operation::DeleteObject { .. } => Action::DeleteObject,
         S3Operation::ListBuckets => Action::ListBucket, // Treated as a list operation
         S3Operation::AssumeRoleWithWebIdentity { .. } => Action::GetObject, // STS is handled separately
     }
@@ -274,7 +275,8 @@ fn operation_bucket_key(op: &S3Operation) -> (String, String) {
         | S3Operation::CreateMultipartUpload { bucket, key }
         | S3Operation::UploadPart { bucket, key, .. }
         | S3Operation::CompleteMultipartUpload { bucket, key, .. }
-        | S3Operation::AbortMultipartUpload { bucket, key, .. } => {
+        | S3Operation::AbortMultipartUpload { bucket, key, .. }
+        | S3Operation::DeleteObject { bucket, key } => {
             (bucket.clone(), key.clone())
         }
         S3Operation::ListBucket { bucket, raw_query } => {

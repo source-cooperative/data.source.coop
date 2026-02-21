@@ -173,7 +173,8 @@ fn operation_bucket(op: &S3Operation) -> Option<String> {
         | S3Operation::CreateMultipartUpload { bucket, .. }
         | S3Operation::UploadPart { bucket, .. }
         | S3Operation::CompleteMultipartUpload { bucket, .. }
-        | S3Operation::AbortMultipartUpload { bucket, .. } => Some(bucket.clone()),
+        | S3Operation::AbortMultipartUpload { bucket, .. }
+        | S3Operation::DeleteObject { bucket, .. } => Some(bucket.clone()),
         S3Operation::ListBuckets => None,
         S3Operation::AssumeRoleWithWebIdentity { .. } => None,
     }

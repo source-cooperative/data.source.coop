@@ -120,6 +120,8 @@ pub fn build_s3_operation(
                     key,
                     upload_id,
                 })
+            } else if !key.is_empty() {
+                Ok(S3Operation::DeleteObject { bucket, key })
             } else {
                 Err(ProxyError::InvalidRequest(
                     "unsupported DELETE operation".into(),
