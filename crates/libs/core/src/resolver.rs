@@ -144,7 +144,7 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
 
         tracing::debug!(
             bucket = %bucket_name,
-            backend_endpoint = %bucket_config.backend_endpoint,
+            backend_type = %bucket_config.backend_type,
             "resolved bucket config"
         );
 

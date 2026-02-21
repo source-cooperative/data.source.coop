@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Configuration for a virtual bucket exposed by the proxy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,21 +10,11 @@ pub struct BucketConfig {
     /// The virtual bucket name exposed to clients.
     pub name: String,
 
-    /// The backing object store endpoint (e.g., "https://s3.amazonaws.com").
-    pub backend_endpoint: String,
-
-    /// The real bucket name on the backing store.
-    pub backend_bucket: String,
+    /// Provider type: "s3", "az", "gcs", etc.
+    pub backend_type: String,
 
     /// Optional prefix to prepend to all keys when forwarding.
     pub backend_prefix: Option<String>,
-
-    /// The region to use when signing requests to the backend.
-    pub backend_region: String,
-
-    /// Credentials for signing outbound requests to the backing store.
-    pub backend_access_key_id: String,
-    pub backend_secret_access_key: String,
 
     /// Whether this bucket allows anonymous (unsigned) access.
     pub anonymous_access: bool,
@@ -31,6 +22,44 @@ pub struct BucketConfig {
     /// IAM role ARNs that are allowed to access this bucket.
     /// Empty means only anonymous access (if enabled) or long-lived credentials.
     pub allowed_roles: Vec<String>,
+
+    /// Provider-specific config passed to the object_store builder.
+    /// Keys are the short aliases accepted by each provider's ConfigKey::from_str().
+    /// S3: "endpoint", "bucket_name", "region", "access_key_id", "secret_access_key", "skip_signature"
+    /// Azure: "account_name", "container_name", "access_key", "skip_signature"
+    /// GCS: "bucket_name", "service_account_key", "skip_signature"
+    #[serde(default)]
+    pub backend_options: HashMap<String, String>,
+}
+
+/// Known backend provider types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendType {
+    S3,
+    Azure,
+    Gcs,
+}
+
+impl BucketConfig {
+    /// Parse the `backend_type` string into a known [`BackendType`].
+    pub fn parsed_backend_type(&self) -> Option<BackendType> {
+        match self.backend_type.as_str() {
+            "s3" => Some(BackendType::S3),
+            "az" | "azure" => Some(BackendType::Azure),
+            "gcs" | "gs" => Some(BackendType::Gcs),
+            _ => None,
+        }
+    }
+
+    /// Whether this backend supports S3-style multipart uploads via raw HTTP.
+    pub fn supports_s3_multipart(&self) -> bool {
+        matches!(self.parsed_backend_type(), Some(BackendType::S3))
+    }
+
+    /// Look up a value in `backend_options`.
+    pub fn option(&self, key: &str) -> Option<&str> {
+        self.backend_options.get(key).map(|s| s.as_str())
+    }
 }
 
 /// Configuration for an IAM role that can be assumed via STS.

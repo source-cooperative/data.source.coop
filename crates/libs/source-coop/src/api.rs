@@ -1,13 +1,31 @@
 //! HTTP client for the Source Cooperative API.
 //!
 //! Makes server-to-server calls to resolve products, data connections,
-//! API keys, and permissions. All calls use the Workers Fetch API via
-//! the shared `fetch_json` helper in `client.rs`.
+//! API keys, and permissions. The actual HTTP transport is abstracted behind
+//! the [`HttpClient`] trait so each runtime can provide its own implementation.
 
-use crate::client::{fetch_json, CacheOptions};
 use s3_proxy_core::error::ProxyError;
+use s3_proxy_core::maybe_send::{MaybeSend, MaybeSync};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::future::Future;
+
+/// Options for response caching.
+pub struct CacheOptions {
+    pub cache_ttl: u32,
+    pub cache_key: Option<String>,
+}
+
+/// Trait abstracting HTTP JSON fetching so each runtime can provide its own implementation.
+pub trait HttpClient: Clone + MaybeSend + MaybeSync + 'static {
+    fn fetch_json<T: DeserializeOwned + MaybeSend>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        cache: Option<&CacheOptions>,
+    ) -> impl Future<Output = Result<T, ProxyError>> + MaybeSend;
+}
 
 /// Per-endpoint cache TTLs (seconds). Set to 0 to disable caching.
 pub struct CacheTtls {
@@ -32,7 +50,8 @@ impl Default for CacheTtls {
 
 /// Client for the Source Cooperative API.
 #[derive(Clone)]
-pub struct SourceApiClient {
+pub struct SourceApiClient<H> {
+    http: H,
     api_url: String,
     api_key: String,
     product_cache_ttl: u32,
@@ -42,7 +61,7 @@ pub struct SourceApiClient {
     api_key_cache_ttl: u32,
 }
 
-// ── API response types ──────────────────────────────────────────────
+// -- API response types --
 
 #[derive(Debug, Deserialize)]
 pub struct SourceProduct {
@@ -76,6 +95,10 @@ pub struct ConnectionDetails {
     pub region: Option<String>,
     pub base_prefix: Option<String>,
     pub bucket: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
+    #[serde(default)]
+    pub container_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +107,8 @@ pub struct ConnectionAuth {
     pub auth_type: String,
     pub access_key_id: Option<String>,
     pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub access_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,11 +145,12 @@ pub struct AccountRepository {
     pub repository_id: String,
 }
 
-// ── Client implementation ───────────────────────────────────────────
+// -- Client implementation --
 
-impl SourceApiClient {
-    pub fn new(api_url: String, api_key: String, cache_ttls: CacheTtls) -> Self {
+impl<H: HttpClient> SourceApiClient<H> {
+    pub fn new(http: H, api_url: String, api_key: String, cache_ttls: CacheTtls) -> Self {
         Self {
+            http,
             api_url,
             api_key,
             product_cache_ttl: cache_ttls.product,
@@ -155,7 +181,7 @@ impl SourceApiClient {
             cache_ttl: self.product_cache_ttl,
             cache_key: None,
         });
-        fetch_json(&url, &headers, cache.as_ref()).await
+        self.http.fetch_json(&url, &headers, cache.as_ref()).await
     }
 
     /// `GET /api/v1/data-connections/{id}`
@@ -167,7 +193,7 @@ impl SourceApiClient {
             cache_ttl: self.data_connection_cache_ttl,
             cache_key: None,
         });
-        fetch_json(&url, &headers, cache.as_ref()).await
+        self.http.fetch_json(&url, &headers, cache.as_ref()).await
     }
 
     /// `GET /api/v1/api-keys/{access_key_id}/auth`
@@ -179,7 +205,7 @@ impl SourceApiClient {
             cache_ttl: self.api_key_cache_ttl,
             cache_key: None,
         });
-        fetch_json(&url, &headers, cache.as_ref()).await
+        self.http.fetch_json(&url, &headers, cache.as_ref()).await
     }
 
     /// `GET /api/v1/products/{account_id}/{repo_id}/permissions`
@@ -207,7 +233,7 @@ impl SourceApiClient {
                 account_id, repo_id, user_api_key
             )),
         });
-        fetch_json(&url, &headers, cache.as_ref()).await
+        self.http.fetch_json(&url, &headers, cache.as_ref()).await
     }
 
     /// `GET /api/v1/accounts/{account_id}`
@@ -222,6 +248,6 @@ impl SourceApiClient {
             cache_ttl: self.account_cache_ttl,
             cache_key: None,
         });
-        fetch_json(&url, &headers, cache.as_ref()).await
+        self.http.fetch_json(&url, &headers, cache.as_ref()).await
     }
 }

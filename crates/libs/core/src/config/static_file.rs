@@ -29,13 +29,16 @@ pub struct StaticConfig {
 /// let provider = StaticProvider::from_toml(r#"
 ///     [[buckets]]
 ///     name = "public-data"
-///     backend_endpoint = "https://s3.amazonaws.com"
-///     backend_bucket = "my-real-bucket"
-///     backend_region = "us-east-1"
-///     backend_access_key_id = "AKIA..."
-///     backend_secret_access_key = "..."
+///     backend_type = "s3"
 ///     anonymous_access = true
 ///     allowed_roles = []
+///
+///     [buckets.backend_options]
+///     endpoint = "https://s3.amazonaws.com"
+///     bucket_name = "my-real-bucket"
+///     region = "us-east-1"
+///     access_key_id = "AKIA..."
+///     secret_access_key = "..."
 /// "#)?;
 /// ```
 #[derive(Clone)]

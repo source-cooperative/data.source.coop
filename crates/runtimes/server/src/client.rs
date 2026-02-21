@@ -2,9 +2,8 @@
 
 use bytes::Bytes;
 use http::HeaderMap;
-use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{ProxyBackend, RawResponse};
+use s3_proxy_core::backend::{build_object_store, ProxyBackend, RawResponse};
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::BucketConfig;
 use std::sync::Arc;
@@ -37,24 +36,7 @@ impl Default for ServerBackend {
 
 impl ProxyBackend for ServerBackend {
     fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
-        let mut builder = AmazonS3Builder::new()
-            .with_endpoint(&config.backend_endpoint)
-            .with_bucket_name(&config.backend_bucket)
-            .with_region(&config.backend_region);
-
-        if !config.backend_access_key_id.is_empty() {
-            builder = builder
-                .with_access_key_id(&config.backend_access_key_id)
-                .with_secret_access_key(&config.backend_secret_access_key);
-        } else {
-            builder = builder.with_skip_signature(true);
-        }
-
-        Ok(Arc::new(
-            builder
-                .build()
-                .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
-        ))
+        build_object_store(config, |b| b)
     }
 
     async fn send_raw(

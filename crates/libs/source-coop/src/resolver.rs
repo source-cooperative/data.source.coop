@@ -2,15 +2,16 @@
 //!
 //! Consolidates all Source Cooperative business logic (URL namespace mapping,
 //! external API auth, query/response prefix rewriting, synthetic XML responses)
-//! into a single resolver that the thin CF Workers adapter calls.
+//! into a single resolver that thin runtime adapters call.
 
-use crate::source_api::SourceApiClient;
+use crate::api::{HttpClient, SourceApiClient};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use s3_proxy_core::s3::request::build_s3_operation;
 use s3_proxy_core::types::BucketConfig;
+use std::collections::HashMap;
 
 /// Request resolver for Source Cooperative.
 ///
@@ -19,12 +20,12 @@ use s3_proxy_core::types::BucketConfig;
 /// - `/{account_id}` -> synthetic account listing or list-with-prefix
 /// - `/{account_id}/{repo_id}[/{key}]` -> proxy to backend
 #[derive(Clone)]
-pub struct SourceCoopResolver {
-    api_client: SourceApiClient,
+pub struct SourceCoopResolver<H: HttpClient> {
+    api_client: SourceApiClient<H>,
 }
 
-impl SourceCoopResolver {
-    pub fn new(api_client: SourceApiClient) -> Self {
+impl<H: HttpClient> SourceCoopResolver<H> {
+    pub fn new(api_client: SourceApiClient<H>) -> Self {
         Self { api_client }
     }
 
@@ -70,8 +71,6 @@ impl SourceCoopResolver {
             .get_data_connection(&mirror.connection_id)
             .await?;
 
-        let region = conn.details.region.unwrap_or_else(|| "us-east-1".into());
-        let bucket = conn.details.bucket.unwrap_or_default();
         let base_prefix = conn.details.base_prefix.unwrap_or_default();
 
         let backend_prefix = {
@@ -88,18 +87,63 @@ impl SourceCoopResolver {
             }
         };
 
-        let endpoint = format!("https://s3.{}.amazonaws.com", region);
+        let provider = conn.details.provider.as_str();
+        let backend_options = match provider {
+            "s3" => {
+                let region = conn.details.region.unwrap_or_else(|| "us-east-1".into());
+                let bucket = conn.details.bucket.unwrap_or_default();
+                let endpoint = format!("https://s3.{}.amazonaws.com", region);
+                let mut opts = HashMap::new();
+                opts.insert("endpoint".to_string(), endpoint);
+                opts.insert("bucket_name".to_string(), bucket);
+                opts.insert("region".to_string(), region);
+                if let Some(ak) = &conn.authentication.access_key_id {
+                    opts.insert("access_key_id".to_string(), ak.clone());
+                }
+                if let Some(sk) = &conn.authentication.secret_access_key {
+                    opts.insert("secret_access_key".to_string(), sk.clone());
+                }
+                if conn.authentication.access_key_id.is_none() {
+                    opts.insert("skip_signature".to_string(), "true".to_string());
+                }
+                opts
+            }
+            "az" | "azure" => {
+                let mut opts = HashMap::new();
+                if let Some(name) = &conn.details.account_name {
+                    opts.insert("account_name".to_string(), name.clone());
+                }
+                if let Some(container) = &conn.details.container_name {
+                    opts.insert("container_name".to_string(), container.clone());
+                }
+                if let Some(key) = &conn.authentication.access_key {
+                    opts.insert("access_key".to_string(), key.clone());
+                }
+                if conn.authentication.access_key.is_none() {
+                    opts.insert("skip_signature".to_string(), "true".to_string());
+                }
+                opts
+            }
+            other => {
+                return Err(ProxyError::ConfigError(format!(
+                    "unsupported provider '{}' for data connection",
+                    other
+                )));
+            }
+        };
+
+        let backend_type = match provider {
+            "az" | "azure" => "az".to_string(),
+            other => other.to_string(),
+        };
 
         Ok(BucketConfig {
             name: bucket_name,
-            backend_endpoint: endpoint,
-            backend_bucket: bucket,
+            backend_type,
             backend_prefix,
-            backend_region: region,
-            backend_access_key_id: conn.authentication.access_key_id.unwrap_or_default(),
-            backend_secret_access_key: conn.authentication.secret_access_key.unwrap_or_default(),
             anonymous_access: product.data_mode == "open",
             allowed_roles: vec![],
+            backend_options,
         })
     }
 
@@ -213,7 +257,7 @@ impl SourceCoopResolver {
     }
 }
 
-impl RequestResolver for SourceCoopResolver {
+impl<H: HttpClient> RequestResolver for SourceCoopResolver<H> {
     async fn resolve(
         &self,
         method: &Method,
@@ -302,13 +346,10 @@ impl RequestResolver for SourceCoopResolver {
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// -- Helpers --
 
 /// Build a [`ListRewrite`] that strips the backend prefix and prepends `repo_id`.
 fn build_list_rewrite(bucket_config: &BucketConfig, repo_id: &str) -> Option<ListRewrite> {
-    // The backend prefix is what core prepends to list queries. We need to
-    // strip it from response keys and add `repo_id/` so clients see the
-    // expected namespace.
     let strip = bucket_config
         .backend_prefix
         .as_deref()

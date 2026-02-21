@@ -1517,6 +1517,7 @@ dependencies = [
  "futures",
  "http 1.4.0",
  "http-body-util",
+ "httparse",
  "humantime",
  "hyper 1.8.1",
  "itertools",
@@ -1527,6 +1528,7 @@ dependencies = [
  "rand 0.9.2",
  "reqwest",
  "ring",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -2024,6 +2026,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-pemfile"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "rustls-pki-types"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2104,6 +2115,7 @@ dependencies = [
  "quick-xml 0.37.5",
  "s3-proxy-auth",
  "s3-proxy-core",
+ "s3-proxy-source-coop",
  "serde",
  "serde_json",
  "thiserror",
@@ -2157,12 +2169,26 @@ dependencies = [
  "reqwest",
  "s3-proxy-auth",
  "s3-proxy-core",
+ "s3-proxy-source-coop",
  "serde",
  "thiserror",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "s3-proxy-source-coop"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http 1.4.0",
+ "s3-proxy-core",
+ "serde",
+ "serde_json",
+ "tracing",
+ "url",
 ]
 
 [[package]]

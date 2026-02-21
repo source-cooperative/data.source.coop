@@ -25,14 +25,14 @@
 mod body;
 mod client;
 mod fetch_connector;
-mod source_api;
-mod source_resolver;
 mod tracing_layer;
 
 use body::build_worker_response;
 use s3_proxy_core::config::static_file::{StaticConfig, StaticProvider};
 use s3_proxy_core::proxy::ProxyHandler;
 use s3_proxy_core::resolver::DefaultResolver;
+use s3_proxy_source_coop::api::{CacheTtls, SourceApiClient};
+use s3_proxy_source_coop::resolver::SourceCoopResolver;
 use worker::*;
 
 /// The Worker entry point.
@@ -75,7 +75,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 ))
             })?;
 
-        let mut cache_ttls = source_api::CacheTtls::default();
+        let mut cache_ttls = CacheTtls::default();
         if let Ok(v) = env.var("SOURCE_CACHE_TTL_PRODUCT") {
             if let Ok(n) = v.to_string().parse::<u32>() {
                 cache_ttls.product = n;
@@ -102,9 +102,10 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         }
 
+        let http_client = client::WorkerHttpClient;
         let api_client =
-            source_api::SourceApiClient::new(source_api_url.to_string(), source_api_key, cache_ttls);
-        let resolver = source_resolver::SourceCoopResolver::new(api_client);
+            SourceApiClient::new(http_client, source_api_url.to_string(), source_api_key, cache_ttls);
+        let resolver = SourceCoopResolver::new(api_client);
         let handler = ProxyHandler::new(client::WorkerBackend, resolver);
 
         let result = handler
