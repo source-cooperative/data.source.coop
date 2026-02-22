@@ -1,5 +1,13 @@
 # Source Data Proxy Architecture
 
+## Data Proxy
+
+The core function of this system is to operate an S3-compliant API that proxies requests to appropriate object storage backends (e.g. MinIO, AWS S3, Cloudflare R2, Azure Blobstore).
+
+## Runtime
+
+The system is designed to operate in various runtime environments. Chiefly, these includes operating as a traditional server running on a Linux server or containerized environment (e.g. ECS, K8s), or running in WASM on Cloudflare Workers.
+
 ## Authentication
 
 ### How clients authenticate with Source Data Proxy
@@ -107,3 +115,7 @@ For object storage backends that are unable to utilize the Source Data Proxy as 
 
 [^vercel-oidc]: https://vercel.com/docs/oidc/aws
 [^github-oidc]: https://docs.github.com/en/actions/concepts/security/openid-connect
+
+## Modularity
+
+The primary focus of this codebase is to serve as a data proxy for the [Source Cooperative](https://source.coop). However, it is built in a modular fashion to support reuse by others who have similar needs.
