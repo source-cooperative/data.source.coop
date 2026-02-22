@@ -200,6 +200,10 @@ fn convert_headers(req: &Request) -> http::HeaderMap {
         "content-length",
         "content-md5",
         "range",
+        "if-match",
+        "if-none-match",
+        "if-modified-since",
+        "if-unmodified-since",
     ] {
         if let Ok(Some(value)) = req.headers().get(name) {
             if let Ok(parsed) = value.parse() {

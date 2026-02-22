@@ -33,6 +33,12 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 /// - Server runtime: uses `reqwest` for raw HTTP, default `object_store` HTTP connector
 /// - Worker runtime: uses `web_sys::fetch` for raw HTTP, custom `FetchConnector` for `object_store`
 pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
+    /// The runtime's native streaming body type.
+    ///
+    /// CF Workers uses `Option<web_sys::ReadableStream>` to avoid JS/Rust
+    /// stream round-trips. The server runtime uses a reqwest byte stream.
+    type NativeBody: MaybeSend + 'static;
+
     /// Create an `ObjectStore` for the given bucket configuration.
     fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError>;
 
@@ -45,6 +51,17 @@ pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
         headers: HeaderMap,
         body: Bytes,
     ) -> impl Future<Output = Result<RawResponse, ProxyError>> + MaybeSend;
+
+    /// Send a raw HTTP request and return the response with a streaming body.
+    ///
+    /// Used for GET/HEAD on S3 backends to avoid double stream conversion
+    /// (JS→Rust→JS on Workers, or unnecessary buffering on server).
+    fn send_streaming(
+        &self,
+        method: http::Method,
+        url: String,
+        headers: HeaderMap,
+    ) -> impl Future<Output = Result<RawStreamingResponse<Self::NativeBody>, ProxyError>> + MaybeSend;
 }
 
 /// Response from a raw HTTP request to a backend.
@@ -52,6 +69,16 @@ pub struct RawResponse {
     pub status: u16,
     pub headers: HeaderMap,
     pub body: Bytes,
+}
+
+/// Response from a streaming HTTP request to a backend.
+///
+/// The body is the runtime's native streaming type, avoiding
+/// intermediate conversion through Rust stream types.
+pub struct RawStreamingResponse<N> {
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: N,
 }
 
 /// Wrapper around provider-specific `object_store` builders.

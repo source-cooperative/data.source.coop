@@ -1,8 +1,9 @@
 //! The main proxy handler that ties together resolution and backend forwarding.
 //!
 //! [`ProxyHandler`] is generic over the runtime's backend and request resolver.
-//! GET/HEAD/PUT/LIST operations go through `object_store`; multipart operations
-//! use raw signed HTTP requests.
+//! GET/HEAD operations use `send_streaming` for S3 backends (avoiding double
+//! stream conversion) and `object_store` for non-S3 backends. Multipart
+//! operations use raw signed HTTP requests.
 
 use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLOAD};
 use crate::error::ProxyError;
@@ -50,7 +51,7 @@ where
         query: Option<&str>,
         headers: &HeaderMap,
         body: Bytes,
-    ) -> ProxyResult {
+    ) -> ProxyResult<B::NativeBody> {
         let request_id = Uuid::new_v4().to_string();
 
         tracing::info!(
@@ -93,7 +94,7 @@ where
         query: Option<&str>,
         headers: &HeaderMap,
         body: Bytes,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let action = self.resolver.resolve(&method, path, query, headers).await?;
 
         match action {
@@ -132,13 +133,13 @@ where
         original_headers: &HeaderMap,
         body: Bytes,
         list_rewrite: Option<&ListRewrite>,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         match operation {
             S3Operation::GetObject { key, .. } => {
                 self.handle_get(bucket_config, key, original_headers).await
             }
             S3Operation::HeadObject { key, .. } => {
-                self.handle_head(bucket_config, key).await
+                self.handle_head(bucket_config, key, original_headers).await
             }
             S3Operation::PutObject { key, .. } => {
                 self.handle_put(bucket_config, key, body).await
@@ -168,13 +169,77 @@ where
         }
     }
 
-    /// GET via object_store
+    /// GET — uses `send_streaming` for S3 backends (zero-copy native body),
+    /// falls back to `object_store` for non-S3 backends.
     async fn handle_get(
         &self,
         config: &BucketConfig,
         key: &str,
         headers: &HeaderMap,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        if config.supports_s3_multipart() {
+            return self.handle_get_s3(config, key, headers).await;
+        }
+        self.handle_get_object_store(config, key, headers).await
+    }
+
+    /// GET for S3 backends via `send_streaming` — the response body stays in
+    /// the runtime's native type, avoiding double JS/Rust stream conversion.
+    async fn handle_get_s3(
+        &self,
+        config: &BucketConfig,
+        key: &str,
+        headers: &HeaderMap,
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        let operation = S3Operation::GetObject {
+            bucket: String::new(),
+            key: key.to_string(),
+        };
+        let backend_url = build_backend_url(config, &operation)?;
+
+        let mut req_headers = HeaderMap::new();
+
+        // Forward conditional and range headers
+        for header_name in &[
+            "range",
+            "if-match",
+            "if-none-match",
+            "if-modified-since",
+            "if-unmodified-since",
+        ] {
+            if let Some(val) = headers.get(*header_name) {
+                req_headers.insert(*header_name, val.clone());
+            }
+        }
+
+        sign_s3_request(&Method::GET, &backend_url, &mut req_headers, config, UNSIGNED_PAYLOAD)?;
+
+        tracing::debug!(backend_url = %backend_url, "GET via send_streaming (S3)");
+
+        let raw = self.backend.send_streaming(Method::GET, backend_url, req_headers).await?;
+
+        // Forward response headers from the backend
+        let mut resp_headers = HeaderMap::new();
+        for header_name in STREAMING_RESPONSE_HEADERS {
+            if let Some(val) = raw.headers.get(*header_name) {
+                resp_headers.insert(*header_name, val.clone());
+            }
+        }
+
+        Ok(ProxyResult {
+            status: raw.status,
+            headers: resp_headers,
+            body: ProxyResponseBody::Native(raw.body),
+        })
+    }
+
+    /// GET for non-S3 backends via `object_store`.
+    async fn handle_get_object_store(
+        &self,
+        config: &BucketConfig,
+        key: &str,
+        headers: &HeaderMap,
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let store = self.backend.create_store(config)?;
         let path = build_object_path(config, key);
 
@@ -263,12 +328,74 @@ where
         })
     }
 
-    /// HEAD via object_store
+    /// HEAD — uses `send_streaming` for S3 backends (richer headers from backend),
+    /// falls back to `object_store` for non-S3 backends.
     async fn handle_head(
         &self,
         config: &BucketConfig,
         key: &str,
-    ) -> Result<ProxyResult, ProxyError> {
+        headers: &HeaderMap,
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        if config.supports_s3_multipart() {
+            return self.handle_head_s3(config, key, headers).await;
+        }
+        self.handle_head_object_store(config, key).await
+    }
+
+    /// HEAD for S3 backends via `send_streaming`.
+    async fn handle_head_s3(
+        &self,
+        config: &BucketConfig,
+        key: &str,
+        headers: &HeaderMap,
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        let operation = S3Operation::HeadObject {
+            bucket: String::new(),
+            key: key.to_string(),
+        };
+        let backend_url = build_backend_url(config, &operation)?;
+
+        let mut req_headers = HeaderMap::new();
+
+        // Forward conditional headers
+        for header_name in &[
+            "if-match",
+            "if-none-match",
+            "if-modified-since",
+            "if-unmodified-since",
+        ] {
+            if let Some(val) = headers.get(*header_name) {
+                req_headers.insert(*header_name, val.clone());
+            }
+        }
+
+        sign_s3_request(&Method::HEAD, &backend_url, &mut req_headers, config, UNSIGNED_PAYLOAD)?;
+
+        tracing::debug!(backend_url = %backend_url, "HEAD via send_streaming (S3)");
+
+        let raw = self.backend.send_streaming(Method::HEAD, backend_url, req_headers).await?;
+
+        // Forward response headers from the backend
+        let mut resp_headers = HeaderMap::new();
+        for header_name in STREAMING_RESPONSE_HEADERS {
+            if let Some(val) = raw.headers.get(*header_name) {
+                resp_headers.insert(*header_name, val.clone());
+            }
+        }
+
+        Ok(ProxyResult {
+            status: raw.status,
+            headers: resp_headers,
+            body: ProxyResponseBody::Empty,
+        })
+    }
+
+    /// HEAD for non-S3 backends via `object_store`.
+    async fn handle_head_object_store(
+        &self,
+        config: &BucketConfig,
+        key: &str,
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let store = self.backend.create_store(config)?;
         let path = build_object_path(config, key);
 
@@ -307,7 +434,7 @@ where
         config: &BucketConfig,
         key: &str,
         body: Bytes,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let store = self.backend.create_store(config)?;
         let path = build_object_path(config, key);
 
@@ -336,7 +463,7 @@ where
         &self,
         config: &BucketConfig,
         key: &str,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let store = self.backend.create_store(config)?;
         let path = build_object_path(config, key);
 
@@ -360,7 +487,7 @@ where
         config: &BucketConfig,
         raw_query: Option<&str>,
         list_rewrite: Option<&ListRewrite>,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let store = self.backend.create_store(config)?;
 
         // Extract prefix from query string
@@ -430,7 +557,7 @@ where
         bucket_config: &BucketConfig,
         original_headers: &HeaderMap,
         body: Bytes,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
         let backend_url = build_backend_url(bucket_config, operation)?;
 
         tracing::debug!(backend_url = %backend_url, "multipart via raw HTTP");
@@ -448,39 +575,13 @@ where
             }
         }
 
-        // Sign the request if credentials are configured
-        let access_key = bucket_config.option("access_key_id").unwrap_or("");
-        let secret_key = bucket_config.option("secret_access_key").unwrap_or("");
-        let region = bucket_config.option("region").unwrap_or("us-east-1");
-        let has_credentials = !access_key.is_empty() && !secret_key.is_empty();
-
-        let parsed_url = Url::parse(&backend_url)
-            .map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
-
         let payload_hash = if body.is_empty() {
             UNSIGNED_PAYLOAD.to_string()
         } else {
             hash_payload(&body)
         };
 
-        if has_credentials {
-            let signer = S3RequestSigner::new(
-                access_key.to_string(),
-                secret_key.to_string(),
-                region.to_string(),
-            );
-            signer.sign_request(method, &parsed_url, &mut headers, &payload_hash)?;
-        } else {
-            let host = parsed_url
-                .host_str()
-                .ok_or_else(|| ProxyError::Internal("no host in URL".into()))?;
-            let host_header = if let Some(port) = parsed_url.port() {
-                format!("{}:{}", host, port)
-            } else {
-                host.to_string()
-            };
-            headers.insert("host", host_header.parse().unwrap());
-        }
+        sign_s3_request(method, &backend_url, &mut headers, bucket_config, &payload_hash)?;
 
         let raw_resp = self
             .backend
@@ -497,14 +598,27 @@ where
     }
 }
 
-/// The result of handling a proxy request.
-pub struct ProxyResult {
+/// The result of handling a proxy request, generic over the native body type.
+pub struct ProxyResult<N = ()> {
     pub status: u16,
     pub headers: HeaderMap,
-    pub body: ProxyResponseBody,
+    pub body: ProxyResponseBody<N>,
 }
 
-fn error_response(err: &ProxyError, resource: &str, request_id: &str) -> ProxyResult {
+/// Headers to forward from backend streaming responses.
+const STREAMING_RESPONSE_HEADERS: &[&str] = &[
+    "content-type",
+    "content-length",
+    "content-range",
+    "etag",
+    "last-modified",
+    "accept-ranges",
+    "content-encoding",
+    "content-disposition",
+    "cache-control",
+];
+
+fn error_response<N>(err: &ProxyError, resource: &str, request_id: &str) -> ProxyResult<N> {
     let xml = ErrorResponse::from_proxy_error(err, resource, request_id).to_xml();
     let body = ProxyResponseBody::from_bytes(Bytes::from(xml));
     let mut headers = HeaderMap::new();
@@ -515,6 +629,47 @@ fn error_response(err: &ProxyError, resource: &str, request_id: &str) -> ProxyRe
         headers,
         body,
     }
+}
+
+/// Sign an outbound S3 request using credentials from the bucket config.
+///
+/// If credentials are configured (`access_key_id` + `secret_access_key`),
+/// applies SigV4 signing. Otherwise, just sets the Host header.
+fn sign_s3_request(
+    method: &Method,
+    url: &str,
+    headers: &mut HeaderMap,
+    config: &BucketConfig,
+    payload_hash: &str,
+) -> Result<(), ProxyError> {
+    let access_key = config.option("access_key_id").unwrap_or("");
+    let secret_key = config.option("secret_access_key").unwrap_or("");
+    let region = config.option("region").unwrap_or("us-east-1");
+    let has_credentials = !access_key.is_empty() && !secret_key.is_empty();
+
+    let parsed_url = Url::parse(url)
+        .map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
+
+    if has_credentials {
+        let signer = S3RequestSigner::new(
+            access_key.to_string(),
+            secret_key.to_string(),
+            region.to_string(),
+        );
+        signer.sign_request(method, &parsed_url, headers, payload_hash)?;
+    } else {
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| ProxyError::Internal("no host in URL".into()))?;
+        let host_header = if let Some(port) = parsed_url.port() {
+            format!("{}:{}", host, port)
+        } else {
+            host.to_string()
+        };
+        headers.insert("host", host_header.parse().unwrap());
+    }
+
+    Ok(())
 }
 
 /// Build an object_store Path from a bucket config and client-visible key.
@@ -658,7 +813,8 @@ fn parse_range_header(value: &str) -> Option<GetRange> {
     }
 }
 
-fn build_backend_url(
+/// Build the backend URL for an S3 operation.
+pub fn build_backend_url(
     config: &BucketConfig,
     operation: &S3Operation,
 ) -> Result<String, ProxyError> {

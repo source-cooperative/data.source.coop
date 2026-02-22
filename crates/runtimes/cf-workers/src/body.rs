@@ -11,10 +11,12 @@ use worker::{Headers, Response};
 
 /// Build a `worker::Response` from a `ProxyResult`.
 ///
-/// Stream bodies are bridged to JS `ReadableStream` via a `TransformStream`:
-/// a spawn_local task reads Rust stream chunks and writes them to the
-/// writable side; the readable side is used for the Response.
-pub fn build_worker_response(result: ProxyResult) -> Result<Response, worker::Error> {
+/// - `Native` bodies (JS `ReadableStream`) are passed through directly — zero conversion.
+/// - `Stream` bodies (Rust `BoxStream`) are bridged to JS via a `TransformStream`.
+/// - `Bytes`/`Empty` are returned as fixed responses.
+pub fn build_worker_response(
+    result: ProxyResult<Option<web_sys::ReadableStream>>,
+) -> Result<Response, worker::Error> {
     let resp_headers = Headers::new();
     for (key, value) in result.headers.iter() {
         if let Ok(v) = value.to_str() {
@@ -23,7 +25,30 @@ pub fn build_worker_response(result: ProxyResult) -> Result<Response, worker::Er
     }
 
     match result.body {
-        // TODO: This seems like it violates the need to keep streams in the JS form
+        ProxyResponseBody::Native(maybe_stream) => {
+            // Pass the JS ReadableStream directly — no Rust stream conversion!
+            let ws_headers = web_sys::Headers::new()
+                .map_err(|e| worker::Error::RustError(format!("headers error: {:?}", e)))?;
+            for (key, value) in result.headers.iter() {
+                if let Ok(v) = value.to_str() {
+                    let _ = ws_headers.set(key.as_str(), v);
+                }
+            }
+
+            let init = web_sys::ResponseInit::new();
+            init.set_status(result.status);
+            init.set_headers(&ws_headers.into());
+
+            let ws_response = web_sys::Response::new_with_opt_readable_stream_and_init(
+                maybe_stream.as_ref(),
+                &init,
+            )
+            .map_err(|e| {
+                worker::Error::RustError(format!("failed to build response: {:?}", e))
+            })?;
+
+            Ok(ws_response.into())
+        }
         ProxyResponseBody::Stream(stream) => {
             // Bridge Rust Stream<Bytes> -> JS ReadableStream via TransformStream
             let transform = web_sys::TransformStream::new()
