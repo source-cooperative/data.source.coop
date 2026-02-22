@@ -2156,6 +2156,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "s3-proxy-oidc-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "rand 0.8.5",
+ "rsa",
+ "s3-proxy-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "s3-proxy-server"
 version = "0.1.0"
 dependencies = [
