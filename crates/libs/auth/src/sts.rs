@@ -9,8 +9,9 @@ pub fn mint_temporary_credentials(
     role: &RoleConfig,
     source_identity: &str,
     duration_seconds: u64,
+    key_prefix: &str,
 ) -> TemporaryCredentials {
-    let access_key_id = format!("ASIA{}", generate_random_id(16));
+    let access_key_id = format!("{}{}", key_prefix, generate_random_id(16));
     let secret_access_key = generate_random_id(40);
     let session_token = generate_session_token();
 

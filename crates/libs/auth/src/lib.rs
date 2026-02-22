@@ -52,6 +52,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     role_arn: &str,
     web_identity_token: &str,
     duration_seconds: Option<u64>,
+    key_prefix: &str,
 ) -> Result<TemporaryCredentials, ProxyError> {
     // Look up the role
     let role = config
@@ -86,10 +87,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     let claims = jwks::verify_token(web_identity_token, key, issuer, &role)?;
 
     // Check subject conditions
-    let subject = claims
-        .get("sub")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let subject = claims.get("sub").and_then(|v| v.as_str()).unwrap_or("");
 
     if !role.subject_conditions.is_empty() {
         let matches = role
@@ -109,7 +107,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         .unwrap_or(3600)
         .min(role.max_session_duration_secs);
 
-    let creds = sts::mint_temporary_credentials(&role, subject, duration);
+    let creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix);
 
     // Store them
     config.store_temporary_credential(&creds).await?;
@@ -165,10 +163,22 @@ mod tests {
 
     #[test]
     fn test_subject_matching() {
-        assert!(subject_matches("repo:org/repo:ref:refs/heads/main", "repo:org/repo:*"));
+        assert!(subject_matches(
+            "repo:org/repo:ref:refs/heads/main",
+            "repo:org/repo:*"
+        ));
         assert!(subject_matches("repo:org/repo:ref:refs/heads/main", "*"));
-        assert!(subject_matches("repo:org/repo:ref:refs/heads/main", "repo:org/repo:ref:refs/heads/main"));
-        assert!(!subject_matches("repo:org/repo:ref:refs/heads/main", "repo:other/*"));
-        assert!(subject_matches("repo:org/repo:ref:refs/heads/main", "repo:org/*:ref:refs/heads/*"));
+        assert!(subject_matches(
+            "repo:org/repo:ref:refs/heads/main",
+            "repo:org/repo:ref:refs/heads/main"
+        ));
+        assert!(!subject_matches(
+            "repo:org/repo:ref:refs/heads/main",
+            "repo:other/*"
+        ));
+        assert!(subject_matches(
+            "repo:org/repo:ref:refs/heads/main",
+            "repo:org/*:ref:refs/heads/*"
+        ));
     }
 }
