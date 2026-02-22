@@ -16,9 +16,12 @@
 //! The client then uses these credentials to sign S3 requests normally.
 
 pub mod jwks;
+pub mod request;
+pub mod responses;
 pub mod sts;
 
 use base64::Engine;
+use request::StsRequest;
 use s3_proxy_core::config::ConfigProvider;
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::TemporaryCredentials;
@@ -49,19 +52,17 @@ fn jwt_decode_unverified(
 /// Validate an OIDC token and mint temporary credentials.
 pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     config: &C,
-    role_arn: &str,
-    web_identity_token: &str,
-    duration_seconds: Option<u64>,
+    sts_request: &StsRequest,
     key_prefix: &str,
 ) -> Result<TemporaryCredentials, ProxyError> {
     // Look up the role
     let role = config
-        .get_role(role_arn)
+        .get_role(&sts_request.role_arn)
         .await?
-        .ok_or_else(|| ProxyError::RoleNotFound(role_arn.to_string()))?;
+        .ok_or_else(|| ProxyError::RoleNotFound(sts_request.role_arn.to_string()))?;
 
     // Decode the JWT header and claims without verification to extract issuer and kid
-    let (header, insecure_claims) = jwt_decode_unverified(web_identity_token)?;
+    let (header, insecure_claims) = jwt_decode_unverified(&sts_request.web_identity_token)?;
 
     let issuer = insecure_claims
         .get("iss")
@@ -84,7 +85,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         .ok_or_else(|| ProxyError::InvalidOidcToken("JWT missing kid".into()))?;
 
     let key = jwks::find_key(&jwks, kid)?;
-    let claims = jwks::verify_token(web_identity_token, key, issuer, &role)?;
+    let claims = jwks::verify_token(&sts_request.web_identity_token, key, issuer, &role)?;
 
     // Check subject conditions
     let subject = claims.get("sub").and_then(|v| v.as_str()).unwrap_or("");
@@ -103,7 +104,8 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     }
 
     // Mint temporary credentials
-    let duration = duration_seconds
+    let duration = sts_request
+        .duration_seconds
         .unwrap_or(3600)
         .min(role.max_session_duration_secs);
 

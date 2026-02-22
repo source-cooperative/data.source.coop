@@ -48,14 +48,19 @@ pub fn parse_sigv4_auth(auth_header: &str) -> Result<SigV4Auth, ProxyError> {
         }
     }
 
-    let credential = credential.ok_or_else(|| ProxyError::InvalidRequest("missing Credential".into()))?;
-    let signed_headers = signed_headers.ok_or_else(|| ProxyError::InvalidRequest("missing SignedHeaders".into()))?;
-    let signature = signature.ok_or_else(|| ProxyError::InvalidRequest("missing Signature".into()))?;
+    let credential =
+        credential.ok_or_else(|| ProxyError::InvalidRequest("missing Credential".into()))?;
+    let signed_headers =
+        signed_headers.ok_or_else(|| ProxyError::InvalidRequest("missing SignedHeaders".into()))?;
+    let signature =
+        signature.ok_or_else(|| ProxyError::InvalidRequest("missing Signature".into()))?;
 
     // Parse credential: AKID/date/region/service/aws4_request
     let cred_parts: Vec<&str> = credential.split('/').collect();
     if cred_parts.len() != 5 || cred_parts[4] != "aws4_request" {
-        return Err(ProxyError::InvalidRequest("malformed credential scope".into()));
+        return Err(ProxyError::InvalidRequest(
+            "malformed credential scope".into(),
+        ));
     }
 
     Ok(SigV4Auth {
@@ -210,7 +215,10 @@ pub fn authorize(
         if bucket_config.anonymous_access {
             // Anonymous users can only read
             let action = operation.action();
-            if matches!(action, Action::GetObject | Action::HeadObject | Action::ListBucket) {
+            if matches!(
+                action,
+                Action::GetObject | Action::HeadObject | Action::ListBucket
+            ) {
                 return Ok(());
             }
         }
@@ -252,10 +260,7 @@ pub fn authorize(
         if scope.prefixes.is_empty() {
             return true; // Full bucket access
         }
-        scope
-            .prefixes
-            .iter()
-            .any(|prefix| key.starts_with(prefix))
+        scope.prefixes.iter().any(|prefix| key.starts_with(prefix))
     });
 
     if authorized {
@@ -264,4 +269,3 @@ pub fn authorize(
         Err(ProxyError::AccessDenied)
     }
 }
-

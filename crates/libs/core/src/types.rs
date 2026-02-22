@@ -142,12 +142,8 @@ pub struct TemporaryCredentials {
 #[derive(Debug, Clone)]
 pub enum ResolvedIdentity {
     Anonymous,
-    LongLived {
-        credential: StoredCredential,
-    },
-    Temporary {
-        credentials: TemporaryCredentials,
-    },
+    LongLived { credential: StoredCredential },
+    Temporary { credentials: TemporaryCredentials },
 }
 
 /// The parsed S3 operation extracted from an incoming request.
@@ -198,12 +194,6 @@ pub enum S3Operation {
     },
     /// List all virtual buckets exposed by the proxy.
     ListBuckets,
-    /// STS AssumeRoleWithWebIdentity (served on the same endpoint).
-    AssumeRoleWithWebIdentity {
-        role_arn: String,
-        web_identity_token: String,
-        duration_seconds: Option<u64>,
-    },
 }
 
 impl S3Operation {
@@ -220,7 +210,6 @@ impl S3Operation {
             S3Operation::AbortMultipartUpload { .. } => Action::AbortMultipartUpload,
             S3Operation::DeleteObject { .. } => Action::DeleteObject,
             S3Operation::ListBuckets => Action::ListBucket,
-            S3Operation::AssumeRoleWithWebIdentity { .. } => Action::GetObject, // STS is handled separately
         }
     }
 
@@ -237,7 +226,6 @@ impl S3Operation {
             | S3Operation::AbortMultipartUpload { bucket, .. }
             | S3Operation::DeleteObject { bucket, .. } => Some(bucket),
             S3Operation::ListBuckets => None,
-            S3Operation::AssumeRoleWithWebIdentity { .. } => None,
         }
     }
 
@@ -253,8 +241,7 @@ impl S3Operation {
             | S3Operation::AbortMultipartUpload { key, .. }
             | S3Operation::DeleteObject { key, .. } => key,
             S3Operation::ListBucket { .. }
-            | S3Operation::ListBuckets
-            | S3Operation::AssumeRoleWithWebIdentity { .. } => "",
+            | S3Operation::ListBuckets => "",
         }
     }
 }
@@ -301,13 +288,6 @@ mod tests {
         assert_eq!(op.bucket(), Some("my-bucket"));
 
         assert_eq!(S3Operation::ListBuckets.bucket(), None);
-
-        let op = S3Operation::AssumeRoleWithWebIdentity {
-            role_arn: "arn".into(),
-            web_identity_token: "tok".into(),
-            duration_seconds: None,
-        };
-        assert_eq!(op.bucket(), None);
     }
 
     #[test]

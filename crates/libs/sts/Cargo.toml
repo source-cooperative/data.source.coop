@@ -1,5 +1,5 @@
 [package]
-name = "s3-proxy-auth"
+name = "s3-proxy-sts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,3 +18,5 @@ rsa.workspace = true
 sha2.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
+quick-xml.workspace = true
+url.workspace = true

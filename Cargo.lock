@@ -2079,24 +2079,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "s3-proxy-auth"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "chrono",
- "reqwest",
- "rsa",
- "s3-proxy-core",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "s3-proxy-cf-workers"
 version = "0.1.0"
 dependencies = [
@@ -2113,9 +2095,9 @@ dependencies = [
  "js-sys",
  "object_store",
  "quick-xml 0.37.5",
- "s3-proxy-auth",
  "s3-proxy-core",
  "s3-proxy-source-coop",
+ "s3-proxy-sts",
  "serde",
  "serde_json",
  "thiserror",
@@ -2186,9 +2168,9 @@ dependencies = [
  "hyper-util",
  "object_store",
  "reqwest",
- "s3-proxy-auth",
  "s3-proxy-core",
  "s3-proxy-source-coop",
+ "s3-proxy-sts",
  "serde",
  "thiserror",
  "tokio",
@@ -2208,6 +2190,26 @@ dependencies = [
  "serde_json",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "s3-proxy-sts"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "quick-xml 0.37.5",
+ "reqwest",
+ "rsa",
+ "s3-proxy-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

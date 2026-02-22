@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 s3-proxy-core = { workspace = true, features = [] }
-s3-proxy-auth.workspace = true
+s3-proxy-sts.workspace = true
 s3-proxy-source-coop.workspace = true
 bytes.workspace = true
 http.workspace = true

@@ -15,20 +15,6 @@ pub fn parse_s3_request(
     _headers: &http::HeaderMap,
     host_style: HostStyle,
 ) -> Result<S3Operation, ProxyError> {
-    // Check for STS actions in query params
-    if let Some(q) = query {
-        let params: Vec<(String, String)> = url::form_urlencoded::parse(q.as_bytes())
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-
-        let action = params.iter().find(|(k, _)| k == "Action");
-        if let Some((_, action_value)) = action {
-            if action_value == "AssumeRoleWithWebIdentity" {
-                return parse_sts_request(&params);
-            }
-        }
-    }
-
     // GET / with path-style → ListBuckets (no bucket in path)
     if matches!(host_style, HostStyle::Path) && uri_path.trim_start_matches('/').is_empty() {
         if *method == Method::GET {
@@ -163,29 +149,4 @@ fn parse_query_params(query: Option<&str>) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn parse_sts_request(params: &[(String, String)]) -> Result<S3Operation, ProxyError> {
-    let role_arn = params
-        .iter()
-        .find(|(k, _)| k == "RoleArn")
-        .map(|(_, v)| v.clone())
-        .ok_or_else(|| ProxyError::InvalidRequest("missing RoleArn".into()))?;
-
-    let web_identity_token = params
-        .iter()
-        .find(|(k, _)| k == "WebIdentityToken")
-        .map(|(_, v)| v.clone())
-        .ok_or_else(|| ProxyError::InvalidRequest("missing WebIdentityToken".into()))?;
-
-    let duration_seconds = params
-        .iter()
-        .find(|(k, _)| k == "DurationSeconds")
-        .and_then(|(_, v)| v.parse().ok());
-
-    Ok(S3Operation::AssumeRoleWithWebIdentity {
-        role_arn,
-        web_identity_token,
-        duration_seconds,
-    })
 }

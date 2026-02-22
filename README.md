@@ -26,7 +26,7 @@ flowchart
 crates/
 ├── libs/                         # Libraries — not directly runnable
 │   ├── core/  (s3-proxy-core)    # Runtime-agnostic: traits, S3 parsing, SigV4, config providers
-│   └── auth/  (s3-proxy-auth)    # OIDC/STS token exchange (AssumeRoleWithWebIdentity)
+│   └── sts/   (s3-proxy-sts)     # OIDC/STS token exchange (AssumeRoleWithWebIdentity)
 └── runtimes/                     # Runnable targets — one per deployment platform
     ├── server/ (s3-proxy-server) # Tokio/Hyper for container deployments
     └── cf-workers/ (s3-proxy-cf-workers) # Cloudflare Workers for edge deployments

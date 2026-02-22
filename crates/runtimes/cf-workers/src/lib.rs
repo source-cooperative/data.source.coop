@@ -102,9 +102,12 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         }
 
-        let http_client = client::WorkerHttpClient;
-        let api_client =
-            SourceApiClient::new(http_client, source_api_url.to_string(), source_api_key, cache_ttls);
+        let api_client = SourceApiClient::new(
+            client::WorkerHttpClient,
+            source_api_url.to_string(),
+            source_api_key,
+            cache_ttls,
+        );
         let resolver = SourceCoopResolver::new(api_client);
         let handler = ProxyHandler::new(client::WorkerBackend, resolver);
 
@@ -121,7 +124,10 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     //   - JS object (e.g., set via `[vars.PROXY_CONFIG]` table in wrangler.toml)
     let config = if let Ok(var) = env.var("PROXY_CONFIG") {
         let config_str = var.to_string();
-        tracing::debug!(config_len = config_str.len(), "loaded PROXY_CONFIG as string");
+        tracing::debug!(
+            config_len = config_str.len(),
+            "loaded PROXY_CONFIG as string"
+        );
         StaticProvider::from_json(&config_str)
             .map_err(|e| worker::Error::RustError(format!("config error: {}", e)))?
     } else {
@@ -154,13 +160,15 @@ async fn read_request_body(req: &Request) -> Result<bytes::Bytes> {
             let response = web_sys::Response::new_with_opt_readable_stream(Some(&stream))
                 .map_err(|e| worker::Error::RustError(format!("failed to wrap stream: {:?}", e)))?;
 
-            let array_buffer_promise = response
-                .array_buffer()
-                .map_err(|e| worker::Error::RustError(format!("failed to get arrayBuffer: {:?}", e)))?;
+            let array_buffer_promise = response.array_buffer().map_err(|e| {
+                worker::Error::RustError(format!("failed to get arrayBuffer: {:?}", e))
+            })?;
 
             let array_buffer = wasm_bindgen_futures::JsFuture::from(array_buffer_promise)
                 .await
-                .map_err(|e| worker::Error::RustError(format!("failed to read arrayBuffer: {:?}", e)))?;
+                .map_err(|e| {
+                    worker::Error::RustError(format!("failed to read arrayBuffer: {:?}", e))
+                })?;
 
             let uint8 = js_sys::Uint8Array::new(&array_buffer);
             Ok(bytes::Bytes::from(uint8.to_vec()))

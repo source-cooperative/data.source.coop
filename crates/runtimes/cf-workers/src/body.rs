@@ -14,9 +14,7 @@ use worker::{Headers, Response};
 /// Stream bodies are bridged to JS `ReadableStream` via a `TransformStream`:
 /// a spawn_local task reads Rust stream chunks and writes them to the
 /// writable side; the readable side is used for the Response.
-pub fn build_worker_response(
-    result: ProxyResult,
-) -> Result<Response, worker::Error> {
+pub fn build_worker_response(result: ProxyResult) -> Result<Response, worker::Error> {
     let resp_headers = Headers::new();
     for (key, value) in result.headers.iter() {
         if let Ok(v) = value.to_str() {
@@ -25,6 +23,7 @@ pub fn build_worker_response(
     }
 
     match result.body {
+        // TODO: This seems like it violates the need to keep streams in the JS form
         ProxyResponseBody::Stream(stream) => {
             // Bridge Rust Stream<Bytes> -> JS ReadableStream via TransformStream
             let transform = web_sys::TransformStream::new()
@@ -42,8 +41,10 @@ pub fn build_worker_response(
                     match chunk_result {
                         Ok(bytes) => {
                             let uint8 = Uint8Array::from(bytes.as_ref());
-                            if let Err(_) =
-                                wasm_bindgen_futures::JsFuture::from(writer.write_with_chunk(&uint8.into())).await
+                            if let Err(_) = wasm_bindgen_futures::JsFuture::from(
+                                writer.write_with_chunk(&uint8.into()),
+                            )
+                            .await
                             {
                                 break;
                             }

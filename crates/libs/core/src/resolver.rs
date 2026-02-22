@@ -91,14 +91,6 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
         let operation = request::parse_s3_request(method, path, query, headers, host_style)?;
         tracing::debug!(operation = ?operation, "parsed S3 operation");
 
-        // Handle STS requests separately (no bucket lookup needed)
-        if let S3Operation::AssumeRoleWithWebIdentity { .. } = &operation {
-            tracing::info!("STS AssumeRoleWithWebIdentity request");
-            return Err(ProxyError::InvalidRequest(
-                "STS endpoint: use s3-proxy-auth crate for OIDC token exchange".into(),
-            ));
-        }
-
         // Handle ListBuckets — returns virtual bucket list from config, no backend call
         if matches!(operation, S3Operation::ListBuckets) {
             let buckets = self.config.list_buckets().await?;

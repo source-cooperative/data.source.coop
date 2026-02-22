@@ -1,4 +1,4 @@
-# s3-proxy-auth
+# s3-proxy-sts
 
 OIDC token exchange and STS credential minting for the S3 proxy gateway. Implements the `AssumeRoleWithWebIdentity` flow, allowing workloads like GitHub Actions to exchange OIDC JWTs for temporary, scoped S3 credentials.
 
@@ -10,7 +10,7 @@ GitHub Actions (or any OIDC provider)
     │  JWT (signed by provider)
     ▼
 ┌─────────────────────────────┐
-│  s3-proxy-auth              │
+│  s3-proxy-sts              │
 │                             │
 │  1. Decode JWT header       │
 │  2. Fetch JWKS from issuer  │
@@ -41,9 +41,11 @@ If you need to use a different HTTP client for JWKS fetching (e.g., the Workers 
 
 ```
 src/
-├── lib.rs    Entry point: assume_role_with_web_identity(), subject glob matching
-├── jwks.rs   JWKS fetching, JWK parsing, JWT signature verification
-└── sts.rs    Temporary credential minting (AccessKeyId/SecretAccessKey/SessionToken)
+├── lib.rs       Entry point: assume_role_with_web_identity(), subject glob matching
+├── request.rs   STS request parsing (AssumeRoleWithWebIdentity query params)
+├── responses.rs STS XML response serialization
+├── jwks.rs      JWKS fetching, JWK parsing, JWT signature verification
+└── sts.rs       Temporary credential minting (AccessKeyId/SecretAccessKey/SessionToken)
 ```
 
 ## Usage
@@ -51,13 +53,18 @@ src/
 Called by the proxy handler when it receives an STS `AssumeRoleWithWebIdentity` request:
 
 ```rust
-use s3_proxy_auth::assume_role_with_web_identity;
+use s3_proxy_sts::assume_role_with_web_identity;
+use s3_proxy_sts::request::{StsRequest, try_parse_sts_request};
+
+// Parse from query string
+let sts_request = try_parse_sts_request(Some(query))
+    .transpose()?       // Option<Result<..>> → Result<Option<..>>
+    .expect("STS request");
 
 let creds = assume_role_with_web_identity(
     &config_provider,
-    "github-actions-deployer",   // role ARN
-    &jwt_token,                   // OIDC token from the client
-    Some(3600),                   // session duration (seconds)
+    &sts_request,
+    "TEMPKEY",            // key prefix for minted credentials
 ).await?;
 
 // creds.access_key_id, creds.secret_access_key, creds.session_token

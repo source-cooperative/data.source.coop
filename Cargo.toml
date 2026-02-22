@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/libs/core",
-    "crates/libs/auth",
+    "crates/libs/sts",
     "crates/libs/oidc-provider",
     "crates/libs/source-coop",
     "crates/runtimes/server",
@@ -12,7 +12,7 @@ members = [
 # separately via: cargo check -p s3-proxy-cf-workers --target wasm32-unknown-unknown
 default-members = [
     "crates/libs/core",
-    "crates/libs/auth",
+    "crates/libs/sts",
     "crates/libs/oidc-provider",
     "crates/libs/source-coop",
     "crates/runtimes/server",
@@ -72,6 +72,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Internal crates
 s3-proxy-core = { path = "crates/libs/core" }
-s3-proxy-auth = { path = "crates/libs/auth" }
+s3-proxy-sts = { path = "crates/libs/sts" }
 s3-proxy-oidc-provider = { path = "crates/libs/oidc-provider" }
 s3-proxy-source-coop = { path = "crates/libs/source-coop" }

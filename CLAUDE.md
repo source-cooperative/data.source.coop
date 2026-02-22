@@ -7,7 +7,7 @@ The intention of this codebase is to serve as a data proxy for the Source Cooper
 ## Workspace Structure
 
 - `crates/libs/core` — Core proxy logic, traits, config, S3 request parsing
-- `crates/libs/auth` — Authentication (SigV4 verification, JWT)
+- `crates/libs/sts` — OIDC/STS token exchange (AssumeRoleWithWebIdentity, JWT validation)
 - `crates/runtimes/server` — Tokio/Hyper server runtime
 - `crates/runtimes/cf-workers` — Cloudflare Workers runtime (WASM)
 

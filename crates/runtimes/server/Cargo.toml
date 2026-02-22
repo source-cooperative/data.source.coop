@@ -7,7 +7,7 @@ description = "Tokio/Hyper runtime for the S3 proxy gateway"
 
 [dependencies]
 s3-proxy-core = { workspace = true, features = ["azure", "gcp"] }
-s3-proxy-auth.workspace = true
+s3-proxy-sts.workspace = true
 s3-proxy-source-coop.workspace = true
 tokio.workspace = true
 hyper.workspace = true
