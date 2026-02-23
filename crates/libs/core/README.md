@@ -10,7 +10,7 @@ The proxy needs to run on fundamentally different runtimes: Tokio/Hyper in conta
 
 The core defines three trait boundaries that runtime crates implement:
 
-**`ProxyBackend`** — Creates `object_store` instances for high-level S3 operations (GET, HEAD, PUT, LIST) and provides a `send_raw()` method for multipart operations that require signed HTTP requests. The server runtime uses `object_store`'s default HTTP connector + reqwest; the worker runtime uses a custom `FetchConnector` that bridges to the JS Fetch API.
+**`ProxyBackend`** — Provides three capabilities: `create_store()` returns an `ObjectStore` for LIST, `create_signer()` returns a `Signer` for presigned URL generation (GET/HEAD/PUT/DELETE), and `send_raw()` sends signed HTTP requests for multipart operations. Both runtimes delegate to `build_signer()` which uses `object_store`'s built-in signer for authenticated backends and `UnsignedUrlSigner` for anonymous backends (avoiding `Instant::now()` which panics on WASM). For `create_store()`, the server runtime uses default connectors + reqwest; the worker runtime uses a custom `FetchConnector`.
 
 **`ConfigProvider`** — Retrieves bucket, role, and credential configuration. Ships with four implementations behind feature flags:
 
@@ -32,7 +32,7 @@ Any provider can be wrapped with `CachedProvider` for in-memory TTL caching.
 ```
 src/
 ├── auth.rs          SigV4 verification, identity resolution, authorization
-├── backend.rs       ProxyBackend trait, S3RequestSigner (multipart), RawResponse
+├── backend.rs       ProxyBackend trait, Signer/StoreBuilder, S3RequestSigner (multipart)
 ├── config/
 │   ├── mod.rs       ConfigProvider trait definition
 │   ├── cached.rs    TTL caching wrapper for any provider
@@ -47,7 +47,7 @@ src/
 │   ├── request.rs   Parse incoming HTTP → S3Operation enum
 │   ├── response.rs  Serialize S3 XML responses
 │   └── list_rewrite.rs  Rewrite <Key>/<Prefix> values in list response XML
-├── response_body.rs ProxyResponseBody enum (Stream, Bytes, Empty)
+├── response_body.rs ProxyResponseBody enum (Bytes, Empty)
 └── types.rs         BucketConfig, RoleConfig, StoredCredential, etc.
 ```
 
@@ -71,8 +71,8 @@ let resolver = DefaultResolver::new(config, Some("s3.example.com".into()));
 let handler = ProxyHandler::new(backend, resolver);
 
 // In your HTTP handler:
-let result = handler.handle_request(method, path, query, &headers, body).await;
-// Convert `result` (ProxyResult with ProxyResponseBody) to your runtime's HTTP response.
+let action = handler.resolve_request(method, path, query, &headers).await;
+// Handle action: Forward (presigned URL), Response (ProxyResult), or NeedsBody (multipart)
 ```
 
 ### Custom resolver
@@ -104,7 +104,7 @@ impl RequestResolver for MyResolver {
 let handler = ProxyHandler::new(backend, MyResolver::new());
 ```
 
-See `s3-proxy-cf-workers/src/source_resolver.rs` for a real-world example that maps a `/{account}/{repo}/{key}` namespace to dynamically-resolved S3 backends with external API authorization.
+See `crates/libs/source-coop/src/resolver.rs` for a real-world example that maps a `/{account}/{repo}/{key}` namespace to dynamically-resolved S3 backends with external API authorization.
 
 ## Feature Flags
 

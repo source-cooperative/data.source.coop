@@ -7,10 +7,9 @@
 use crate::fetch_connector::FetchConnector;
 use bytes::Bytes;
 use http::HeaderMap;
+use object_store::signer::Signer;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{
-    build_object_store, ProxyBackend, RawResponse, RawStreamingResponse, StoreBuilder,
-};
+use s3_proxy_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder};
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::BucketConfig;
 use s3_proxy_source_coop::api::{CacheOptions, HttpClient};
@@ -111,35 +110,6 @@ impl HttpClient for WorkerHttpClient {
     }
 }
 
-/// Headers to extract from backend streaming responses.
-const RESPONSE_HEADER_ALLOWLIST: &[&str] = &[
-    "content-type",
-    "content-length",
-    "content-range",
-    "etag",
-    "last-modified",
-    "accept-ranges",
-    "content-encoding",
-    "content-disposition",
-    "cache-control",
-    "x-amz-request-id",
-    "x-amz-version-id",
-    "location",
-];
-
-/// Extract response headers from a `web_sys::Headers` using an allowlist.
-fn extract_response_headers(ws_headers: &web_sys::Headers) -> HeaderMap {
-    let mut resp_headers = HeaderMap::new();
-    for name in RESPONSE_HEADER_ALLOWLIST {
-        if let Ok(Some(value)) = ws_headers.get(name) {
-            if let Ok(parsed) = value.parse() {
-                resp_headers.insert(*name, parsed);
-            }
-        }
-    }
-    resp_headers
-}
-
 /// Backend for the Cloudflare Workers runtime.
 ///
 /// Uses `FetchConnector` for `object_store` HTTP requests and `web_sys::fetch`
@@ -148,12 +118,14 @@ fn extract_response_headers(ws_headers: &web_sys::Headers) -> HeaderMap {
 pub struct WorkerBackend;
 
 impl ProxyBackend for WorkerBackend {
-    type NativeBody = Option<web_sys::ReadableStream>;
-
     fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
         build_object_store(config, |b| match b {
             StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)),
         })
+    }
+
+    fn create_signer(&self, config: &BucketConfig) -> Result<Arc<dyn Signer>, ProxyError> {
+        build_signer(config)
     }
 
     async fn send_raw(
@@ -219,58 +191,33 @@ impl ProxyBackend for WorkerBackend {
             body: Bytes::from(resp_bytes),
         })
     }
+}
 
-    async fn send_streaming(
-        &self,
-        method: http::Method,
-        url: String,
-        headers: HeaderMap,
-    ) -> Result<RawStreamingResponse<Self::NativeBody>, ProxyError> {
-        tracing::debug!(
-            method = %method,
-            url = %url,
-            "worker: sending streaming backend request via Fetch API"
-        );
+/// Headers to extract from backend responses.
+pub const RESPONSE_HEADER_ALLOWLIST: &[&str] = &[
+    "content-type",
+    "content-length",
+    "content-range",
+    "etag",
+    "last-modified",
+    "accept-ranges",
+    "content-encoding",
+    "content-disposition",
+    "cache-control",
+    "x-amz-request-id",
+    "x-amz-version-id",
+    "location",
+];
 
-        // Build web_sys::Headers
-        let ws_headers = web_sys::Headers::new()
-            .map_err(|e| ProxyError::Internal(format!("failed to create Headers: {:?}", e)))?;
-
-        for (key, value) in headers.iter() {
-            if let Ok(v) = value.to_str() {
-                let _ = ws_headers.set(key.as_str(), v);
+/// Extract response headers from a `web_sys::Headers` using an allowlist.
+pub fn extract_response_headers(ws_headers: &web_sys::Headers) -> HeaderMap {
+    let mut resp_headers = HeaderMap::new();
+    for name in RESPONSE_HEADER_ALLOWLIST {
+        if let Ok(Some(value)) = ws_headers.get(name) {
+            if let Ok(parsed) = value.parse() {
+                resp_headers.insert(*name, parsed);
             }
         }
-
-        // Build web_sys::RequestInit
-        let init = web_sys::RequestInit::new();
-        init.set_method(method.as_str());
-        init.set_headers(&ws_headers.into());
-
-        let ws_request =
-            web_sys::Request::new_with_str_and_init(&url, &init).map_err(|e| {
-                ProxyError::BackendError(format!("failed to create request: {:?}", e))
-            })?;
-
-        // Fetch via worker — returns a JS Response with a ReadableStream body
-        let worker_req: worker::Request = ws_request.into();
-        let worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
-            ProxyError::BackendError(format!("fetch failed: {}", e))
-        })?;
-
-        let status = worker_resp.status_code();
-
-        // Extract response headers and body stream from the web_sys::Response
-        let ws_response: web_sys::Response = worker_resp.into();
-        let resp_headers = extract_response_headers(&ws_response.headers());
-
-        // Get the ReadableStream directly — no conversion to Rust types!
-        let body = ws_response.body();
-
-        Ok(RawStreamingResponse {
-            status,
-            headers: resp_headers,
-            body,
-        })
     }
+    resp_headers
 }

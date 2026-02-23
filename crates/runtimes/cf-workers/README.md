@@ -1,6 +1,6 @@
 # s3-proxy-cf-workers
 
-Cloudflare Workers runtime for the S3 proxy gateway. Deploys the proxy to the edge using Cloudflare's global network, using `object_store` with a custom `FetchConnector` that bridges to the Workers Fetch API.
+Cloudflare Workers runtime for the S3 proxy gateway. Deploys the proxy to the edge using Cloudflare's global network, using presigned URLs for zero-copy streaming and `object_store` with a custom `FetchConnector` for LIST operations.
 
 ## How It Works
 
@@ -11,23 +11,23 @@ Client request
     -> Pick resolver:
        - SOURCE_API_URL set? -> SourceCoopResolver (dynamic Source Cooperative backends)
        - Otherwise           -> DefaultResolver (static PROXY_CONFIG)
-    -> ProxyHandler::handle_request() (from s3-proxy-core)
-    -> object_store (via FetchConnector) or raw fetch for multipart
-    -> ProxyResponseBody converted to worker::Response
+    -> ProxyHandler::resolve_request() (from s3-proxy-core)
+    -> Forward: fetch(presigned URL) with ReadableStream passthrough (GET/HEAD/PUT/DELETE)
+    -> Response: LIST XML via object_store, errors, synthetic responses
+    -> NeedsBody: multipart operations via raw signed HTTP
 ```
 
-`WorkerBackend` implements `ProxyBackend` using a custom `FetchConnector` that bridges `object_store` HTTP requests to the Workers Fetch API. Since JS interop types are `!Send`, `spawn_local` + channel patterns are used to bridge to the `Send` context that `object_store` expects. Response body streams are converted to JS `ReadableStream` via `TransformStream` for delivery to clients.
+`WorkerBackend` implements `ProxyBackend` with three capabilities: `create_signer()` generates presigned URLs for CRUD operations (executed via the Fetch API with JS `ReadableStream` passthrough — zero Rust stream involvement), `create_store()` uses a custom `FetchConnector` for LIST operations, and `send_raw()` handles multipart uploads. `FetchConnector` bridges `object_store` to the Workers Fetch API using `spawn_local` + channel patterns (since JS interop types are `!Send`).
 
 ## Module Overview
 
 ```
 src/
-├── lib.rs              Worker entry point, request/response conversion (thin adapter)
-├── body.rs             ProxyResponseBody → worker::Response conversion
-├── client.rs           WorkerBackend implementing ProxyBackend, fetch_json helper
-├── fetch_connector.rs  FetchConnector/FetchService bridging object_store to Fetch API
-├── source_api.rs       HTTP client for the Source Cooperative API
-└── source_resolver.rs  SourceCoopResolver implementing RequestResolver
+├── lib.rs              Worker entry point, two-phase request handling, Forward execution
+├── body.rs             ProxyResult → worker::Response conversion (Bytes/Empty only)
+├── client.rs           WorkerBackend implementing ProxyBackend, WorkerHttpClient
+├── fetch_connector.rs  FetchConnector/FetchService bridging object_store to Fetch API (LIST only)
+└── tracing_layer.rs    Minimal tracing subscriber for Workers console_log
 ```
 
 ## Operating Modes
@@ -95,8 +95,7 @@ Then add a branch in `lib.rs`:
 if let Ok(my_config) = env.var("MY_MODE") {
     let resolver = MyResolver::new(/* ... */);
     let handler = ProxyHandler::new(client::WorkerBackend, resolver);
-    let result = handler.handle_request(method, &path, query.as_deref(), &headers, body).await;
-    return build_worker_response(result);
+    return handle_action(&req, method, &handler, &path, query.as_deref(), &headers).await;
 }
 ```
 

@@ -32,7 +32,7 @@ crates/
     └── cf-workers/ (s3-proxy-cf-workers) # Cloudflare Workers for edge deployments
 ```
 
-Libraries define trait abstractions (`ProxyBackend`, `ConfigProvider`, `RequestResolver`). Runtimes implement `ProxyBackend` with platform-native primitives: the server runtime uses `object_store` with its default HTTP connector and `reqwest` for raw multipart requests; the Workers runtime uses a custom `FetchConnector` that bridges `object_store` to the JS Fetch API.
+Libraries define trait abstractions (`ProxyBackend`, `ConfigProvider`, `RequestResolver`). Runtimes implement `ProxyBackend` with platform-native primitives. The handler uses a two-phase dispatch model: `resolve_request()` returns a `HandlerAction` — either a `Forward` (presigned URL for GET/HEAD/PUT/DELETE), a `Response` (LIST, errors), or `NeedsBody` (multipart). Runtimes execute `Forward` requests with their native HTTP client, enabling zero-copy streaming.
 
 The `RequestResolver` trait decouples "what to do with a request" from the proxy handler. A `DefaultResolver` handles standard S3 proxy behavior (parse, auth, authorize via `ConfigProvider`), while custom resolvers like `SourceCoopResolver` can implement entirely different namespace mapping and authorization schemes.
 
@@ -248,7 +248,8 @@ Wire it into the proxy handler in your runtime:
 ```rust
 let resolver = MyResolver::new(/* ... */);
 let handler = ProxyHandler::new(backend, resolver);
-let result = handler.handle_request(method, path, query, &headers, body).await;
+let action = handler.resolve_request(method, path, query, &headers).await;
+// Handle action: Forward (presigned URL), Response, or NeedsBody (multipart)
 ```
 
 ### Caching Configuration
@@ -316,11 +317,11 @@ The proxy validates the JWT against the OIDC provider's JWKS, checks the trust p
 
 The crate workspace separates concerns so the core logic compiles to both native and WASM targets:
 
-**`s3-proxy-core`** has zero runtime dependencies. No `tokio`, no `worker`. It uses `object_store` for high-level operations (GET, HEAD, PUT, LIST) and a `ProxyBackend` trait for runtime-specific store creation and raw HTTP (multipart). All async trait methods use `impl Future` (RPITIT) rather than `#[async_trait]` with `Send` bounds, so they compile on single-threaded WASM runtimes.
+**`s3-proxy-core`** has zero runtime dependencies. No `tokio`, no `worker`. It uses `object_store`'s `Signer` trait to generate presigned URLs for GET/HEAD/PUT/DELETE, and `object_store` directly for LIST. A `ProxyBackend` trait provides runtime-specific store/signer creation and raw HTTP (multipart). All async trait methods use `impl Future` (RPITIT) rather than `#[async_trait]` with `Send` bounds, so they compile on single-threaded WASM runtimes.
 
-**`s3-proxy-server`** adds Tokio, Hyper, and reqwest. It implements `ProxyBackend` using `object_store`'s default HTTP connector for high-level operations and reqwest for raw multipart requests. GET responses stream from `object_store` through Hyper without buffering.
+**`s3-proxy-server`** adds Tokio, Hyper, and reqwest. It handles `Forward` actions by executing presigned URLs via reqwest — streaming the Hyper `Incoming` body for PUT and the reqwest `bytes_stream()` for GET responses. No buffering. Multipart and LIST go through the handler's `Response` path.
 
-**`s3-proxy-cf-workers`** adds `worker-rs`, `wasm-bindgen`, and `web-sys`. It implements `ProxyBackend` with a custom `FetchConnector` that bridges `object_store` to the Workers Fetch API via `spawn_local` + channel patterns (since JS interop types are `!Send`). Response body streams are converted to JS `ReadableStream` via `TransformStream` for efficient delivery.
+**`s3-proxy-cf-workers`** adds `worker-rs`, `wasm-bindgen`, and `web-sys`. It handles `Forward` actions by passing JS `ReadableStream` bodies directly through the Fetch API — zero Rust stream involvement. `FetchConnector` bridges `object_store` to the Workers Fetch API (used only for LIST).
 
 ## License
 

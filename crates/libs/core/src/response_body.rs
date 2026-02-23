@@ -1,32 +1,24 @@
 //! Response body type for the proxy.
 //!
-//! [`ProxyResponseBody`] is generic over a native body type `N` so that each
-//! runtime can carry its platform-native streaming body through the handler
-//! without intermediate conversion (e.g. JS ReadableStream on CF Workers).
+//! [`ProxyResponseBody`] carries non-streaming response data. Streaming
+//! responses (GET, PUT) are handled by the runtime via [`ForwardRequest`]
+//! presigned URLs — the handler never touches those bytes.
 
 use bytes::Bytes;
-use futures::stream::BoxStream;
 
 /// The body of a proxy response.
 ///
-/// Generic over `N`, the runtime's native streaming body type.
-/// The default `N = ()` is used for responses that don't carry a native body
-/// (errors, list XML, HEAD, etc.).
-pub enum ProxyResponseBody<N = ()> {
-    /// Streaming response from `object_store` GET (non-S3 backends).
-    /// Bytes arrive lazily in chunks.
-    Stream(BoxStream<'static, Result<Bytes, object_store::Error>>),
+/// Only used for responses the handler constructs directly (errors, LIST XML,
+/// multipart XML, HEAD metadata). Streaming GET/PUT bodies bypass this type
+/// entirely via the `Forward` action.
+pub enum ProxyResponseBody {
     /// Fixed bytes (error XML, list XML, multipart XML responses, etc.).
     Bytes(Bytes),
     /// Empty body (HEAD responses, etc.).
     Empty,
-    /// Runtime-native streaming body, bypassing Rust stream intermediaries.
-    /// On CF Workers this is `Option<web_sys::ReadableStream>`;
-    /// on the server runtime it's a reqwest byte stream.
-    Native(N),
 }
 
-impl<N> ProxyResponseBody<N> {
+impl ProxyResponseBody {
     /// Create a response body from raw bytes.
     pub fn from_bytes(bytes: Bytes) -> Self {
         if bytes.is_empty() {

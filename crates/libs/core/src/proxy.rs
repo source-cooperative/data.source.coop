@@ -1,13 +1,22 @@
 //! The main proxy handler that ties together resolution and backend forwarding.
 //!
 //! [`ProxyHandler`] is generic over the runtime's backend and request resolver.
-//! GET/HEAD operations use `send_streaming` for S3 backends (avoiding double
-//! stream conversion) and `object_store` for non-S3 backends. Multipart
-//! operations use raw signed HTTP requests.
+//! It uses a two-phase dispatch model:
+//!
+//! 1. **`resolve_request`** — parses, authenticates, and decides the action:
+//!    - GET/HEAD/PUT/DELETE → [`HandlerAction::Forward`] with a presigned URL
+//!    - LIST → [`HandlerAction::Response`] with XML body
+//!    - Multipart → [`HandlerAction::NeedsBody`] (body required)
+//!    - Errors/synthetic → [`HandlerAction::Response`]
+//!
+//! 2. **`handle_with_body`** — completes multipart operations once the body arrives.
+//!
+//! Runtimes handle [`Forward`] by executing the presigned URL with their native
+//! HTTP client, enabling zero-copy streaming for both request and response bodies.
 
 use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLOAD};
 use crate::error::ProxyError;
-use crate::resolver::{ListRewrite, ResolvedAction, RequestResolver};
+use crate::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use crate::response_body::ProxyResponseBody;
 use crate::s3::response::{
     ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents,
@@ -15,15 +24,50 @@ use crate::s3::response::{
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
-use object_store::{GetOptions, GetRange, ObjectStore, PutPayload};
+use object_store::ObjectStore;
+use std::time::Duration;
 use url::Url;
 use uuid::Uuid;
+
+/// TTL for presigned URLs. Short because they're used immediately.
+const PRESIGNED_URL_TTL: Duration = Duration::from_secs(300);
+
+/// The action the handler wants the runtime to take.
+pub enum HandlerAction {
+    /// A fully formed response (LIST results, errors, synthetic responses).
+    Response(ProxyResult),
+    /// A presigned URL for the runtime to execute with its native HTTP client.
+    /// The runtime streams request/response bodies directly — no handler involvement.
+    Forward(ForwardRequest),
+    /// The handler needs the request body to continue (multipart operations).
+    /// The runtime should materialize the body and call `handle_with_body`.
+    NeedsBody(PendingRequest),
+}
+
+/// A presigned URL request for the runtime to execute.
+pub struct ForwardRequest {
+    /// HTTP method for the backend request.
+    pub method: Method,
+    /// Presigned URL to the backend (includes auth in query params).
+    pub url: Url,
+    /// Headers to include in the backend request (Range, If-Match, Content-Type, etc.).
+    pub headers: HeaderMap,
+}
+
+/// Opaque state for a multipart operation that needs the request body.
+pub struct PendingRequest {
+    method: Method,
+    operation: S3Operation,
+    bucket_config: BucketConfig,
+    original_headers: HeaderMap,
+    request_id: String,
+}
 
 /// The core proxy handler, generic over runtime primitives.
 ///
 /// # Type Parameters
 ///
-/// - `B`: The runtime's backend for object store creation and raw HTTP
+/// - `B`: The runtime's backend for object store creation, signing, and raw HTTP
 /// - `R`: The request resolver that decides what action to take for each request
 pub struct ProxyHandler<B, R> {
     backend: B,
@@ -39,19 +83,21 @@ where
         Self { backend, resolver }
     }
 
-    /// Handle an incoming S3 request.
+    /// Phase 1: Resolve an incoming request into an action.
     ///
     /// This is the main entry point. It:
     /// 1. Resolves the request via the resolver (parse, auth, authorize)
-    /// 2. Forwards the request to the backing store or returns a synthetic response
-    pub async fn handle_request(
+    /// 2. Determines what the runtime should do next:
+    ///    - `Forward` a presigned URL (GET/HEAD/PUT/DELETE)
+    ///    - Return a `Response` directly (LIST, errors, synthetic)
+    ///    - Request the body via `NeedsBody` (multipart)
+    pub async fn resolve_request(
         &self,
         method: Method,
         path: &str,
         query: Option<&str>,
         headers: &HeaderMap,
-        body: Bytes,
-    ) -> ProxyResult<B::NativeBody> {
+    ) -> HandlerAction {
         let request_id = Uuid::new_v4().to_string();
 
         tracing::info!(
@@ -63,16 +109,33 @@ where
         );
 
         match self
-            .handle_inner(method, path, query, headers, body)
+            .resolve_inner(method, path, query, headers, &request_id)
             .await
         {
-            Ok(resp) => {
-                tracing::info!(
-                    request_id = %request_id,
-                    status = resp.status,
-                    "request completed"
-                );
-                resp
+            Ok(action) => {
+                match &action {
+                    HandlerAction::Response(resp) => {
+                        tracing::info!(
+                            request_id = %request_id,
+                            status = resp.status,
+                            "request completed"
+                        );
+                    }
+                    HandlerAction::Forward(fwd) => {
+                        tracing::info!(
+                            request_id = %request_id,
+                            method = %fwd.method,
+                            "forwarding via presigned URL"
+                        );
+                    }
+                    HandlerAction::NeedsBody(_) => {
+                        tracing::debug!(
+                            request_id = %request_id,
+                            "request needs body (multipart)"
+                        );
+                    }
+                }
+                action
             }
             Err(err) => {
                 tracing::warn!(
@@ -82,19 +145,49 @@ where
                     s3_code = %err.s3_error_code(),
                     "request failed"
                 );
-                error_response(&err, path, &request_id)
+                HandlerAction::Response(error_response(&err, path, &request_id))
             }
         }
     }
 
-    async fn handle_inner(
+    /// Phase 2: Complete a multipart operation with the request body.
+    ///
+    /// Called by the runtime after materializing the body for a `NeedsBody` action.
+    pub async fn handle_with_body(
+        &self,
+        pending: PendingRequest,
+        body: Bytes,
+    ) -> ProxyResult {
+        match self.execute_multipart(&pending, body).await {
+            Ok(result) => {
+                tracing::info!(
+                    request_id = %pending.request_id,
+                    status = result.status,
+                    "multipart request completed"
+                );
+                result
+            }
+            Err(err) => {
+                tracing::warn!(
+                    request_id = %pending.request_id,
+                    error = %err,
+                    status = err.status_code(),
+                    s3_code = %err.s3_error_code(),
+                    "multipart request failed"
+                );
+                error_response(&err, pending.operation.key(), &pending.request_id)
+            }
+        }
+    }
+
+    async fn resolve_inner(
         &self,
         method: Method,
         path: &str,
         query: Option<&str>,
         headers: &HeaderMap,
-        body: Bytes,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        request_id: &str,
+    ) -> Result<HandlerAction, ProxyError> {
         let action = self.resolver.resolve(&method, path, query, headers).await?;
 
         match action {
@@ -102,56 +195,90 @@ where
                 status,
                 headers: resp_headers,
                 body: resp_body,
-            } => Ok(ProxyResult {
+            } => Ok(HandlerAction::Response(ProxyResult {
                 status,
                 headers: resp_headers,
                 body: ProxyResponseBody::from_bytes(resp_body),
-            }),
+            })),
             ResolvedAction::Proxy {
                 operation,
                 bucket_config,
                 list_rewrite,
             } => {
-                self.forward_to_backend(
+                self.dispatch_operation(
                     &method,
                     &operation,
                     &bucket_config,
                     headers,
-                    body,
                     list_rewrite.as_ref(),
+                    request_id,
                 )
                 .await
             }
         }
     }
 
-    async fn forward_to_backend(
+    async fn dispatch_operation(
         &self,
         method: &Method,
         operation: &S3Operation,
         bucket_config: &BucketConfig,
         original_headers: &HeaderMap,
-        body: Bytes,
         list_rewrite: Option<&ListRewrite>,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+        request_id: &str,
+    ) -> Result<HandlerAction, ProxyError> {
         match operation {
             S3Operation::GetObject { key, .. } => {
-                self.handle_get(bucket_config, key, original_headers).await
+                let fwd = self.build_forward(
+                    Method::GET,
+                    bucket_config,
+                    key,
+                    original_headers,
+                    &["range", "if-match", "if-none-match", "if-modified-since", "if-unmodified-since"],
+                ).await?;
+                tracing::debug!(url = %fwd.url, "GET via presigned URL");
+                Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::HeadObject { key, .. } => {
-                self.handle_head(bucket_config, key, original_headers).await
+                let fwd = self.build_forward(
+                    Method::HEAD,
+                    bucket_config,
+                    key,
+                    original_headers,
+                    &["if-match", "if-none-match", "if-modified-since", "if-unmodified-since"],
+                ).await?;
+                tracing::debug!(url = %fwd.url, "HEAD via presigned URL");
+                Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::PutObject { key, .. } => {
-                self.handle_put(bucket_config, key, body).await
+                let fwd = self.build_forward(
+                    Method::PUT,
+                    bucket_config,
+                    key,
+                    original_headers,
+                    &["content-type", "content-length", "content-md5"],
+                ).await?;
+                tracing::debug!(url = %fwd.url, "PUT via presigned URL");
+                Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::DeleteObject { key, .. } => {
-                self.handle_delete(bucket_config, key).await
+                let fwd = self.build_forward(
+                    Method::DELETE,
+                    bucket_config,
+                    key,
+                    original_headers,
+                    &[],
+                ).await?;
+                tracing::debug!(url = %fwd.url, "DELETE via presigned URL");
+                Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::ListBucket { raw_query, .. } => {
-                self.handle_list(bucket_config, raw_query.as_deref(), list_rewrite)
-                    .await
+                let result = self
+                    .handle_list(bucket_config, raw_query.as_deref(), list_rewrite)
+                    .await?;
+                Ok(HandlerAction::Response(result))
             }
-            // Multipart operations go through raw signed HTTP (S3 only)
+            // Multipart operations need the request body
             S3Operation::CreateMultipartUpload { .. }
             | S3Operation::UploadPart { .. }
             | S3Operation::CompleteMultipartUpload { .. }
@@ -162,322 +289,46 @@ where
                         bucket_config.backend_type
                     )));
                 }
-                self.handle_multipart(method, operation, bucket_config, original_headers, body)
-                    .await
+                Ok(HandlerAction::NeedsBody(PendingRequest {
+                    method: method.clone(),
+                    operation: operation.clone(),
+                    bucket_config: bucket_config.clone(),
+                    original_headers: original_headers.clone(),
+                    request_id: request_id.to_string(),
+                }))
             }
             _ => Err(ProxyError::Internal("unexpected operation".into())),
         }
     }
 
-    /// GET — uses `send_streaming` for S3 backends (zero-copy native body),
-    /// falls back to `object_store` for non-S3 backends.
-    async fn handle_get(
+    /// Build a [`ForwardRequest`] with a presigned URL for the given operation.
+    async fn build_forward(
         &self,
+        method: Method,
         config: &BucketConfig,
         key: &str,
-        headers: &HeaderMap,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        if config.supports_s3_multipart() {
-            return self.handle_get_s3(config, key, headers).await;
-        }
-        self.handle_get_object_store(config, key, headers).await
-    }
-
-    /// GET for S3 backends via `send_streaming` — the response body stays in
-    /// the runtime's native type, avoiding double JS/Rust stream conversion.
-    async fn handle_get_s3(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-        headers: &HeaderMap,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let operation = S3Operation::GetObject {
-            bucket: String::new(),
-            key: key.to_string(),
-        };
-        let backend_url = build_backend_url(config, &operation)?;
-
-        let mut req_headers = HeaderMap::new();
-
-        // Forward conditional and range headers
-        for header_name in &[
-            "range",
-            "if-match",
-            "if-none-match",
-            "if-modified-since",
-            "if-unmodified-since",
-        ] {
-            if let Some(val) = headers.get(*header_name) {
-                req_headers.insert(*header_name, val.clone());
-            }
-        }
-
-        sign_s3_request(&Method::GET, &backend_url, &mut req_headers, config, UNSIGNED_PAYLOAD)?;
-
-        tracing::debug!(backend_url = %backend_url, "GET via send_streaming (S3)");
-
-        let raw = self.backend.send_streaming(Method::GET, backend_url, req_headers).await?;
-
-        // Forward response headers from the backend
-        let mut resp_headers = HeaderMap::new();
-        for header_name in STREAMING_RESPONSE_HEADERS {
-            if let Some(val) = raw.headers.get(*header_name) {
-                resp_headers.insert(*header_name, val.clone());
-            }
-        }
-
-        Ok(ProxyResult {
-            status: raw.status,
-            headers: resp_headers,
-            body: ProxyResponseBody::Native(raw.body),
-        })
-    }
-
-    /// GET for non-S3 backends via `object_store`.
-    async fn handle_get_object_store(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-        headers: &HeaderMap,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let store = self.backend.create_store(config)?;
+        original_headers: &HeaderMap,
+        forward_header_names: &[&'static str],
+    ) -> Result<ForwardRequest, ProxyError> {
+        let signer = self.backend.create_signer(config)?;
         let path = build_object_path(config, key);
 
-        let mut opts = GetOptions::default();
-
-        // Parse conditional headers
-        if let Some(val) = headers.get("if-match").and_then(|v| v.to_str().ok()) {
-            opts.if_match = Some(val.to_string());
-        }
-        if let Some(val) = headers.get("if-none-match").and_then(|v| v.to_str().ok()) {
-            opts.if_none_match = Some(val.to_string());
-        }
-        if let Some(val) = headers.get("if-modified-since").and_then(|v| v.to_str().ok()) {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(val) {
-                opts.if_modified_since = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-        if let Some(val) = headers
-            .get("if-unmodified-since")
-            .and_then(|v| v.to_str().ok())
-        {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(val) {
-                opts.if_unmodified_since = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-
-        // Parse Range header
-        if let Some(range_val) = headers.get("range").and_then(|v| v.to_str().ok()) {
-            if let Some(range) = parse_range_header(range_val) {
-                opts.range = Some(range);
-            }
-        }
-
-        tracing::debug!(path = %path, "GET via object_store");
-
-        let result = store
-            .get_opts(&path, opts)
+        let url = signer
+            .signed_url(method.clone(), &path, PRESIGNED_URL_TTL)
             .await
             .map_err(ProxyError::from_object_store_error)?;
 
-        // Build response headers from metadata
-        let mut resp_headers = HeaderMap::new();
-        if let Some(etag) = &result.meta.e_tag {
-            resp_headers.insert("etag", etag.parse().unwrap());
-        }
-        resp_headers.insert(
-            "last-modified",
-            result
-                .meta
-                .last_modified
-                .format("%a, %d %b %Y %H:%M:%S GMT")
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        let content_length = result.range.end - result.range.start;
-        resp_headers.insert("content-length", content_length.to_string().parse().unwrap());
-        resp_headers.insert("accept-ranges", "bytes".parse().unwrap());
-
-        // If this is a range response, set 206 + Content-Range
-        let status = if result.range.start > 0
-            || result.range.end < result.meta.size
-        {
-            resp_headers.insert(
-                "content-range",
-                format!(
-                    "bytes {}-{}/{}",
-                    result.range.start,
-                    result.range.end.saturating_sub(1),
-                    result.meta.size
-                )
-                .parse()
-                .unwrap(),
-            );
-            206
-        } else {
-            200
-        };
-
-        let stream = result.into_stream();
-
-        Ok(ProxyResult {
-            status,
-            headers: resp_headers,
-            body: ProxyResponseBody::Stream(stream),
-        })
-    }
-
-    /// HEAD — uses `send_streaming` for S3 backends (richer headers from backend),
-    /// falls back to `object_store` for non-S3 backends.
-    async fn handle_head(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-        headers: &HeaderMap,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        if config.supports_s3_multipart() {
-            return self.handle_head_s3(config, key, headers).await;
-        }
-        self.handle_head_object_store(config, key).await
-    }
-
-    /// HEAD for S3 backends via `send_streaming`.
-    async fn handle_head_s3(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-        headers: &HeaderMap,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let operation = S3Operation::HeadObject {
-            bucket: String::new(),
-            key: key.to_string(),
-        };
-        let backend_url = build_backend_url(config, &operation)?;
-
-        let mut req_headers = HeaderMap::new();
-
-        // Forward conditional headers
-        for header_name in &[
-            "if-match",
-            "if-none-match",
-            "if-modified-since",
-            "if-unmodified-since",
-        ] {
-            if let Some(val) = headers.get(*header_name) {
-                req_headers.insert(*header_name, val.clone());
+        let mut fwd_headers = HeaderMap::new();
+        for name in forward_header_names {
+            if let Some(v) = original_headers.get(*name) {
+                fwd_headers.insert(*name, v.clone());
             }
         }
 
-        sign_s3_request(&Method::HEAD, &backend_url, &mut req_headers, config, UNSIGNED_PAYLOAD)?;
-
-        tracing::debug!(backend_url = %backend_url, "HEAD via send_streaming (S3)");
-
-        let raw = self.backend.send_streaming(Method::HEAD, backend_url, req_headers).await?;
-
-        // Forward response headers from the backend
-        let mut resp_headers = HeaderMap::new();
-        for header_name in STREAMING_RESPONSE_HEADERS {
-            if let Some(val) = raw.headers.get(*header_name) {
-                resp_headers.insert(*header_name, val.clone());
-            }
-        }
-
-        Ok(ProxyResult {
-            status: raw.status,
-            headers: resp_headers,
-            body: ProxyResponseBody::Empty,
-        })
-    }
-
-    /// HEAD for non-S3 backends via `object_store`.
-    async fn handle_head_object_store(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let store = self.backend.create_store(config)?;
-        let path = build_object_path(config, key);
-
-        tracing::debug!(path = %path, "HEAD via object_store");
-
-        let meta = store
-            .head(&path)
-            .await
-            .map_err(ProxyError::from_object_store_error)?;
-
-        let mut resp_headers = HeaderMap::new();
-        if let Some(etag) = &meta.e_tag {
-            resp_headers.insert("etag", etag.parse().unwrap());
-        }
-        resp_headers.insert(
-            "last-modified",
-            meta.last_modified
-                .format("%a, %d %b %Y %H:%M:%S GMT")
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        resp_headers.insert("content-length", meta.size.to_string().parse().unwrap());
-        resp_headers.insert("accept-ranges", "bytes".parse().unwrap());
-
-        Ok(ProxyResult {
-            status: 200,
-            headers: resp_headers,
-            body: ProxyResponseBody::Empty,
-        })
-    }
-
-    /// PUT via object_store
-    async fn handle_put(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-        body: Bytes,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let store = self.backend.create_store(config)?;
-        let path = build_object_path(config, key);
-
-        tracing::debug!(path = %path, body_len = body.len(), "PUT via object_store");
-
-        let payload = PutPayload::from(body);
-        let result = store
-            .put(&path, payload)
-            .await
-            .map_err(ProxyError::from_object_store_error)?;
-
-        let mut resp_headers = HeaderMap::new();
-        if let Some(etag) = &result.e_tag {
-            resp_headers.insert("etag", etag.parse().unwrap());
-        }
-
-        Ok(ProxyResult {
-            status: 200,
-            headers: resp_headers,
-            body: ProxyResponseBody::Empty,
-        })
-    }
-
-    /// DELETE via object_store
-    async fn handle_delete(
-        &self,
-        config: &BucketConfig,
-        key: &str,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let store = self.backend.create_store(config)?;
-        let path = build_object_path(config, key);
-
-        tracing::debug!(path = %path, "DELETE via object_store");
-
-        store
-            .delete(&path)
-            .await
-            .map_err(ProxyError::from_object_store_error)?;
-
-        Ok(ProxyResult {
-            status: 204,
-            headers: HeaderMap::new(),
-            body: ProxyResponseBody::Empty,
+        Ok(ForwardRequest {
+            method,
+            url,
+            headers: fwd_headers,
         })
     }
 
@@ -487,7 +338,7 @@ where
         config: &BucketConfig,
         raw_query: Option<&str>,
         list_rewrite: Option<&ListRewrite>,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
+    ) -> Result<ProxyResult, ProxyError> {
         let store = self.backend.create_store(config)?;
 
         // Extract prefix from query string
@@ -549,16 +400,13 @@ where
         })
     }
 
-    /// Multipart operations via raw signed HTTP
-    async fn handle_multipart(
+    /// Execute a multipart operation via raw signed HTTP.
+    async fn execute_multipart(
         &self,
-        method: &Method,
-        operation: &S3Operation,
-        bucket_config: &BucketConfig,
-        original_headers: &HeaderMap,
+        pending: &PendingRequest,
         body: Bytes,
-    ) -> Result<ProxyResult<B::NativeBody>, ProxyError> {
-        let backend_url = build_backend_url(bucket_config, operation)?;
+    ) -> Result<ProxyResult, ProxyError> {
+        let backend_url = build_backend_url(&pending.bucket_config, &pending.operation)?;
 
         tracing::debug!(backend_url = %backend_url, "multipart via raw HTTP");
 
@@ -570,7 +418,7 @@ where
             "content-length",
             "content-md5",
         ] {
-            if let Some(val) = original_headers.get(*header_name) {
+            if let Some(val) = pending.original_headers.get(*header_name) {
                 headers.insert(*header_name, val.clone());
             }
         }
@@ -581,11 +429,11 @@ where
             hash_payload(&body)
         };
 
-        sign_s3_request(method, &backend_url, &mut headers, bucket_config, &payload_hash)?;
+        sign_s3_request(&pending.method, &backend_url, &mut headers, &pending.bucket_config, &payload_hash)?;
 
         let raw_resp = self
             .backend
-            .send_raw(method.clone(), backend_url, headers, body)
+            .send_raw(pending.method.clone(), backend_url, headers, body)
             .await?;
 
         tracing::debug!(status = raw_resp.status, "multipart backend response");
@@ -598,15 +446,15 @@ where
     }
 }
 
-/// The result of handling a proxy request, generic over the native body type.
-pub struct ProxyResult<N = ()> {
+/// The result of handling a proxy request.
+pub struct ProxyResult {
     pub status: u16,
     pub headers: HeaderMap,
-    pub body: ProxyResponseBody<N>,
+    pub body: ProxyResponseBody,
 }
 
-/// Headers to forward from backend streaming responses.
-const STREAMING_RESPONSE_HEADERS: &[&str] = &[
+/// Headers to forward from backend responses (used by runtimes for Forward responses).
+pub const RESPONSE_HEADER_ALLOWLIST: &[&str] = &[
     "content-type",
     "content-length",
     "content-range",
@@ -616,9 +464,12 @@ const STREAMING_RESPONSE_HEADERS: &[&str] = &[
     "content-encoding",
     "content-disposition",
     "cache-control",
+    "x-amz-request-id",
+    "x-amz-version-id",
+    "location",
 ];
 
-fn error_response<N>(err: &ProxyError, resource: &str, request_id: &str) -> ProxyResult<N> {
+fn error_response(err: &ProxyError, resource: &str, request_id: &str) -> ProxyResult {
     let xml = ErrorResponse::from_proxy_error(err, resource, request_id).to_xml();
     let body = ProxyResponseBody::from_bytes(Bytes::from(xml));
     let mut headers = HeaderMap::new();
@@ -633,8 +484,7 @@ fn error_response<N>(err: &ProxyError, resource: &str, request_id: &str) -> Prox
 
 /// Sign an outbound S3 request using credentials from the bucket config.
 ///
-/// If credentials are configured (`access_key_id` + `secret_access_key`),
-/// applies SigV4 signing. Otherwise, just sets the Host header.
+/// Used for multipart operations only. CRUD operations use presigned URLs.
 fn sign_s3_request(
     method: &Method,
     url: &str,
@@ -790,30 +640,9 @@ fn rewrite_key(raw: &str, strip_prefix: &str, list_rewrite: Option<&ListRewrite>
     key
 }
 
-/// Parse an HTTP Range header value into an object_store GetRange.
-fn parse_range_header(value: &str) -> Option<GetRange> {
-    let range_str = value.strip_prefix("bytes=")?;
-
-    if let Some(suffix) = range_str.strip_prefix('-') {
-        // bytes=-N (suffix)
-        let n: u64 = suffix.parse().ok()?;
-        return Some(GetRange::Suffix(n));
-    }
-
-    let (start_str, end_str) = range_str.split_once('-')?;
-    let start: u64 = start_str.parse().ok()?;
-
-    if end_str.is_empty() {
-        // bytes=N- (offset to end)
-        Some(GetRange::Offset(start))
-    } else {
-        // bytes=N-M (bounded, HTTP is inclusive, object_store is exclusive)
-        let end: u64 = end_str.parse().ok()?;
-        Some(GetRange::Bounded(start..end + 1))
-    }
-}
-
 /// Build the backend URL for an S3 operation.
+///
+/// Used for multipart operations that go through raw signed HTTP.
 pub fn build_backend_url(
     config: &BucketConfig,
     operation: &S3Operation,

@@ -1,17 +1,20 @@
 //! Cloudflare Workers runtime for the S3 proxy gateway.
 //!
 //! This crate provides implementations of core traits using Cloudflare Workers
-//! primitives. Response bodies from `object_store` are bridged from Rust
-//! `Stream<Bytes>` to JS `ReadableStream` via a `TransformStream`.
+//! primitives. Uses a two-phase request handling model:
+//!
+//! 1. **`resolve_request`** determines the action (Forward, Response, NeedsBody)
+//! 2. **Forward** requests execute presigned URLs via the Fetch API, passing
+//!    JS `ReadableStream` bodies directly — zero Rust stream involvement.
 //!
 //! # Architecture
 //!
 //! ```text
 //! Client -> Worker (JS Request)
 //!   -> resolve request (core resolver or Source Cooperative resolver)
-//!   -> object_store operation (via FetchConnector -> Fetch API)
-//!   -> ProxyResponseBody::Stream -> TransformStream -> JS ReadableStream
-//!   -> return JS Response
+//!   -> Forward: fetch(presigned URL) with ReadableStream passthrough
+//!   -> Response: LIST XML via object_store, errors, synthetic responses
+//!   -> NeedsBody: multipart operations via raw signed HTTP
 //! ```
 //!
 //! # Configuration
@@ -28,9 +31,10 @@ mod fetch_connector;
 mod tracing_layer;
 
 use body::build_worker_response;
+use client::{extract_response_headers, WorkerBackend};
 use s3_proxy_core::config::static_file::{StaticConfig, StaticProvider};
-use s3_proxy_core::proxy::ProxyHandler;
-use s3_proxy_core::resolver::DefaultResolver;
+use s3_proxy_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler};
+use s3_proxy_core::resolver::{DefaultResolver, RequestResolver};
 use s3_proxy_source_coop::api::{CacheTtls, SourceApiClient};
 use s3_proxy_source_coop::resolver::SourceCoopResolver;
 use worker::*;
@@ -54,13 +58,6 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let path = url.path().to_string();
     let query = url.query().map(|q| q.to_string());
     let headers = convert_headers(&req);
-
-    // Materialize request body to Bytes for PUT/POST, empty for others
-    let body = if matches!(method, http::Method::PUT | http::Method::POST) {
-        read_request_body(&req).await?
-    } else {
-        bytes::Bytes::new()
-    };
 
     // Source Cooperative API mode: when SOURCE_API_URL is set, resolve backends
     // dynamically from the Source API instead of static PROXY_CONFIG.
@@ -109,13 +106,9 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             cache_ttls,
         );
         let resolver = SourceCoopResolver::new(api_client);
-        let handler = ProxyHandler::new(client::WorkerBackend, resolver);
+        let handler = ProxyHandler::new(WorkerBackend, resolver);
 
-        let result = handler
-            .handle_request(method, &path, query.as_deref(), &headers, body)
-            .await;
-
-        return build_worker_response(result);
+        return handle_action(&req, method, &handler, &path, query.as_deref(), &headers).await;
     }
 
     // Load PROXY_CONFIG from environment.
@@ -140,13 +133,104 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     let virtual_host_domain = env.var("VIRTUAL_HOST_DOMAIN").ok().map(|v| v.to_string());
     let resolver = DefaultResolver::new(config, virtual_host_domain);
-    let handler = ProxyHandler::new(client::WorkerBackend, resolver);
+    let handler = ProxyHandler::new(WorkerBackend, resolver);
 
-    let result = handler
-        .handle_request(method, &path, query.as_deref(), &headers, body)
+    handle_action(&req, method, &handler, &path, query.as_deref(), &headers).await
+}
+
+// ── Two-phase request handling ──────────────────────────────────────
+
+/// Handle the resolved action for any resolver type.
+async fn handle_action<R: RequestResolver>(
+    req: &Request,
+    method: http::Method,
+    handler: &ProxyHandler<WorkerBackend, R>,
+    path: &str,
+    query: Option<&str>,
+    headers: &http::HeaderMap,
+) -> Result<Response> {
+    let action = handler
+        .resolve_request(method, path, query, headers)
         .await;
 
-    build_worker_response(result)
+    match action {
+        HandlerAction::Response(result) => build_worker_response(result),
+        HandlerAction::Forward(fwd) => execute_forward(req, fwd).await,
+        HandlerAction::NeedsBody(pending) => {
+            let body = read_request_body(req).await?;
+            let result = handler.handle_with_body(pending, body).await;
+            build_worker_response(result)
+        }
+    }
+}
+
+/// Execute a Forward request via the Fetch API.
+///
+/// For PUT: passes the original JS `ReadableStream` body directly to fetch.
+/// For GET: returns the response `ReadableStream` directly to the client.
+/// Zero Rust stream involvement — bytes never cross the WASM boundary.
+async fn execute_forward(
+    req: &Request,
+    fwd: ForwardRequest,
+) -> Result<Response> {
+    // Build request headers
+    let ws_headers = web_sys::Headers::new()
+        .map_err(|e| worker::Error::RustError(format!("headers error: {:?}", e)))?;
+
+    for (key, value) in fwd.headers.iter() {
+        if let Ok(v) = value.to_str() {
+            let _ = ws_headers.set(key.as_str(), v);
+        }
+    }
+
+    // Build fetch request
+    let init = web_sys::RequestInit::new();
+    init.set_method(fwd.method.as_str());
+    init.set_headers(&ws_headers.into());
+
+    // For PUT: pass original request body stream directly
+    if fwd.method == http::Method::PUT {
+        if let Some(body_stream) = req.inner().body() {
+            init.set_body(&body_stream.into());
+        }
+    }
+
+    let ws_request =
+        web_sys::Request::new_with_str_and_init(fwd.url.as_str(), &init)
+            .map_err(|e| worker::Error::RustError(format!("request error: {:?}", e)))?;
+
+    // Execute fetch
+    let worker_req: worker::Request = ws_request.into();
+    let worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
+        worker::Error::RustError(format!("forward fetch failed: {}", e))
+    })?;
+
+    let status = worker_resp.status_code();
+    let ws_response: web_sys::Response = worker_resp.into();
+
+    // Forward allowlisted response headers
+    let resp_headers = extract_response_headers(&ws_response.headers());
+    let ws_resp_headers = web_sys::Headers::new()
+        .map_err(|e| worker::Error::RustError(format!("headers error: {:?}", e)))?;
+    for (key, value) in resp_headers.iter() {
+        if let Ok(v) = value.to_str() {
+            let _ = ws_resp_headers.set(key.as_str(), v);
+        }
+    }
+
+    // Build response with the backend's ReadableStream body (passthrough)
+    let resp_init = web_sys::ResponseInit::new();
+    resp_init.set_status(status);
+    resp_init.set_headers(&ws_resp_headers.into());
+
+    let body = ws_response.body();
+    let response = web_sys::Response::new_with_opt_readable_stream_and_init(
+        body.as_ref(),
+        &resp_init,
+    )
+    .map_err(|e| worker::Error::RustError(format!("response error: {:?}", e)))?;
+
+    Ok(response.into())
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────

@@ -6,7 +6,7 @@ Tokio/Hyper runtime for the S3 proxy gateway. This is the container-deployment c
 
 A `ProxyBackend` implementation plus a server binary:
 
-**`ServerBackend`** — implements `ProxyBackend`. Uses `object_store` with its default HTTP connector for high-level operations (GET, HEAD, PUT, LIST) and `reqwest` for raw multipart requests. GET responses stream from `object_store` through Hyper without buffering.
+**`ServerBackend`** — implements `ProxyBackend`. Provides `create_signer()` for presigned URL generation (GET/HEAD/PUT/DELETE), `create_store()` for LIST operations, and `send_raw()` via reqwest for multipart uploads. All Forward operations (GET/HEAD/PUT/DELETE) execute presigned URLs via reqwest; GET response bodies and PUT request bodies stream without buffering.
 
 **`server::run()`** — starts a Hyper HTTP server that accepts connections and delegates to `ProxyHandler` with a `DefaultResolver`. Supports both path-style (`/bucket/key`) and virtual-hosted-style (`bucket.s3.example.com/key`) routing via the resolver's `virtual_host_domain` setting.
 
@@ -15,9 +15,9 @@ A `ProxyBackend` implementation plus a server binary:
 ```
 src/
 ├── lib.rs           Crate root
-├── body.rs          ProxyResponseBody → Hyper streaming response conversion
+├── body.rs          ProxyResult → Hyper response conversion (Bytes/Empty only)
 ├── client.rs        ServerBackend implementing ProxyBackend
-├── server.rs        Hyper server setup, request routing
+├── server.rs        Hyper server setup, two-phase request handling, Forward execution
 └── bin/
     └── s3-proxy.rs  CLI binary entry point
 ```
@@ -99,17 +99,19 @@ impl RequestResolver for MyResolver {
 let backend = ServerBackend::new();
 let handler = ProxyHandler::new(backend, MyResolver::new());
 
-// Use handler.handle_request() in your Hyper service.
+// Use handler.resolve_request() in your Hyper service — returns HandlerAction.
 ```
 
-See `s3-proxy-cf-workers/src/source_resolver.rs` for a complete example.
+See `crates/libs/source-coop/src/resolver.rs` for a complete example.
 
 ## Streaming Behavior
 
-For **GET** responses, `object_store` returns a `BoxStream<Bytes>` which is bridged to a Hyper streaming response body. Bytes flow through without buffering the entire object in memory.
+For **GET** responses, the handler generates a presigned URL and returns a `Forward` action. The server executes the URL via reqwest and streams the response body through Hyper using `bytes_stream()` — no buffering.
 
-For **HEAD** responses, only metadata is returned (empty body).
+For **PUT** requests, the handler generates a presigned URL and returns a `Forward` action. The server streams the Hyper `Incoming` body directly to the presigned URL via `reqwest::Body::wrap_stream()` — no body materialization.
 
-For **PUT** request bodies, the incoming Hyper body is collected to `Bytes` before passing to `object_store::put()`.
+For **HEAD/DELETE** responses, the handler generates a presigned URL. The server executes it and returns the status + headers.
 
-For **multipart uploads**, operations are sent as raw signed HTTP requests via `reqwest`. The `CompleteMultipartUpload` request body (a small XML manifest) is the only body the proxy fully reads and parses.
+For **LIST** responses, `object_store` handles the request internally and the handler returns a `Response` with XML body.
+
+For **multipart uploads**, operations are sent as raw signed HTTP requests via `reqwest`. The request body is materialized to `Bytes` first (multipart XML payloads are small).

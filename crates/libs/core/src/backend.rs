@@ -1,16 +1,21 @@
 //! Backend abstraction for proxying requests to backing object stores.
 //!
-//! [`ProxyBackend`] is the main trait runtimes implement. It provides two
+//! [`ProxyBackend`] is the main trait runtimes implement. It provides three
 //! capabilities:
 //!
 //! 1. **`create_store()`** — build an `ObjectStore` for high-level operations
-//!    (GET, HEAD, PUT, LIST) routed through `object_store`.
-//! 2. **`send_raw()`** — send a pre-signed HTTP request for operations not
+//!    (LIST) routed through `object_store`.
+//! 2. **`create_signer()`** — build a `Signer` for generating presigned URLs
+//!    for GET, HEAD, PUT, DELETE operations.
+//! 3. **`send_raw()`** — send a pre-signed HTTP request for operations not
 //!    covered by `ObjectStore` (multipart uploads).
 //!
 //! [`S3RequestSigner`] is retained for signing multipart requests.
-//! [`build_object_store`] dispatches on `BucketConfig::backend_type` to build
-//! the appropriate provider store.
+//! [`build_object_store`] and [`build_signer`] dispatch on
+//! `BucketConfig::backend_type` to build the appropriate provider.
+//! [`build_signer`] uses `object_store`'s built-in signer for authenticated
+//! backends, and [`UnsignedUrlSigner`] for anonymous backends (avoiding
+//! `Instant::now()` which panics on WASM).
 
 use crate::error::ProxyError;
 use crate::maybe_send::{MaybeSend, MaybeSync};
@@ -18,6 +23,7 @@ use crate::types::{BackendType, BucketConfig};
 use bytes::Bytes;
 use http::HeaderMap;
 use object_store::aws::AmazonS3Builder;
+use object_store::signer::Signer;
 use object_store::ObjectStore;
 use std::future::Future;
 use std::sync::Arc;
@@ -33,14 +39,18 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 /// - Server runtime: uses `reqwest` for raw HTTP, default `object_store` HTTP connector
 /// - Worker runtime: uses `web_sys::fetch` for raw HTTP, custom `FetchConnector` for `object_store`
 pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
-    /// The runtime's native streaming body type.
-    ///
-    /// CF Workers uses `Option<web_sys::ReadableStream>` to avoid JS/Rust
-    /// stream round-trips. The server runtime uses a reqwest byte stream.
-    type NativeBody: MaybeSend + 'static;
-
     /// Create an `ObjectStore` for the given bucket configuration.
+    ///
+    /// Used for LIST operations where `object_store` handles pagination
+    /// and response parsing internally.
     fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError>;
+
+    /// Create a `Signer` for generating presigned URLs.
+    ///
+    /// Used for GET, HEAD, PUT, DELETE operations. The handler generates
+    /// a presigned URL and the runtime executes the request with its
+    /// native HTTP client, enabling zero-copy streaming.
+    fn create_signer(&self, config: &BucketConfig) -> Result<Arc<dyn Signer>, ProxyError>;
 
     /// Send a raw HTTP request (used for multipart operations that
     /// `ObjectStore` doesn't expose at the right abstraction level).
@@ -51,17 +61,6 @@ pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
         headers: HeaderMap,
         body: Bytes,
     ) -> impl Future<Output = Result<RawResponse, ProxyError>> + MaybeSend;
-
-    /// Send a raw HTTP request and return the response with a streaming body.
-    ///
-    /// Used for GET/HEAD on S3 backends to avoid double stream conversion
-    /// (JS→Rust→JS on Workers, or unnecessary buffering on server).
-    fn send_streaming(
-        &self,
-        method: http::Method,
-        url: String,
-        headers: HeaderMap,
-    ) -> impl Future<Output = Result<RawStreamingResponse<Self::NativeBody>, ProxyError>> + MaybeSend;
 }
 
 /// Response from a raw HTTP request to a backend.
@@ -71,20 +70,10 @@ pub struct RawResponse {
     pub body: Bytes,
 }
 
-/// Response from a streaming HTTP request to a backend.
-///
-/// The body is the runtime's native streaming type, avoiding
-/// intermediate conversion through Rust stream types.
-pub struct RawStreamingResponse<N> {
-    pub status: u16,
-    pub headers: HeaderMap,
-    pub body: N,
-}
-
 /// Wrapper around provider-specific `object_store` builders.
 ///
-/// Runtimes use [`build_object_store`] and inject their HTTP connector via
-/// a closure that receives this enum.
+/// Runtimes use [`build_object_store`] and inject their HTTP connector
+/// via a closure that receives this enum.
 pub enum StoreBuilder {
     S3(AmazonS3Builder),
     #[cfg(feature = "azure")]
@@ -113,6 +102,77 @@ impl StoreBuilder {
             )),
         }
     }
+
+    /// Build a `Signer` for presigned URL generation.
+    pub fn build_signer(self) -> Result<Arc<dyn Signer>, ProxyError> {
+        match self {
+            StoreBuilder::S3(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 signer: {}", e)))?,
+            )),
+            #[cfg(feature = "azure")]
+            StoreBuilder::Azure(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build Azure signer: {}", e)))?,
+            )),
+            #[cfg(feature = "gcp")]
+            StoreBuilder::Gcs(b) => Ok(Arc::new(
+                b.build()
+                    .map_err(|e| ProxyError::ConfigError(format!("failed to build GCS signer: {}", e)))?,
+            )),
+        }
+    }
+}
+
+/// Create a [`StoreBuilder`] from a [`BucketConfig`], dispatching on `backend_type`.
+fn create_builder(config: &BucketConfig) -> Result<StoreBuilder, ProxyError> {
+    let backend_type = config
+        .parsed_backend_type()
+        .ok_or_else(|| ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type)))?;
+
+    match backend_type {
+        BackendType::S3 => {
+            let mut b = AmazonS3Builder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            Ok(StoreBuilder::S3(b))
+        }
+        #[cfg(feature = "azure")]
+        BackendType::Azure => {
+            let mut b = MicrosoftAzureBuilder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            Ok(StoreBuilder::Azure(b))
+        }
+        #[cfg(not(feature = "azure"))]
+        BackendType::Azure => {
+            Err(ProxyError::ConfigError(
+                "Azure backend support not enabled (requires 'azure' feature)".into(),
+            ))
+        }
+        #[cfg(feature = "gcp")]
+        BackendType::Gcs => {
+            let mut b = GoogleCloudStorageBuilder::new();
+            for (k, v) in &config.backend_options {
+                if let Ok(key) = k.parse() {
+                    b = b.with_config(key, v);
+                }
+            }
+            Ok(StoreBuilder::Gcs(b))
+        }
+        #[cfg(not(feature = "gcp"))]
+        BackendType::Gcs => {
+            Err(ProxyError::ConfigError(
+                "GCS backend support not enabled (requires 'gcp' feature)".into(),
+            ))
+        }
+    }
 }
 
 /// Build an `ObjectStore` from a [`BucketConfig`], dispatching on `backend_type`.
@@ -124,55 +184,47 @@ pub fn build_object_store<F>(config: &BucketConfig, configure: F) -> Result<Arc<
 where
     F: FnOnce(StoreBuilder) -> StoreBuilder,
 {
+    configure(create_builder(config)?).build()
+}
+
+/// Build a [`Signer`] from a [`BucketConfig`], dispatching on `backend_type`.
+///
+/// For backends with credentials, uses `object_store`'s built-in signer
+/// (WASM-safe because `StaticCredentialProvider` bypasses `Instant::now()`).
+/// For anonymous backends (no credentials), returns [`UnsignedUrlSigner`]
+/// which constructs plain URLs without auth parameters, avoiding the
+/// `InstanceCredentialProvider` → `Instant::now()` panic on WASM.
+pub fn build_signer(config: &BucketConfig) -> Result<Arc<dyn Signer>, ProxyError> {
     let backend_type = config
         .parsed_backend_type()
-        .ok_or_else(|| ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type)))?;
+        .ok_or_else(|| {
+            ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type))
+        })?;
 
-    let builder = match backend_type {
-        BackendType::S3 => {
-            let mut b = AmazonS3Builder::new();
-            for (k, v) in &config.backend_options {
-                if let Ok(key) = k.parse() {
-                    b = b.with_config(key, v);
-                }
-            }
-            StoreBuilder::S3(b)
-        }
+    // Check for credentials — if absent, return unsigned signer to avoid
+    // InstanceCredentialProvider which uses Instant::now() (panics on WASM).
+    let has_creds = !config.option("access_key_id").unwrap_or("").is_empty()
+        && !config.option("secret_access_key").unwrap_or("").is_empty();
+
+    if !has_creds {
+        return Ok(Arc::new(UnsignedUrlSigner::from_config(config)?));
+    }
+
+    match backend_type {
+        BackendType::S3 => create_builder(config)?.build_signer(),
         #[cfg(feature = "azure")]
-        BackendType::Azure => {
-            let mut b = MicrosoftAzureBuilder::new();
-            for (k, v) in &config.backend_options {
-                if let Ok(key) = k.parse() {
-                    b = b.with_config(key, v);
-                }
-            }
-            StoreBuilder::Azure(b)
-        }
+        BackendType::Azure => create_builder(config)?.build_signer(),
         #[cfg(not(feature = "azure"))]
-        BackendType::Azure => {
-            return Err(ProxyError::ConfigError(
-                "Azure backend support not enabled (requires 'azure' feature)".into(),
-            ));
-        }
+        BackendType::Azure => Err(ProxyError::ConfigError(
+            "Azure backend support not enabled (requires 'azure' feature)".into(),
+        )),
         #[cfg(feature = "gcp")]
-        BackendType::Gcs => {
-            let mut b = GoogleCloudStorageBuilder::new();
-            for (k, v) in &config.backend_options {
-                if let Ok(key) = k.parse() {
-                    b = b.with_config(key, v);
-                }
-            }
-            StoreBuilder::Gcs(b)
-        }
+        BackendType::Gcs => create_builder(config)?.build_signer(),
         #[cfg(not(feature = "gcp"))]
-        BackendType::Gcs => {
-            return Err(ProxyError::ConfigError(
-                "GCS backend support not enabled (requires 'gcp' feature)".into(),
-            ));
-        }
-    };
-
-    configure(builder).build()
+        BackendType::Gcs => Err(ProxyError::ConfigError(
+            "GCS backend support not enabled (requires 'gcp' feature)".into(),
+        )),
+    }
 }
 
 /// Helper to build a signed URL + headers for an outbound request to S3.
@@ -313,6 +365,55 @@ impl S3RequestSigner {
         headers.insert("authorization", auth_header.parse().unwrap());
 
         Ok(())
+    }
+}
+
+/// Signer for anonymous/credential-less backends.
+///
+/// Returns unsigned URLs — no auth query params, no time calls. This avoids
+/// the `InstanceCredentialProvider` → `TokenCache` → `Instant::now()` path
+/// in `object_store` which panics on `wasm32-unknown-unknown`.
+#[derive(Debug)]
+struct UnsignedUrlSigner {
+    endpoint: String,
+    bucket: String,
+}
+
+impl UnsignedUrlSigner {
+    fn from_config(config: &BucketConfig) -> Result<Self, ProxyError> {
+        let endpoint = config.option("endpoint").unwrap_or("https://s3.amazonaws.com");
+        let bucket = config.option("bucket_name").unwrap_or("");
+        Ok(Self {
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            bucket: bucket.to_string(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl Signer for UnsignedUrlSigner {
+    async fn signed_url(
+        &self,
+        _method: http::Method,
+        path: &object_store::path::Path,
+        _expires_in: std::time::Duration,
+    ) -> object_store::Result<url::Url> {
+        let key = path.as_ref();
+        let url_str = if self.bucket.is_empty() {
+            if key.is_empty() {
+                format!("{}/", self.endpoint)
+            } else {
+                format!("{}/{}", self.endpoint, key)
+            }
+        } else if key.is_empty() {
+            format!("{}/{}", self.endpoint, self.bucket)
+        } else {
+            format!("{}/{}/{}", self.endpoint, self.bucket, key)
+        };
+        url::Url::parse(&url_str).map_err(|e| object_store::Error::Generic {
+            store: "UnsignedUrlSigner",
+            source: Box::new(e),
+        })
     }
 }
 
