@@ -206,9 +206,9 @@ impl<H: HttpClient> SourceCoopResolver<H> {
             .await?;
 
         let prefixes: Vec<String> = account
-            .repositories
+            .products
             .iter()
-            .map(|r| format!("{}/", r.repository_id))
+            .map(|p| format!("{}/", p.product_id))
             .collect();
 
         let xml = synthetic_list_objects_v2_xml(account_id, &prefixes);

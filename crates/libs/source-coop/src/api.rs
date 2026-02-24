@@ -133,16 +133,16 @@ pub struct PermissionsResponse {
     pub write: bool,
 }
 
-/// API response for account listing — contains repositories.
+/// API response for listing products under an account.
 #[derive(Debug, Deserialize)]
 pub struct AccountResponse {
     #[serde(default)]
-    pub repositories: Vec<AccountRepository>,
+    pub products: Vec<AccountProduct>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AccountRepository {
-    pub repository_id: String,
+pub struct AccountProduct {
+    pub product_id: String,
 }
 
 // -- Client implementation --
@@ -241,7 +241,7 @@ impl<H: HttpClient> SourceApiClient<H> {
         &self,
         account_id: &str,
     ) -> Result<AccountResponse, ProxyError> {
-        let url = format!("{}/api/v1/accounts/{}", self.api_url, account_id);
+        let url = format!("{}/api/v1/products/{}", self.api_url, account_id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let cache = (self.account_cache_ttl > 0).then(|| CacheOptions {
