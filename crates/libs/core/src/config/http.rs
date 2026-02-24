@@ -29,6 +29,26 @@ use crate::error::ProxyError;
 use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
 use std::sync::Arc;
 
+/// Validate that a value is safe to use as a single URL path segment.
+///
+/// Rejects values containing `/`, `\`, `..`, null bytes, or that are empty,
+/// to prevent path traversal against the config API.
+fn validate_path_segment(value: &str, param_name: &str) -> Result<(), ProxyError> {
+    if value.is_empty()
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+        || value == ".."
+        || value == "."
+    {
+        return Err(ProxyError::InvalidRequest(format!(
+            "invalid {}: contains illegal characters",
+            param_name
+        )));
+    }
+    Ok(())
+}
+
 /// Configuration provider that reads from a REST API.
 #[derive(Clone)]
 pub struct HttpProvider {
@@ -82,6 +102,7 @@ impl ConfigProvider for HttpProvider {
     }
 
     async fn get_bucket(&self, name: &str) -> Result<Option<BucketConfig>, ProxyError> {
+        validate_path_segment(name, "bucket name")?;
         let resp = self
             .request(&format!("/buckets/{}", name))
             .send()
@@ -99,6 +120,7 @@ impl ConfigProvider for HttpProvider {
     }
 
     async fn get_role(&self, role_id: &str) -> Result<Option<RoleConfig>, ProxyError> {
+        validate_path_segment(role_id, "role ID")?;
         let resp = self
             .request(&format!("/roles/{}", role_id))
             .send()
@@ -119,6 +141,7 @@ impl ConfigProvider for HttpProvider {
         &self,
         access_key_id: &str,
     ) -> Result<Option<StoredCredential>, ProxyError> {
+        validate_path_segment(access_key_id, "access key ID")?;
         let resp = self
             .request(&format!("/credentials/{}", access_key_id))
             .send()
@@ -160,6 +183,7 @@ impl ConfigProvider for HttpProvider {
         &self,
         access_key_id: &str,
     ) -> Result<Option<TemporaryCredentials>, ProxyError> {
+        validate_path_segment(access_key_id, "access key ID")?;
         let resp = self
             .request(&format!("/temporary-credentials/{}", access_key_id))
             .send()
@@ -174,5 +198,29 @@ impl ConfigProvider for HttpProvider {
             .await
             .map(Some)
             .map_err(|e| ProxyError::ConfigError(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_path_segment_rejects_traversal() {
+        assert!(validate_path_segment("../admin", "test").is_err());
+        assert!(validate_path_segment("foo/bar", "test").is_err());
+        assert!(validate_path_segment("foo\\bar", "test").is_err());
+        assert!(validate_path_segment("..", "test").is_err());
+        assert!(validate_path_segment(".", "test").is_err());
+        assert!(validate_path_segment("", "test").is_err());
+        assert!(validate_path_segment("foo\0bar", "test").is_err());
+    }
+
+    #[test]
+    fn validate_path_segment_accepts_normal_values() {
+        assert!(validate_path_segment("my-bucket", "test").is_ok());
+        assert!(validate_path_segment("AKIAIOSFODNN7EXAMPLE", "test").is_ok());
+        assert!(validate_path_segment("role-123_abc", "test").is_ok());
+        assert!(validate_path_segment("bucket.with.dots", "test").is_ok());
     }
 }
