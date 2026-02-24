@@ -167,10 +167,7 @@ impl<H: HttpClient> SourceCoopResolver<H> {
             .get_permissions(account_id, repo_id, &sig.access_key_id)
             .await?;
 
-        let is_write = matches!(
-            *method,
-            Method::PUT | Method::POST | Method::DELETE
-        );
+        let is_write = matches!(*method, Method::PUT | Method::POST | Method::DELETE);
 
         if is_write && !perms.write {
             tracing::warn!(
@@ -196,14 +193,18 @@ impl<H: HttpClient> SourceCoopResolver<H> {
     }
 
     /// Handle `GET /{account_id}` — synthetic account listing.
-    async fn handle_account_listing(
-        &self,
-        account_id: &str,
-    ) -> Result<ResolvedAction, ProxyError> {
-        let account = self
-            .api_client
-            .list_account_repos(account_id)
-            .await?;
+    async fn handle_account_listing(&self, account_id: &str) -> Result<ResolvedAction, ProxyError> {
+        tracing::info!(
+            account_id = account_id,
+            "handling account listing for account"
+        );
+        let account = self.api_client.list_account_repos(account_id).await?;
+
+        tracing::info!(
+            account_id = account_id,
+            repo_count = account.products.len(),
+            "fetched account listing from Source API"
+        );
 
         let prefixes: Vec<String> = account
             .products
@@ -324,8 +325,7 @@ impl<H: HttpClient> RequestResolver for SourceCoopResolver<H> {
                 let bucket_config = self.resolve_bucket_config(account_id, repo_id).await?;
 
                 // Build the S3 operation
-                let operation =
-                    build_s3_operation(method, bucket_name, key.to_string(), query)?;
+                let operation = build_s3_operation(method, bucket_name, key.to_string(), query)?;
 
                 // For list operations, apply list rewrite
                 let list_rewrite = if key.is_empty() {
@@ -414,10 +414,7 @@ fn rewrite_list_prefix(query: &str, repo_id: &str) -> String {
         .map(|(k, v)| {
             if k == "prefix" {
                 let prefix_to_strip = format!("{}/", repo_id);
-                let new_v = v
-                    .strip_prefix(&prefix_to_strip)
-                    .unwrap_or(&v)
-                    .to_string();
+                let new_v = v.strip_prefix(&prefix_to_strip).unwrap_or(&v).to_string();
                 (k.to_string(), new_v)
             } else {
                 (k.to_string(), v.to_string())

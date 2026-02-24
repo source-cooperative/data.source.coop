@@ -1,11 +1,12 @@
-name = "s3-proxy-cf-workers"
-main = "build/worker/shim.mjs"
 compatibility_date = "2024-09-23"
+main = "build/worker/shim.mjs"
+name = "s3-proxy-cf-workers"
 
 [build]
 command = "cargo install worker-build && worker-build --release"
 
 [vars]
+SOURCE_API_URL = "https://staging.source.coop"
 VIRTUAL_HOST_DOMAIN = "s3.local"
 
 # For production, consider storing this in Workers KV or a Secrets binding.
@@ -41,8 +42,8 @@ secret_access_key = "minioadmin"
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
 anonymous_access = true
-backend_type = "s3"
 backend_prefix = "cholmes/"
+backend_type = "s3"
 name = "cholmes"
 
 [vars.PROXY_CONFIG.buckets.backend_options]
@@ -54,8 +55,8 @@ skip_signature = "true"
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
 anonymous_access = true
-backend_type = "s3"
 backend_prefix = "harvard-lil/"
+backend_type = "s3"
 name = "harvard-lil"
 
 [vars.PROXY_CONFIG.buckets.backend_options]

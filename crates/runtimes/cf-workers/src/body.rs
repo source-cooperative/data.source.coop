@@ -12,9 +12,7 @@ use worker::{Headers, Response};
 ///
 /// Only handles `Bytes` and `Empty` bodies (LIST XML, errors, multipart XML).
 /// Streaming Forward responses are built directly in `lib.rs`.
-pub fn build_worker_response(
-    result: ProxyResult,
-) -> Result<Response, worker::Error> {
+pub fn build_worker_response(result: ProxyResult) -> Result<Response, worker::Error> {
     let resp_headers = Headers::new();
     for (key, value) in result.headers.iter() {
         if let Ok(v) = value.to_str() {

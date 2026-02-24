@@ -1,5 +1,5 @@
 [package]
-name = "s3-proxy-cf-workers"
+name = "s3-proxy-rs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

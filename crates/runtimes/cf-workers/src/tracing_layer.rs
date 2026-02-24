@@ -7,8 +7,8 @@
 //! `worker::console_log!` / `console_error!` / `console_warn!`.
 
 use tracing::field::{Field, Visit};
-use tracing::{Event, Level, Metadata, Subscriber};
 use tracing::span;
+use tracing::{Event, Level, Metadata, Subscriber};
 
 /// A minimal tracing subscriber that logs to the Workers console.
 ///
@@ -98,8 +98,7 @@ impl Visit for MessageVisitor {
         if field.name() == "message" {
             self.message = value.to_string();
         } else {
-            self.fields
-                .push(format!("{}=\"{}\"", field.name(), value));
+            self.fields.push(format!("{}=\"{}\"", field.name(), value));
         }
     }
 

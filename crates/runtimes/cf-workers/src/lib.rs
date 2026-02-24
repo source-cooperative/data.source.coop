@@ -72,7 +72,7 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 ))
             })?;
 
-tracing::info!(
+        tracing::info!(
             source_api_url = source_api_url.to_string(),
             "SOURCE_API_URL set, using Source Cooperative API resolver"
         );
@@ -154,9 +154,7 @@ async fn handle_action<R: RequestResolver>(
     query: Option<&str>,
     headers: &http::HeaderMap,
 ) -> Result<Response> {
-    let action = handler
-        .resolve_request(method, path, query, headers)
-        .await;
+    let action = handler.resolve_request(method, path, query, headers).await;
 
     match action {
         HandlerAction::Response(result) => build_worker_response(result),
@@ -174,10 +172,7 @@ async fn handle_action<R: RequestResolver>(
 /// For PUT: passes the original JS `ReadableStream` body directly to fetch.
 /// For GET: returns the response `ReadableStream` directly to the client.
 /// Zero Rust stream involvement — bytes never cross the WASM boundary.
-async fn execute_forward(
-    req: &Request,
-    fwd: ForwardRequest,
-) -> Result<Response> {
+async fn execute_forward(req: &Request, fwd: ForwardRequest) -> Result<Response> {
     // Build request headers
     let ws_headers = web_sys::Headers::new()
         .map_err(|e| worker::Error::RustError(format!("headers error: {:?}", e)))?;
@@ -200,15 +195,15 @@ async fn execute_forward(
         }
     }
 
-    let ws_request =
-        web_sys::Request::new_with_str_and_init(fwd.url.as_str(), &init)
-            .map_err(|e| worker::Error::RustError(format!("request error: {:?}", e)))?;
+    let ws_request = web_sys::Request::new_with_str_and_init(fwd.url.as_str(), &init)
+        .map_err(|e| worker::Error::RustError(format!("request error: {:?}", e)))?;
 
     // Execute fetch
     let worker_req: worker::Request = ws_request.into();
-    let worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
-        worker::Error::RustError(format!("forward fetch failed: {}", e))
-    })?;
+    let worker_resp = Fetch::Request(worker_req)
+        .send()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("forward fetch failed: {}", e)))?;
 
     let status = worker_resp.status_code();
     let ws_response: web_sys::Response = worker_resp.into();
@@ -229,11 +224,9 @@ async fn execute_forward(
     resp_init.set_headers(&ws_resp_headers.into());
 
     let body = ws_response.body();
-    let response = web_sys::Response::new_with_opt_readable_stream_and_init(
-        body.as_ref(),
-        &resp_init,
-    )
-    .map_err(|e| worker::Error::RustError(format!("response error: {:?}", e)))?;
+    let response =
+        web_sys::Response::new_with_opt_readable_stream_and_init(body.as_ref(), &resp_init)
+            .map_err(|e| worker::Error::RustError(format!("response error: {:?}", e)))?;
 
     Ok(response.into())
 }

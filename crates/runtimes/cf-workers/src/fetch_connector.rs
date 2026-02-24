@@ -37,10 +37,7 @@ impl HttpConnector for FetchConnector {
 struct FetchService;
 
 impl FetchService {
-    async fn do_fetch(
-        &self,
-        worker_req: worker::Request,
-    ) -> Result<HttpResponse, HttpError> {
+    async fn do_fetch(&self, worker_req: worker::Request) -> Result<HttpResponse, HttpError> {
         let (tx, rx) = oneshot::channel();
 
         spawn_local(async move {
@@ -56,9 +53,7 @@ impl FetchService {
         })
     }
 
-    async fn fetch_inner(
-        worker_req: worker::Request,
-    ) -> Result<HttpResponse, HttpError> {
+    async fn fetch_inner(worker_req: worker::Request) -> Result<HttpResponse, HttpError> {
         let mut resp = worker::Fetch::Request(worker_req)
             .send()
             .await

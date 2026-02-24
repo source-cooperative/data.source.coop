@@ -9,7 +9,9 @@ use bytes::Bytes;
 use http::HeaderMap;
 use object_store::signer::Signer;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder};
+use s3_proxy_core::backend::{
+    build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder,
+};
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::BucketConfig;
 use s3_proxy_source_coop::api::{CacheOptions, HttpClient};
@@ -162,16 +164,15 @@ impl ProxyBackend for WorkerBackend {
             init.set_body(&uint8.into());
         }
 
-        let ws_request =
-            web_sys::Request::new_with_str_and_init(&url, &init).map_err(|e| {
-                ProxyError::BackendError(format!("failed to create request: {:?}", e))
-            })?;
+        let ws_request = web_sys::Request::new_with_str_and_init(&url, &init)
+            .map_err(|e| ProxyError::BackendError(format!("failed to create request: {:?}", e)))?;
 
         // Fetch via worker
         let worker_req: worker::Request = ws_request.into();
-        let mut worker_resp = Fetch::Request(worker_req).send().await.map_err(|e| {
-            ProxyError::BackendError(format!("fetch failed: {}", e))
-        })?;
+        let mut worker_resp = Fetch::Request(worker_req)
+            .send()
+            .await
+            .map_err(|e| ProxyError::BackendError(format!("fetch failed: {}", e)))?;
 
         let status = worker_resp.status_code();
 
