@@ -86,49 +86,46 @@ impl StoreBuilder {
     /// Build the final `ObjectStore`.
     pub fn build(self) -> Result<Arc<dyn ObjectStore>, ProxyError> {
         match self {
-            StoreBuilder::S3(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 store: {}", e)))?,
-            )),
+            StoreBuilder::S3(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build S3 store: {}", e))
+            })?)),
             #[cfg(feature = "azure")]
-            StoreBuilder::Azure(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build Azure store: {}", e)))?,
-            )),
+            StoreBuilder::Azure(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build Azure store: {}", e))
+            })?)),
             #[cfg(feature = "gcp")]
-            StoreBuilder::Gcs(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build GCS store: {}", e)))?,
-            )),
+            StoreBuilder::Gcs(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build GCS store: {}", e))
+            })?)),
         }
     }
 
     /// Build a `Signer` for presigned URL generation.
     pub fn build_signer(self) -> Result<Arc<dyn Signer>, ProxyError> {
         match self {
-            StoreBuilder::S3(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build S3 signer: {}", e)))?,
-            )),
+            StoreBuilder::S3(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build S3 signer: {}", e))
+            })?)),
             #[cfg(feature = "azure")]
-            StoreBuilder::Azure(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build Azure signer: {}", e)))?,
-            )),
+            StoreBuilder::Azure(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build Azure signer: {}", e))
+            })?)),
             #[cfg(feature = "gcp")]
-            StoreBuilder::Gcs(b) => Ok(Arc::new(
-                b.build()
-                    .map_err(|e| ProxyError::ConfigError(format!("failed to build GCS signer: {}", e)))?,
-            )),
+            StoreBuilder::Gcs(b) => Ok(Arc::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build GCS signer: {}", e))
+            })?)),
         }
     }
 }
 
 /// Create a [`StoreBuilder`] from a [`BucketConfig`], dispatching on `backend_type`.
 fn create_builder(config: &BucketConfig) -> Result<StoreBuilder, ProxyError> {
-    let backend_type = config
-        .parsed_backend_type()
-        .ok_or_else(|| ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type)))?;
+    let backend_type = config.parsed_backend_type().ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "unsupported backend_type: '{}'",
+            config.backend_type
+        ))
+    })?;
 
     match backend_type {
         BackendType::S3 => {
@@ -151,11 +148,9 @@ fn create_builder(config: &BucketConfig) -> Result<StoreBuilder, ProxyError> {
             Ok(StoreBuilder::Azure(b))
         }
         #[cfg(not(feature = "azure"))]
-        BackendType::Azure => {
-            Err(ProxyError::ConfigError(
-                "Azure backend support not enabled (requires 'azure' feature)".into(),
-            ))
-        }
+        BackendType::Azure => Err(ProxyError::ConfigError(
+            "Azure backend support not enabled (requires 'azure' feature)".into(),
+        )),
         #[cfg(feature = "gcp")]
         BackendType::Gcs => {
             let mut b = GoogleCloudStorageBuilder::new();
@@ -167,11 +162,9 @@ fn create_builder(config: &BucketConfig) -> Result<StoreBuilder, ProxyError> {
             Ok(StoreBuilder::Gcs(b))
         }
         #[cfg(not(feature = "gcp"))]
-        BackendType::Gcs => {
-            Err(ProxyError::ConfigError(
-                "GCS backend support not enabled (requires 'gcp' feature)".into(),
-            ))
-        }
+        BackendType::Gcs => Err(ProxyError::ConfigError(
+            "GCS backend support not enabled (requires 'gcp' feature)".into(),
+        )),
     }
 }
 
@@ -180,7 +173,10 @@ fn create_builder(config: &BucketConfig) -> Result<StoreBuilder, ProxyError> {
 /// The `configure` closure lets each runtime inject its HTTP connector:
 /// - Server runtime passes `|b| b` (default connector)
 /// - CF Workers passes `|b| match b { StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)), .. }`
-pub fn build_object_store<F>(config: &BucketConfig, configure: F) -> Result<Arc<dyn ObjectStore>, ProxyError>
+pub fn build_object_store<F>(
+    config: &BucketConfig,
+    configure: F,
+) -> Result<Arc<dyn ObjectStore>, ProxyError>
 where
     F: FnOnce(StoreBuilder) -> StoreBuilder,
 {
@@ -195,11 +191,12 @@ where
 /// which constructs plain URLs without auth parameters, avoiding the
 /// `InstanceCredentialProvider` → `Instant::now()` panic on WASM.
 pub fn build_signer(config: &BucketConfig) -> Result<Arc<dyn Signer>, ProxyError> {
-    let backend_type = config
-        .parsed_backend_type()
-        .ok_or_else(|| {
-            ProxyError::ConfigError(format!("unsupported backend_type: '{}'", config.backend_type))
-        })?;
+    let backend_type = config.parsed_backend_type().ok_or_else(|| {
+        ProxyError::ConfigError(format!(
+            "unsupported backend_type: '{}'",
+            config.backend_type
+        ))
+    })?;
 
     // Check for credentials — if absent, return unsigned signer to avoid
     // InstanceCredentialProvider which uses Instant::now() (panics on WASM).
@@ -239,11 +236,7 @@ pub struct S3RequestSigner {
 }
 
 impl S3RequestSigner {
-    pub fn new(
-        access_key_id: String,
-        secret_access_key: String,
-        region: String,
-    ) -> Self {
+    pub fn new(access_key_id: String, secret_access_key: String, region: String) -> Self {
         Self {
             access_key_id,
             secret_access_key,
@@ -289,21 +282,13 @@ impl S3RequestSigner {
         let canonical_uri = url.path();
         let canonical_querystring = url.query().unwrap_or("");
 
-        let mut signed_header_names: Vec<&str> = headers
-            .keys()
-            .map(|k| k.as_str())
-            .collect();
+        let mut signed_header_names: Vec<&str> = headers.keys().map(|k| k.as_str()).collect();
         signed_header_names.sort();
 
         let canonical_headers: String = signed_header_names
             .iter()
             .map(|k| {
-                let v = headers
-                    .get(*k)
-                    .unwrap()
-                    .to_str()
-                    .unwrap_or("")
-                    .trim();
+                let v = headers.get(*k).unwrap().to_str().unwrap_or("").trim();
                 format!("{}:{}\n", k, v)
             })
             .collect();
@@ -312,11 +297,19 @@ impl S3RequestSigner {
 
         let canonical_request = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
-            method, canonical_uri, canonical_querystring, canonical_headers, signed_headers, payload_hash
+            method,
+            canonical_uri,
+            canonical_querystring,
+            canonical_headers,
+            signed_headers,
+            payload_hash
         );
 
         // String to sign
-        let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, self.region, self.service);
+        let credential_scope = format!(
+            "{}/{}/{}/aws4_request",
+            date_stamp, self.region, self.service
+        );
 
         use sha2::Digest;
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
@@ -329,15 +322,14 @@ impl S3RequestSigner {
         // Signing key
         type HmacSha256 = Hmac<Sha256>;
 
-        let mut mac = HmacSha256::new_from_slice(
-            format!("AWS4{}", self.secret_access_key).as_bytes(),
-        )
-        .map_err(|e| ProxyError::Internal(e.to_string()))?;
+        let mut mac =
+            HmacSha256::new_from_slice(format!("AWS4{}", self.secret_access_key).as_bytes())
+                .map_err(|e| ProxyError::Internal(e.to_string()))?;
         mac.update(date_stamp.as_bytes());
         let k_date = mac.finalize().into_bytes();
 
-        let mut mac = HmacSha256::new_from_slice(&k_date)
-            .map_err(|e| ProxyError::Internal(e.to_string()))?;
+        let mut mac =
+            HmacSha256::new_from_slice(&k_date).map_err(|e| ProxyError::Internal(e.to_string()))?;
         mac.update(self.region.as_bytes());
         let k_region = mac.finalize().into_bytes();
 
@@ -381,7 +373,9 @@ struct UnsignedUrlSigner {
 
 impl UnsignedUrlSigner {
     fn from_config(config: &BucketConfig) -> Result<Self, ProxyError> {
-        let endpoint = config.option("endpoint").unwrap_or("https://s3.amazonaws.com");
+        let endpoint = config
+            .option("endpoint")
+            .unwrap_or("https://s3.amazonaws.com");
         let bucket = config.option("bucket_name").unwrap_or("");
         Ok(Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),

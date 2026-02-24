@@ -46,14 +46,13 @@ impl GcpExchange {
 }
 
 impl<H: HttpExchange> CredentialExchange<H> for GcpExchange {
-    async fn exchange(
-        &self,
-        http: &H,
-        jwt: &str,
-    ) -> Result<CloudCredentials, OidcProviderError> {
+    async fn exchange(&self, http: &H, jwt: &str) -> Result<CloudCredentials, OidcProviderError> {
         // Step 1: Exchange JWT for federated access token via GCP STS
         let sts_form = [
-            ("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ),
             ("audience", &self.provider_resource_name),
             ("scope", "https://www.googleapis.com/auth/cloud-platform"),
             (
@@ -64,9 +63,7 @@ impl<H: HttpExchange> CredentialExchange<H> for GcpExchange {
             ("subject_token", jwt),
         ];
 
-        let sts_body = http
-            .post_form(&self.sts_endpoint, &sts_form)
-            .await?;
+        let sts_body = http.post_form(&self.sts_endpoint, &sts_form).await?;
 
         let federated_token = parse_sts_token_response(&sts_body)?;
 
@@ -114,17 +111,16 @@ fn parse_sts_token_response(json: &str) -> Result<String, OidcProviderError> {
     parsed["access_token"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| OidcProviderError::ExchangeError("missing access_token in STS response".into()))
+        .ok_or_else(|| {
+            OidcProviderError::ExchangeError("missing access_token in STS response".into())
+        })
 }
 
 /// Parse the IAM `generateAccessToken` response.
 fn parse_generate_access_token_response(json: &str) -> Result<CloudCredentials, OidcProviderError> {
-    let parsed: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| {
-            OidcProviderError::ExchangeError(format!(
-                "invalid generateAccessToken response: {e}"
-            ))
-        })?;
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        OidcProviderError::ExchangeError(format!("invalid generateAccessToken response: {e}"))
+    })?;
 
     let access_token = parsed["accessToken"]
         .as_str()

@@ -13,11 +13,8 @@ use s3_proxy_core::response_body::ProxyResponseBody;
 use std::pin::Pin;
 
 /// A boxed streaming body type that erases concrete stream types.
-type BoxedStreamBody = StreamBody<
-    Pin<
-        Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>,
-    >,
->;
+type BoxedStreamBody =
+    StreamBody<Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>>;
 
 /// The server response body type: either a stream (Forward) or fixed bytes/empty (Response).
 pub type ServerResponseBody = Either<BoxedStreamBody, Either<Full<Bytes>, Empty<Bytes>>>;

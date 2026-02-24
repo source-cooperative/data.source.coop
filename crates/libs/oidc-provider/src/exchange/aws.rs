@@ -47,11 +47,7 @@ impl AwsExchange {
 }
 
 impl<H: HttpExchange> CredentialExchange<H> for AwsExchange {
-    async fn exchange(
-        &self,
-        http: &H,
-        jwt: &str,
-    ) -> Result<CloudCredentials, OidcProviderError> {
+    async fn exchange(&self, http: &H, jwt: &str) -> Result<CloudCredentials, OidcProviderError> {
         let form = [
             ("Action", "AssumeRoleWithWebIdentity"),
             ("Version", "2011-06-15"),
@@ -60,9 +56,7 @@ impl<H: HttpExchange> CredentialExchange<H> for AwsExchange {
             ("WebIdentityToken", jwt),
         ];
 
-        let body = http
-            .post_form(&self.sts_endpoint, &form)
-            .await?;
+        let body = http.post_form(&self.sts_endpoint, &form).await?;
 
         parse_assume_role_response(&body)
     }
@@ -103,14 +97,12 @@ fn parse_assume_role_response(xml: &str) -> Result<CloudCredentials, OidcProvide
 fn extract_xml_value(xml: &str, tag: &str) -> Result<String, OidcProviderError> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
-    let start = xml
-        .find(&open)
-        .ok_or_else(|| OidcProviderError::ExchangeError(format!("missing <{tag}> in STS response")))?
-        + open.len();
-    let end = xml[start..]
-        .find(&close)
-        .ok_or_else(|| OidcProviderError::ExchangeError(format!("missing </{tag}> in STS response")))?
-        + start;
+    let start = xml.find(&open).ok_or_else(|| {
+        OidcProviderError::ExchangeError(format!("missing <{tag}> in STS response"))
+    })? + open.len();
+    let end = xml[start..].find(&close).ok_or_else(|| {
+        OidcProviderError::ExchangeError(format!("missing </{tag}> in STS response"))
+    })? + start;
     Ok(xml[start..end].to_string())
 }
 

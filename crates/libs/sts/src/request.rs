@@ -79,7 +79,8 @@ mod tests {
 
     #[test]
     fn test_sts_request_with_duration() {
-        let query = "Action=AssumeRoleWithWebIdentity&RoleArn=r&WebIdentityToken=t&DurationSeconds=7200";
+        let query =
+            "Action=AssumeRoleWithWebIdentity&RoleArn=r&WebIdentityToken=t&DurationSeconds=7200";
         let result = try_parse_sts_request(Some(query)).unwrap().unwrap();
         assert_eq!(result.duration_seconds, Some(7200));
     }

@@ -43,11 +43,7 @@ impl AzureExchange {
 }
 
 impl<H: HttpExchange> CredentialExchange<H> for AzureExchange {
-    async fn exchange(
-        &self,
-        http: &H,
-        jwt: &str,
-    ) -> Result<CloudCredentials, OidcProviderError> {
+    async fn exchange(&self, http: &H, jwt: &str) -> Result<CloudCredentials, OidcProviderError> {
         let form = [
             ("grant_type", "client_credentials"),
             (
@@ -59,9 +55,7 @@ impl<H: HttpExchange> CredentialExchange<H> for AzureExchange {
             ("scope", &self.scope),
         ];
 
-        let body = http
-            .post_form(&self.token_endpoint(), &form)
-            .await?;
+        let body = http.post_form(&self.token_endpoint(), &form).await?;
 
         parse_azure_token_response(&body)
     }
@@ -69,8 +63,9 @@ impl<H: HttpExchange> CredentialExchange<H> for AzureExchange {
 
 /// Parse an Azure AD token response.
 fn parse_azure_token_response(json: &str) -> Result<CloudCredentials, OidcProviderError> {
-    let parsed: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| OidcProviderError::ExchangeError(format!("invalid Azure token response: {e}")))?;
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+        OidcProviderError::ExchangeError(format!("invalid Azure token response: {e}"))
+    })?;
 
     if let Some(err) = parsed.get("error") {
         let desc = parsed

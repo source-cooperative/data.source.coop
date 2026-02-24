@@ -33,11 +33,10 @@ pub async fn fetch_jwks(issuer: &str) -> Result<JwksResponse, ProxyError> {
     let config_url = format!("{}/.well-known/openid-configuration", issuer);
     let client = reqwest::Client::new();
 
-    let config_resp = client
-        .get(&config_url)
-        .send()
-        .await
-        .map_err(|e| ProxyError::InvalidOidcToken(format!("failed to fetch OIDC config: {}", e)))?;
+    let config_resp =
+        client.get(&config_url).send().await.map_err(|e| {
+            ProxyError::InvalidOidcToken(format!("failed to fetch OIDC config: {}", e))
+        })?;
 
     let config: serde_json::Value = config_resp
         .json()
@@ -114,10 +113,7 @@ pub fn verify_token(
     let header_bytes = base64url_decode(header_b64)?;
     let header: serde_json::Value = serde_json::from_slice(&header_bytes)
         .map_err(|e| ProxyError::InvalidOidcToken(format!("invalid JWT header JSON: {}", e)))?;
-    let alg = header
-        .get("alg")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let alg = header.get("alg").and_then(|v| v.as_str()).unwrap_or("");
     if alg != "RS256" {
         return Err(ProxyError::InvalidOidcToken(format!(
             "unsupported JWT algorithm: {}",
@@ -134,7 +130,9 @@ pub fn verify_token(
     let signed_content = format!("{}.{}", header_b64, payload_b64);
     verifying_key
         .verify(signed_content.as_bytes(), &signature)
-        .map_err(|e| ProxyError::InvalidOidcToken(format!("JWT signature verification failed: {}", e)))?;
+        .map_err(|e| {
+            ProxyError::InvalidOidcToken(format!("JWT signature verification failed: {}", e))
+        })?;
 
     // Decode and validate claims
     let payload_bytes = base64url_decode(payload_b64)?;
@@ -154,9 +152,9 @@ pub fn verify_token(
     if let Some(ref required_aud) = role.required_audience {
         let aud_valid = match claims.get("aud") {
             Some(serde_json::Value::String(aud)) => aud == required_aud,
-            Some(serde_json::Value::Array(auds)) => {
-                auds.iter().any(|a| a.as_str() == Some(required_aud.as_str()))
-            }
+            Some(serde_json::Value::Array(auds)) => auds
+                .iter()
+                .any(|a| a.as_str() == Some(required_aud.as_str())),
             _ => false,
         };
         if !aud_valid {

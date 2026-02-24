@@ -53,11 +53,19 @@ use std::future::Future;
 /// (required by Tokio's task spawning), on WASM it's a no-op (allowing `!Send`
 /// JS interop types).
 pub trait ConfigProvider: Clone + MaybeSend + MaybeSync + 'static {
-    fn list_buckets(&self) -> impl Future<Output = Result<Vec<BucketConfig>, ProxyError>> + MaybeSend;
+    fn list_buckets(
+        &self,
+    ) -> impl Future<Output = Result<Vec<BucketConfig>, ProxyError>> + MaybeSend;
 
-    fn get_bucket(&self, name: &str) -> impl Future<Output = Result<Option<BucketConfig>, ProxyError>> + MaybeSend;
+    fn get_bucket(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = Result<Option<BucketConfig>, ProxyError>> + MaybeSend;
 
-    fn get_role(&self, role_id: &str) -> impl Future<Output = Result<Option<RoleConfig>, ProxyError>> + MaybeSend;
+    fn get_role(
+        &self,
+        role_id: &str,
+    ) -> impl Future<Output = Result<Option<RoleConfig>, ProxyError>> + MaybeSend;
 
     /// Look up a long-lived credential by its access key ID.
     fn get_credential(

@@ -18,9 +18,7 @@ use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLO
 use crate::error::ProxyError;
 use crate::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use crate::response_body::ProxyResponseBody;
-use crate::s3::response::{
-    ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents,
-};
+use crate::s3::response::{ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents};
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
@@ -153,11 +151,7 @@ where
     /// Phase 2: Complete a multipart operation with the request body.
     ///
     /// Called by the runtime after materializing the body for a `NeedsBody` action.
-    pub async fn handle_with_body(
-        &self,
-        pending: PendingRequest,
-        body: Bytes,
-    ) -> ProxyResult {
+    pub async fn handle_with_body(&self, pending: PendingRequest, body: Bytes) -> ProxyResult {
         match self.execute_multipart(&pending, body).await {
             Ok(result) => {
                 tracing::info!(
@@ -229,46 +223,59 @@ where
     ) -> Result<HandlerAction, ProxyError> {
         match operation {
             S3Operation::GetObject { key, .. } => {
-                let fwd = self.build_forward(
-                    Method::GET,
-                    bucket_config,
-                    key,
-                    original_headers,
-                    &["range", "if-match", "if-none-match", "if-modified-since", "if-unmodified-since"],
-                ).await?;
+                let fwd = self
+                    .build_forward(
+                        Method::GET,
+                        bucket_config,
+                        key,
+                        original_headers,
+                        &[
+                            "range",
+                            "if-match",
+                            "if-none-match",
+                            "if-modified-since",
+                            "if-unmodified-since",
+                        ],
+                    )
+                    .await?;
                 tracing::debug!(url = %fwd.url, "GET via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::HeadObject { key, .. } => {
-                let fwd = self.build_forward(
-                    Method::HEAD,
-                    bucket_config,
-                    key,
-                    original_headers,
-                    &["if-match", "if-none-match", "if-modified-since", "if-unmodified-since"],
-                ).await?;
+                let fwd = self
+                    .build_forward(
+                        Method::HEAD,
+                        bucket_config,
+                        key,
+                        original_headers,
+                        &[
+                            "if-match",
+                            "if-none-match",
+                            "if-modified-since",
+                            "if-unmodified-since",
+                        ],
+                    )
+                    .await?;
                 tracing::debug!(url = %fwd.url, "HEAD via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::PutObject { key, .. } => {
-                let fwd = self.build_forward(
-                    Method::PUT,
-                    bucket_config,
-                    key,
-                    original_headers,
-                    &["content-type", "content-length", "content-md5"],
-                ).await?;
+                let fwd = self
+                    .build_forward(
+                        Method::PUT,
+                        bucket_config,
+                        key,
+                        original_headers,
+                        &["content-type", "content-length", "content-md5"],
+                    )
+                    .await?;
                 tracing::debug!(url = %fwd.url, "PUT via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::DeleteObject { key, .. } => {
-                let fwd = self.build_forward(
-                    Method::DELETE,
-                    bucket_config,
-                    key,
-                    original_headers,
-                    &[],
-                ).await?;
+                let fwd = self
+                    .build_forward(Method::DELETE, bucket_config, key, original_headers, &[])
+                    .await?;
                 tracing::debug!(url = %fwd.url, "DELETE via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
@@ -413,11 +420,7 @@ where
         let mut headers = HeaderMap::new();
 
         // Forward relevant headers
-        for header_name in &[
-            "content-type",
-            "content-length",
-            "content-md5",
-        ] {
+        for header_name in &["content-type", "content-length", "content-md5"] {
             if let Some(val) = pending.original_headers.get(*header_name) {
                 headers.insert(*header_name, val.clone());
             }
@@ -429,7 +432,13 @@ where
             hash_payload(&body)
         };
 
-        sign_s3_request(&pending.method, &backend_url, &mut headers, &pending.bucket_config, &payload_hash)?;
+        sign_s3_request(
+            &pending.method,
+            &backend_url,
+            &mut headers,
+            &pending.bucket_config,
+            &payload_hash,
+        )?;
 
         let raw_resp = self
             .backend
@@ -497,8 +506,8 @@ fn sign_s3_request(
     let region = config.option("region").unwrap_or("us-east-1");
     let has_credentials = !access_key.is_empty() && !secret_key.is_empty();
 
-    let parsed_url = Url::parse(url)
-        .map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
+    let parsed_url =
+        Url::parse(url).map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
 
     if has_credentials {
         let signer = S3RequestSigner::new(
@@ -577,7 +586,10 @@ fn build_list_xml(
             let raw_key = obj.location.to_string();
             ListContents {
                 key: rewrite_key(&raw_key, &strip_prefix, list_rewrite),
-                last_modified: obj.last_modified.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                last_modified: obj
+                    .last_modified
+                    .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                    .to_string(),
                 etag: obj.e_tag.as_deref().unwrap_or("\"\"").to_string(),
                 size: obj.size,
                 storage_class: "STANDARD",
@@ -674,7 +686,10 @@ pub fn build_backend_url(
             part_number,
             ..
         } => {
-            url.push_str(&format!("?partNumber={}&uploadId={}", part_number, upload_id));
+            url.push_str(&format!(
+                "?partNumber={}&uploadId={}",
+                part_number, upload_id
+            ));
         }
         S3Operation::CompleteMultipartUpload { upload_id, .. }
         | S3Operation::AbortMultipartUpload { upload_id, .. } => {

@@ -20,12 +20,16 @@ pub fn parse_s3_request(
         if *method == Method::GET {
             return Ok(S3Operation::ListBuckets);
         }
-        return Err(ProxyError::InvalidRequest("unsupported operation on /".into()));
+        return Err(ProxyError::InvalidRequest(
+            "unsupported operation on /".into(),
+        ));
     }
 
     let (bucket, key) = match host_style {
         HostStyle::Path => parse_path_style(uri_path)?,
-        HostStyle::VirtualHosted { bucket } => (bucket, uri_path.trim_start_matches('/').to_string()),
+        HostStyle::VirtualHosted { bucket } => {
+            (bucket, uri_path.trim_start_matches('/').to_string())
+        }
     };
 
     build_s3_operation(method, bucket, key, query)

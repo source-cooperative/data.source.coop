@@ -240,8 +240,7 @@ impl S3Operation {
             | S3Operation::CompleteMultipartUpload { key, .. }
             | S3Operation::AbortMultipartUpload { key, .. }
             | S3Operation::DeleteObject { key, .. } => key,
-            S3Operation::ListBucket { .. }
-            | S3Operation::ListBuckets => "",
+            S3Operation::ListBucket { .. } | S3Operation::ListBuckets => "",
         }
     }
 }

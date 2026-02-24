@@ -123,8 +123,7 @@ impl ConfigProvider for PostgresProvider {
         &self,
         cred: &TemporaryCredentials,
     ) -> Result<(), ProxyError> {
-        let json =
-            serde_json::to_value(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
+        let json = serde_json::to_value(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
 
         sqlx::query(
             "INSERT INTO proxy_credentials (access_key_id, credential_type, config_json, expires_at)

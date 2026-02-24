@@ -15,8 +15,8 @@
 pub mod cache;
 pub mod discovery;
 pub mod exchange;
-pub mod jwt;
 pub mod jwks;
+pub mod jwt;
 
 use std::sync::Arc;
 
@@ -37,12 +37,15 @@ pub struct CloudCredentials {
 ///
 /// Each runtime provides its own implementation — `reqwest` on native,
 /// `Fetch` on Cloudflare Workers.
-pub trait HttpExchange: Clone + s3_proxy_core::maybe_send::MaybeSend + s3_proxy_core::maybe_send::MaybeSync + 'static {
+pub trait HttpExchange:
+    Clone + s3_proxy_core::maybe_send::MaybeSend + s3_proxy_core::maybe_send::MaybeSync + 'static
+{
     fn post_form(
         &self,
         url: &str,
         form: &[(&str, &str)],
-    ) -> impl std::future::Future<Output = Result<String, OidcProviderError>> + s3_proxy_core::maybe_send::MaybeSend;
+    ) -> impl std::future::Future<Output = Result<String, OidcProviderError>>
+           + s3_proxy_core::maybe_send::MaybeSend;
 }
 
 /// Top-level provider that combines signing, exchange, and caching.

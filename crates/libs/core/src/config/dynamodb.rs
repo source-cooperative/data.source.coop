@@ -147,10 +147,7 @@ impl ConfigProvider for DynamoDbProvider {
             .client()
             .get_item()
             .table_name(self.table())
-            .key(
-                "PK",
-                AttributeValue::S(format!("CRED#{}", access_key_id)),
-            )
+            .key("PK", AttributeValue::S(format!("CRED#{}", access_key_id)))
             .key("SK", AttributeValue::S("LONG_LIVED".into()))
             .send()
             .await
@@ -175,8 +172,7 @@ impl ConfigProvider for DynamoDbProvider {
         &self,
         cred: &TemporaryCredentials,
     ) -> Result<(), ProxyError> {
-        let json =
-            serde_json::to_string(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
+        let json = serde_json::to_string(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
 
         // TTL for DynamoDB auto-expiry
         let ttl_epoch = cred.expiration.timestamp();
@@ -206,10 +202,7 @@ impl ConfigProvider for DynamoDbProvider {
             .client()
             .get_item()
             .table_name(self.table())
-            .key(
-                "PK",
-                AttributeValue::S(format!("CRED#{}", access_key_id)),
-            )
+            .key("PK", AttributeValue::S(format!("CRED#{}", access_key_id)))
             .key("SK", AttributeValue::S("TEMPORARY".into()))
             .send()
             .await

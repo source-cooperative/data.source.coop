@@ -11,18 +11,18 @@ use crate::resolver::ListRewrite;
 pub fn rewrite_list_response(xml: &str, rewrite: &ListRewrite) -> String {
     let mut result = xml.to_string();
     result = rewrite_xml_element_values(&result, "Key", &rewrite.strip_prefix, &rewrite.add_prefix);
-    result = rewrite_xml_element_values(&result, "Prefix", &rewrite.strip_prefix, &rewrite.add_prefix);
+    result = rewrite_xml_element_values(
+        &result,
+        "Prefix",
+        &rewrite.strip_prefix,
+        &rewrite.add_prefix,
+    );
     result
 }
 
 /// Replace prefix in XML element values:
 /// `<Tag>old_prefix/rest</Tag>` -> `<Tag>new_prefix/rest</Tag>`
-fn rewrite_xml_element_values(
-    xml: &str,
-    tag: &str,
-    old_prefix: &str,
-    new_prefix: &str,
-) -> String {
+fn rewrite_xml_element_values(xml: &str, tag: &str, old_prefix: &str, new_prefix: &str) -> String {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
     let mut result = String::with_capacity(xml.len());
@@ -79,7 +79,11 @@ mod tests {
             add_prefix: "repo".to_string(),
         };
         let result = rewrite_list_response(xml, &rewrite);
-        assert!(result.contains("<Key>repo/file.csv</Key>"), "got: {}", result);
+        assert!(
+            result.contains("<Key>repo/file.csv</Key>"),
+            "got: {}",
+            result
+        );
     }
 
     #[test]

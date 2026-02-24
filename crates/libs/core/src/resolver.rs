@@ -122,17 +122,14 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
         }
 
         // Get bucket name and look up config
-        let bucket_name = operation.bucket()
+        let bucket_name = operation
+            .bucket()
             .ok_or_else(|| ProxyError::InvalidRequest("no bucket in request".into()))?;
 
-        let bucket_config = self
-            .config
-            .get_bucket(bucket_name)
-            .await?
-            .ok_or_else(|| {
-                tracing::warn!(bucket = %bucket_name, "bucket not found in config");
-                ProxyError::BucketNotFound(bucket_name.to_string())
-            })?;
+        let bucket_config = self.config.get_bucket(bucket_name).await?.ok_or_else(|| {
+            tracing::warn!(bucket = %bucket_name, "bucket not found in config");
+            ProxyError::BucketNotFound(bucket_name.to_string())
+        })?;
 
         tracing::debug!(
             bucket = %bucket_name,

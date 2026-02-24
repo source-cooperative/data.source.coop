@@ -10,7 +10,9 @@ use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use s3_proxy_core::config::ConfigProvider;
-use s3_proxy_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
+use s3_proxy_core::proxy::{
+    ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
+};
 use s3_proxy_core::resolver::DefaultResolver;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -52,7 +54,10 @@ impl Default for ServerConfig {
 ///     run(config, server_config).await.unwrap();
 /// }
 /// ```
-pub async fn run<P>(config: P, server_config: ServerConfig) -> Result<(), Box<dyn std::error::Error>>
+pub async fn run<P>(
+    config: P,
+    server_config: ServerConfig,
+) -> Result<(), Box<dyn std::error::Error>>
 where
     P: ConfigProvider + Send + Sync + 'static,
 {
@@ -127,9 +132,7 @@ where
 
     match action {
         HandlerAction::Response(result) => build_hyper_response(result),
-        HandlerAction::Forward(fwd) => {
-            forward_to_backend(client, fwd, incoming_body).await
-        }
+        HandlerAction::Forward(fwd) => forward_to_backend(client, fwd, incoming_body).await,
         HandlerAction::NeedsBody(pending) => {
             let body = incoming_body.collect().await?.to_bytes();
             let result = handler.handle_with_body(pending, body).await;
@@ -153,9 +156,7 @@ async fn forward_to_backend(
     // Attach streaming body for PUT
     if fwd.method == http::Method::PUT {
         let body_stream = BodyStream::new(incoming_body)
-            .try_filter_map(|frame| async move {
-                Ok(frame.into_data().ok())
-            });
+            .try_filter_map(|frame| async move { Ok(frame.into_data().ok()) });
         req_builder = req_builder.body(reqwest::Body::wrap_stream(body_stream));
     }
 
@@ -179,9 +180,8 @@ async fn forward_to_backend(
     let framed = body_stream
         .map_ok(Frame::data)
         .map_err(|e| std::io::Error::other(e.to_string()));
-    let body: ServerResponseBody = Either::Left(StreamBody::new(
-        Box::pin(framed) as Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>
-    ));
+    let body: ServerResponseBody = Either::Left(StreamBody::new(Box::pin(framed)
+        as Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>));
 
     let mut builder = Response::builder().status(status);
     for (k, v) in resp_headers.iter() {

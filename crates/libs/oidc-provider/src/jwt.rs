@@ -22,8 +22,9 @@ pub struct JwtSigner {
 impl JwtSigner {
     /// Create a signer from a PEM-encoded PKCS#8 private key.
     pub fn from_pem(pem: &str, kid: String, ttl_seconds: i64) -> Result<Self, OidcProviderError> {
-        let private_key = RsaPrivateKey::from_pkcs8_pem(pem)
-            .map_err(|e| OidcProviderError::KeyError(format!("failed to parse private key: {e}")))?;
+        let private_key = RsaPrivateKey::from_pkcs8_pem(pem).map_err(|e| {
+            OidcProviderError::KeyError(format!("failed to parse private key: {e}"))
+        })?;
         Ok(Self {
             private_key,
             kid,
@@ -75,7 +76,10 @@ impl JwtSigner {
         });
         if let serde_json::Value::Object(ref mut map) = payload {
             for (k, v) in extra_claims {
-                map.insert((*k).to_string(), serde_json::Value::String((*v).to_string()));
+                map.insert(
+                    (*k).to_string(),
+                    serde_json::Value::String((*v).to_string()),
+                );
             }
         }
         let payload_b64 = b64.encode(payload.to_string().as_bytes());
@@ -109,7 +113,12 @@ mod tests {
         let pem = test_key_pem();
         let signer = JwtSigner::from_pem(&pem, "test-kid".into(), 300).unwrap();
         let token = signer
-            .sign("my-subject", "https://proxy.example.com", "sts.amazonaws.com", &[])
+            .sign(
+                "my-subject",
+                "https://proxy.example.com",
+                "sts.amazonaws.com",
+                &[],
+            )
             .unwrap();
 
         let parts: Vec<&str> = token.split('.').collect();
