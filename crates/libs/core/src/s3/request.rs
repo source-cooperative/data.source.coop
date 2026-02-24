@@ -51,8 +51,8 @@ pub fn build_s3_operation(
 
     let has_uploads = query_params.iter().any(|(k, _)| k == "uploads");
 
-    match method {
-        &Method::GET => {
+    match *method {
+        Method::GET => {
             if key.is_empty() {
                 // ListBucket — pass the raw query string through so the proxy
                 // can forward all list params (prefix, delimiter, max-keys,
@@ -65,8 +65,8 @@ pub fn build_s3_operation(
                 Ok(S3Operation::GetObject { bucket, key })
             }
         }
-        &Method::HEAD => Ok(S3Operation::HeadObject { bucket, key }),
-        &Method::PUT => {
+        Method::HEAD => Ok(S3Operation::HeadObject { bucket, key }),
+        Method::PUT => {
             if let Some(upload_id) = upload_id {
                 let part_number = query_params
                     .iter()
@@ -84,7 +84,7 @@ pub fn build_s3_operation(
                 Ok(S3Operation::PutObject { bucket, key })
             }
         }
-        &Method::POST => {
+        Method::POST => {
             if has_uploads {
                 Ok(S3Operation::CreateMultipartUpload { bucket, key })
             } else if let Some(upload_id) = upload_id {
@@ -99,7 +99,7 @@ pub fn build_s3_operation(
                 ))
             }
         }
-        &Method::DELETE => {
+        Method::DELETE => {
             if let Some(upload_id) = upload_id {
                 Ok(S3Operation::AbortMultipartUpload {
                     bucket,

@@ -20,6 +20,12 @@ pub struct CredentialCache {
     entries: Mutex<HashMap<String, Arc<CloudCredentials>>>,
 }
 
+impl Default for CredentialCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CredentialCache {
     pub fn new() -> Self {
         Self {

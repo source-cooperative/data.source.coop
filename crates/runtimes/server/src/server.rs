@@ -178,7 +178,7 @@ async fn forward_to_backend(
     let body_stream = backend_resp.bytes_stream();
     let framed = body_stream
         .map_ok(Frame::data)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+        .map_err(|e| std::io::Error::other(e.to_string()));
     let body: ServerResponseBody = Either::Left(StreamBody::new(
         Box::pin(framed) as Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>
     ));

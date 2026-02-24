@@ -88,7 +88,7 @@ impl HttpClient for WorkerHttpClient {
             .await
             .map_err(|e| ProxyError::Internal(format!("failed to read text: {}", e)))?;
 
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(ProxyError::BackendError(format!(
                 "API request to {} returned status {}",
                 url, status

@@ -178,7 +178,7 @@ impl<H: HttpClient> SourceApiClient<H> {
         );
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let cache = (self.product_cache_ttl > 0).then(|| CacheOptions {
+        let cache = (self.product_cache_ttl > 0).then_some(CacheOptions {
             cache_ttl: self.product_cache_ttl,
             cache_key: None,
         });
@@ -190,7 +190,7 @@ impl<H: HttpClient> SourceApiClient<H> {
         let url = format!("{}/api/v1/data-connections/{}", self.api_url, id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let cache = (self.data_connection_cache_ttl > 0).then(|| CacheOptions {
+        let cache = (self.data_connection_cache_ttl > 0).then_some(CacheOptions {
             cache_ttl: self.data_connection_cache_ttl,
             cache_key: None,
         });
@@ -202,7 +202,7 @@ impl<H: HttpClient> SourceApiClient<H> {
         let url = format!("{}/api/v1/api-keys/{}/auth", self.api_url, access_key_id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let cache = (self.api_key_cache_ttl > 0).then(|| CacheOptions {
+        let cache = (self.api_key_cache_ttl > 0).then_some(CacheOptions {
             cache_ttl: self.api_key_cache_ttl,
             cache_key: None,
         });
@@ -245,7 +245,7 @@ impl<H: HttpClient> SourceApiClient<H> {
         let url = format!("{}/api/v1/products/{}", self.api_url, account_id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let cache = (self.account_cache_ttl > 0).then(|| CacheOptions {
+        let cache = (self.account_cache_ttl > 0).then_some(CacheOptions {
             cache_ttl: self.account_cache_ttl,
             cache_key: None,
         });
