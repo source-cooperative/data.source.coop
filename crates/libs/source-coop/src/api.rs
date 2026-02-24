@@ -104,6 +104,7 @@ pub struct ConnectionDetails {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct ConnectionAuth {
+    #[serde(alias = "type")]
     pub auth_type: String,
     pub access_key_id: Option<String>,
     pub secret_access_key: Option<String>,
