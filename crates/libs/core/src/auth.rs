@@ -727,6 +727,50 @@ mod tests {
             assert!(matches!(err, ProxyError::AccessDenied));
         });
     }
+
+    // ── Prefix boundary tests ─────────────────────────────────────
+
+    #[test]
+    fn prefix_with_slash_matches_children() {
+        assert!(key_matches_prefix("data/file.txt", "data/"));
+        assert!(key_matches_prefix("data/sub/file.txt", "data/"));
+    }
+
+    #[test]
+    fn prefix_without_slash_enforces_boundary() {
+        // Should match exact or with / boundary
+        assert!(key_matches_prefix("data/file.txt", "data"));
+        assert!(key_matches_prefix("data", "data"));
+        // Should NOT match sibling paths
+        assert!(!key_matches_prefix("data-private/secret.txt", "data"));
+        assert!(!key_matches_prefix("database/dump.sql", "data"));
+    }
+
+    #[test]
+    fn empty_prefix_matches_everything() {
+        assert!(key_matches_prefix("anything/at/all.txt", ""));
+        assert!(key_matches_prefix("", ""));
+    }
+
+    #[test]
+    fn prefix_no_match() {
+        assert!(!key_matches_prefix("other/file.txt", "data/"));
+        assert!(!key_matches_prefix("other/file.txt", "data"));
+    }
+}
+
+/// Check if a key falls under an authorized prefix.
+///
+/// If the prefix already ends with `/`, a plain `starts_with` is sufficient.
+/// Otherwise we require that the key either equals the prefix exactly or
+/// that the character immediately after the prefix is `/`. This prevents
+/// a prefix like `data` from matching `data-private/secret.txt`.
+fn key_matches_prefix(key: &str, prefix: &str) -> bool {
+    if prefix.ends_with('/') || prefix.is_empty() {
+        return key.starts_with(prefix);
+    }
+    // Prefix does not end with '/' — require an exact match or a '/' boundary
+    key == prefix || key.starts_with(&format!("{}/", prefix))
 }
 
 /// Check if a resolved identity is authorized to perform an operation.
@@ -785,7 +829,10 @@ pub fn authorize(
         if scope.prefixes.is_empty() {
             return true; // Full bucket access
         }
-        scope.prefixes.iter().any(|prefix| key.starts_with(prefix))
+        scope
+            .prefixes
+            .iter()
+            .any(|prefix| key_matches_prefix(&key, prefix))
     });
 
     if authorized {
