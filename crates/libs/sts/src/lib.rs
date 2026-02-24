@@ -21,6 +21,7 @@ pub mod responses;
 pub mod sts;
 
 use base64::Engine;
+pub use jwks::JwksCache;
 use request::StsRequest;
 use s3_proxy_core::config::ConfigProvider;
 use s3_proxy_core::error::ProxyError;
@@ -54,6 +55,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     config: &C,
     sts_request: &StsRequest,
     key_prefix: &str,
+    jwks_cache: &JwksCache,
 ) -> Result<TemporaryCredentials, ProxyError> {
     // Look up the role
     let role = config
@@ -77,8 +79,20 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         )));
     }
 
-    // Fetch JWKS and verify the token
-    let jwks = jwks::fetch_jwks(issuer).await?;
+    // Fail fast on unsupported algorithms before making any network requests
+    let alg = header
+        .get("alg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if alg != "RS256" {
+        return Err(ProxyError::InvalidOidcToken(format!(
+            "unsupported JWT algorithm: {}",
+            alg
+        )));
+    }
+
+    // Fetch JWKS (using cache) and verify the token
+    let jwks = jwks_cache.get_or_fetch(issuer).await?;
     let kid = header
         .get("kid")
         .and_then(|v| v.as_str())
@@ -103,11 +117,12 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         }
     }
 
-    // Mint temporary credentials
+    // Mint temporary credentials (AWS enforces 900s minimum)
+    const MIN_SESSION_DURATION_SECS: u64 = 900;
     let duration = sts_request
         .duration_seconds
         .unwrap_or(3600)
-        .min(role.max_session_duration_secs);
+        .clamp(MIN_SESSION_DURATION_SECS, role.max_session_duration_secs);
 
     let creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix);
 

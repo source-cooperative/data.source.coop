@@ -1,5 +1,9 @@
 //! JWKS fetching and JWT verification.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use base64::Engine;
 use rsa::pkcs1v15::VerifyingKey;
 use rsa::signature::Verifier;
@@ -9,12 +13,12 @@ use s3_proxy_core::types::RoleConfig;
 use serde::Deserialize;
 use sha2::Sha256;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JwksResponse {
     pub keys: Vec<JwkKey>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JwkKey {
     pub kid: String,
     pub kty: String,
@@ -165,13 +169,67 @@ pub fn verify_token(
         }
     }
 
-    // Validate expiration
+    // Validate time-based claims with clock skew tolerance
+    let now = chrono::Utc::now().timestamp();
+    const CLOCK_SKEW_SECS: i64 = 60;
+
     if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-        let now = chrono::Utc::now().timestamp();
-        if now > exp {
+        if now > exp + CLOCK_SKEW_SECS {
             return Err(ProxyError::InvalidOidcToken("token has expired".into()));
         }
     }
 
+    if let Some(nbf) = claims.get("nbf").and_then(|v| v.as_i64()) {
+        if now < nbf - CLOCK_SKEW_SECS {
+            return Err(ProxyError::InvalidOidcToken("token is not yet valid".into()));
+        }
+    }
+
     Ok(claims)
+}
+
+/// In-memory cache for JWKS responses, keyed by issuer URL.
+///
+/// OIDC providers publish JWKS keys that change infrequently. Caching avoids
+/// a network round-trip to the provider on every token validation and prevents
+/// DoS via repeated validation attempts.
+pub struct JwksCache {
+    ttl: Duration,
+    entries: Mutex<HashMap<String, (Instant, JwksResponse)>>,
+}
+
+impl JwksCache {
+    /// Create a new cache with the given TTL.
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Fetch JWKS for the given issuer, returning a cached response if fresh.
+    pub async fn get_or_fetch(&self, issuer: &str) -> Result<JwksResponse, ProxyError> {
+        // Check cache
+        if let Some(cached) = self.get_cached(issuer) {
+            return Ok(cached);
+        }
+
+        // Cache miss — fetch from the network
+        let jwks = fetch_jwks(issuer).await?;
+
+        let mut entries = self.entries.lock().unwrap();
+        entries.insert(issuer.to_string(), (Instant::now(), jwks.clone()));
+
+        Ok(jwks)
+    }
+
+    fn get_cached(&self, issuer: &str) -> Option<JwksResponse> {
+        let entries = self.entries.lock().unwrap();
+        if let Some((fetched_at, jwks)) = entries.get(issuer) {
+            if fetched_at.elapsed() < self.ttl {
+                return Some(jwks.clone());
+            }
+        }
+        None
+    }
 }
