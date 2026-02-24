@@ -238,7 +238,7 @@ where
                         ],
                     )
                     .await?;
-                tracing::debug!(url = %fwd.url, "GET via presigned URL");
+                tracing::debug!(path = fwd.url.path(), "GET via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::HeadObject { key, .. } => {
@@ -256,7 +256,7 @@ where
                         ],
                     )
                     .await?;
-                tracing::debug!(url = %fwd.url, "HEAD via presigned URL");
+                tracing::debug!(path = fwd.url.path(), "HEAD via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::PutObject { key, .. } => {
@@ -269,14 +269,14 @@ where
                         &["content-type", "content-length", "content-md5"],
                     )
                     .await?;
-                tracing::debug!(url = %fwd.url, "PUT via presigned URL");
+                tracing::debug!(path = fwd.url.path(), "PUT via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::DeleteObject { key, .. } => {
                 let fwd = self
                     .build_forward(Method::DELETE, bucket_config, key, original_headers, &[])
                     .await?;
-                tracing::debug!(url = %fwd.url, "DELETE via presigned URL");
+                tracing::debug!(path = fwd.url.path(), "DELETE via presigned URL");
                 Ok(HandlerAction::Forward(fwd))
             }
             S3Operation::ListBucket { raw_query, .. } => {
