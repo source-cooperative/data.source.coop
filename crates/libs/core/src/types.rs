@@ -3,9 +3,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// Configuration for a virtual bucket exposed by the proxy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BucketConfig {
     /// The virtual bucket name exposed to clients.
     pub name: String,
@@ -30,6 +31,40 @@ pub struct BucketConfig {
     /// GCS: "bucket_name", "service_account_key", "skip_signature"
     #[serde(default)]
     pub backend_options: HashMap<String, String>,
+}
+
+/// Keys in `backend_options` that hold secret values.
+const REDACTED_OPTION_KEYS: &[&str] = &[
+    "secret_access_key",
+    "access_key",
+    "service_account_key",
+    "token",
+];
+
+impl fmt::Debug for BucketConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_opts: HashMap<&str, &str> = self
+            .backend_options
+            .iter()
+            .map(|(k, v)| {
+                let val = if REDACTED_OPTION_KEYS.contains(&k.as_str()) {
+                    "[REDACTED]"
+                } else {
+                    v.as_str()
+                };
+                (k.as_str(), val)
+            })
+            .collect();
+
+        f.debug_struct("BucketConfig")
+            .field("name", &self.name)
+            .field("backend_type", &self.backend_type)
+            .field("backend_prefix", &self.backend_prefix)
+            .field("anonymous_access", &self.anonymous_access)
+            .field("allowed_roles", &self.allowed_roles)
+            .field("backend_options", &redacted_opts)
+            .finish()
+    }
 }
 
 /// Known backend provider types.
@@ -114,7 +149,7 @@ pub enum Action {
 }
 
 /// A long-lived access credential stored in the config backend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StoredCredential {
     pub access_key_id: String,
     /// This is the HMAC signing key, not stored in plaintext ideally.
@@ -126,8 +161,22 @@ pub struct StoredCredential {
     pub enabled: bool,
 }
 
+impl fmt::Debug for StoredCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StoredCredential")
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"[REDACTED]")
+            .field("principal_name", &self.principal_name)
+            .field("allowed_scopes", &self.allowed_scopes)
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
 /// Temporary credentials minted by the STS API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TemporaryCredentials {
     pub access_key_id: String,
     pub secret_access_key: String,
@@ -136,6 +185,20 @@ pub struct TemporaryCredentials {
     pub allowed_scopes: Vec<AccessScope>,
     pub assumed_role_id: String,
     pub source_identity: String,
+}
+
+impl fmt::Debug for TemporaryCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TemporaryCredentials")
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"[REDACTED]")
+            .field("session_token", &"[REDACTED]")
+            .field("expiration", &self.expiration)
+            .field("allowed_scopes", &self.allowed_scopes)
+            .field("assumed_role_id", &self.assumed_role_id)
+            .field("source_identity", &self.source_identity)
+            .finish()
+    }
 }
 
 /// Represents the resolved identity after authentication.
