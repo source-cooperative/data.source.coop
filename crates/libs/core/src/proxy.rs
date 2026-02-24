@@ -18,6 +18,7 @@ use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLO
 use crate::error::ProxyError;
 use crate::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use crate::response_body::ProxyResponseBody;
+use crate::s3::pagination::{self, paginate};
 use crate::s3::response::{ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents};
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
@@ -422,7 +423,8 @@ where
             &list_result,
             config,
             list_rewrite,
-        );
+            raw_query,
+        )?;
 
         let mut resp_headers = HeaderMap::new();
         resp_headers.insert("content-type", "application/xml".parse().unwrap());
@@ -594,7 +596,8 @@ fn build_list_xml(
     list_result: &object_store::ListResult,
     config: &BucketConfig,
     list_rewrite: Option<&ListRewrite>,
-) -> String {
+    raw_query: Option<&str>,
+) -> Result<String, ProxyError> {
     let backend_prefix = config
         .backend_prefix
         .as_deref()
@@ -635,18 +638,24 @@ fn build_list_xml(
         })
         .collect();
 
-    ListBucketResult {
+    let params = pagination::parse_pagination_params(raw_query);
+    let page = paginate(contents, common_prefixes, &params)?;
+
+    Ok(ListBucketResult {
         xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
         name: bucket_name.to_string(),
         prefix: client_prefix.to_string(),
         delimiter: delimiter.to_string(),
-        max_keys: 1000,
-        is_truncated: false,
-        key_count: contents.len() + common_prefixes.len(),
-        contents,
-        common_prefixes,
+        max_keys: params.max_keys,
+        is_truncated: page.is_truncated,
+        key_count: page.contents.len() + page.common_prefixes.len(),
+        start_after: params.start_after,
+        continuation_token: params.continuation_token,
+        next_continuation_token: page.next_continuation_token,
+        contents: page.contents,
+        common_prefixes: page.common_prefixes,
     }
-    .to_xml()
+    .to_xml())
 }
 
 /// Apply strip/add prefix rewriting to a key or prefix value.

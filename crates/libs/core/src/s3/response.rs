@@ -172,13 +172,19 @@ pub struct ListBucketResult {
     pub is_truncated: bool,
     #[serde(rename = "KeyCount")]
     pub key_count: usize,
+    #[serde(rename = "StartAfter", skip_serializing_if = "Option::is_none")]
+    pub start_after: Option<String>,
+    #[serde(rename = "ContinuationToken", skip_serializing_if = "Option::is_none")]
+    pub continuation_token: Option<String>,
+    #[serde(rename = "NextContinuationToken", skip_serializing_if = "Option::is_none")]
+    pub next_continuation_token: Option<String>,
     #[serde(rename = "Contents", default)]
     pub contents: Vec<ListContents>,
     #[serde(rename = "CommonPrefixes", default)]
     pub common_prefixes: Vec<ListCommonPrefix>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ListContents {
     #[serde(rename = "Key")]
     pub key: String,
@@ -221,6 +227,9 @@ mod tests {
             max_keys: 1000,
             is_truncated: false,
             key_count: 1,
+            start_after: None,
+            continuation_token: None,
+            next_continuation_token: None,
             contents: vec![ListContents {
                 key: "photos/image.jpg".to_string(),
                 last_modified: "2024-01-01T00:00:00.000Z".to_string(),
@@ -254,6 +263,9 @@ mod tests {
             max_keys: 1000,
             is_truncated: false,
             key_count: 0,
+            start_after: None,
+            continuation_token: None,
+            next_continuation_token: None,
             contents: vec![],
             common_prefixes: vec![],
         };
