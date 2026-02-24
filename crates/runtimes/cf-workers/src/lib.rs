@@ -72,6 +72,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 ))
             })?;
 
+tracing::info!(
+            source_api_url = source_api_url.to_string(),
+            "SOURCE_API_URL set, using Source Cooperative API resolver"
+        );
+
         let mut cache_ttls = CacheTtls::default();
         if let Ok(v) = env.var("SOURCE_CACHE_TTL_PRODUCT") {
             if let Ok(n) = v.to_string().parse::<u32>() {
