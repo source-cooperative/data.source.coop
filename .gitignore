@@ -2,3 +2,4 @@
 scripts/task_definition.json
 target
 .wrangler
+crates/runtimes/cf-workers/.env
