@@ -686,17 +686,105 @@ pub fn build_backend_url(
             part_number,
             ..
         } => {
-            url.push_str(&format!(
-                "?partNumber={}&uploadId={}",
-                part_number, upload_id
-            ));
+            let qs = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("partNumber", &part_number.to_string())
+                .append_pair("uploadId", upload_id)
+                .finish();
+            url.push('?');
+            url.push_str(&qs);
         }
         S3Operation::CompleteMultipartUpload { upload_id, .. }
         | S3Operation::AbortMultipartUpload { upload_id, .. } => {
-            url.push_str(&format!("?uploadId={}", upload_id));
+            let qs = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("uploadId", upload_id)
+                .finish();
+            url.push('?');
+            url.push_str(&qs);
         }
         _ => {}
     }
 
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn test_bucket_config() -> BucketConfig {
+        let mut backend_options = HashMap::new();
+        backend_options.insert("endpoint".into(), "https://s3.us-east-1.amazonaws.com".into());
+        backend_options.insert("bucket_name".into(), "my-backend-bucket".into());
+        BucketConfig {
+            name: "test".into(),
+            backend_type: "s3".into(),
+            backend_prefix: None,
+            anonymous_access: false,
+            allowed_roles: vec![],
+            backend_options,
+        }
+    }
+
+    #[test]
+    fn upload_id_with_special_chars_is_encoded() {
+        let config = test_bucket_config();
+        let malicious_upload_id = "abc&x-amz-acl=public-read&foo=bar";
+        let op = S3Operation::UploadPart {
+            bucket: "test".into(),
+            key: "file.bin".into(),
+            upload_id: malicious_upload_id.into(),
+            part_number: 1,
+        };
+
+        let url = build_backend_url(&config, &op).unwrap();
+
+        // The & and = characters in upload_id must be percent-encoded so they
+        // cannot act as query parameter separators/assignments.
+        let query = url.split_once('?').unwrap().1;
+        let params: Vec<(String, String)> =
+            url::form_urlencoded::parse(query.as_bytes())
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+
+        // Should be exactly 2 params: partNumber and uploadId
+        assert_eq!(params.len(), 2, "expected 2 query params, got: {:?}", params);
+        assert!(params.iter().any(|(k, v)| k == "partNumber" && v == "1"));
+        assert!(params.iter().any(|(k, v)| k == "uploadId" && v == malicious_upload_id));
+    }
+
+    #[test]
+    fn upload_id_encoded_in_complete_multipart() {
+        let config = test_bucket_config();
+        let op = S3Operation::CompleteMultipartUpload {
+            bucket: "test".into(),
+            key: "file.bin".into(),
+            upload_id: "id&injected=true".into(),
+        };
+
+        let url = build_backend_url(&config, &op).unwrap();
+
+        assert!(
+            !url.contains("injected=true"),
+            "upload_id was not encoded: {}",
+            url
+        );
+    }
+
+    #[test]
+    fn normal_upload_id_works() {
+        let config = test_bucket_config();
+        let op = S3Operation::UploadPart {
+            bucket: "test".into(),
+            key: "file.bin".into(),
+            upload_id: "2~abcdef1234567890".into(),
+            part_number: 3,
+        };
+
+        let url = build_backend_url(&config, &op).unwrap();
+
+        assert!(url.starts_with("https://s3.us-east-1.amazonaws.com/my-backend-bucket/file.bin?"));
+        assert!(url.contains("partNumber=3"));
+        assert!(url.contains("uploadId=2~abcdef1234567890") || url.contains("uploadId=2%7Eabcdef1234567890"));
+    }
 }
