@@ -158,8 +158,12 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Resolve the identity of an incoming request.
 ///
-/// Checks the Authorization header and resolves it against the config provider.
+/// Parses the SigV4 Authorization header, looks up the credential, verifies
+/// the signature, and returns the resolved identity.
 pub async fn resolve_identity<C: ConfigProvider>(
+    method: &http::Method,
+    uri_path: &str,
+    query_string: &str,
     headers: &HeaderMap,
     config: &C,
 ) -> Result<ResolvedIdentity, ProxyError> {
@@ -170,17 +174,43 @@ pub async fn resolve_identity<C: ConfigProvider>(
 
     let sig = parse_sigv4_auth(auth_header)?;
 
+    // The payload hash is sent by the client in x-amz-content-sha256.
+    // For streaming uploads this is the UNSIGNED-PAYLOAD or
+    // STREAMING-AWS4-HMAC-SHA256-PAYLOAD sentinel — both are valid
+    // canonical-request inputs per the SigV4 spec.
+    let payload_hash = headers
+        .get("x-amz-content-sha256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("UNSIGNED-PAYLOAD");
+
     // Check for temporary credentials first (session token present)
     if headers.get("x-amz-security-token").is_some() {
         if let Some(temp_cred) = config.get_temporary_credential(&sig.access_key_id).await? {
-            // Verify session token matches
+            // Verify session token matches (constant-time to avoid timing leaks)
             let session_token = headers
                 .get("x-amz-security-token")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if session_token != temp_cred.session_token {
+            if !constant_time_eq(
+                session_token.as_bytes(),
+                temp_cred.session_token.as_bytes(),
+            ) {
                 return Err(ProxyError::AccessDenied);
             }
+
+            // Verify SigV4 signature
+            if !verify_sigv4_signature(
+                method,
+                uri_path,
+                query_string,
+                headers,
+                &sig,
+                &temp_cred.secret_access_key,
+                payload_hash,
+            )? {
+                return Err(ProxyError::SignatureDoesNotMatch);
+            }
+
             return Ok(ResolvedIdentity::Temporary {
                 credentials: temp_cred,
             });
@@ -198,10 +228,505 @@ pub async fn resolve_identity<C: ConfigProvider>(
                 return Err(ProxyError::ExpiredCredentials);
             }
         }
+
+        // Verify SigV4 signature
+        if !verify_sigv4_signature(
+            method,
+            uri_path,
+            query_string,
+            headers,
+            &sig,
+            &cred.secret_access_key,
+            payload_hash,
+        )? {
+            return Err(ProxyError::SignatureDoesNotMatch);
+        }
+
         return Ok(ResolvedIdentity::LongLived { credential: cred });
     }
 
     Err(ProxyError::AccessDenied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{
+        AccessScope, Action, BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials,
+    };
+
+    // ── Mock config provider ──────────────────────────────────────────
+
+    #[derive(Clone)]
+    struct MockConfig {
+        credentials: Vec<StoredCredential>,
+        temp_credentials: Vec<TemporaryCredentials>,
+    }
+
+    impl MockConfig {
+        fn with_credential(secret: &str) -> Self {
+            Self {
+                credentials: vec![StoredCredential {
+                    access_key_id: "AKIAIOSFODNN7EXAMPLE".into(),
+                    secret_access_key: secret.into(),
+                    principal_name: "test-user".into(),
+                    allowed_scopes: vec![AccessScope {
+                        bucket: "test-bucket".into(),
+                        prefixes: vec![],
+                        actions: vec![Action::GetObject],
+                    }],
+                    created_at: chrono::Utc::now(),
+                    expires_at: None,
+                    enabled: true,
+                }],
+                temp_credentials: vec![],
+            }
+        }
+
+        fn with_temp_credential(secret: &str, session_token: &str) -> Self {
+            Self {
+                credentials: vec![],
+                temp_credentials: vec![TemporaryCredentials {
+                    access_key_id: "ASIATEMP1234EXAMPLE".into(),
+                    secret_access_key: secret.into(),
+                    session_token: session_token.into(),
+                    expiration: chrono::Utc::now() + chrono::Duration::hours(1),
+                    allowed_scopes: vec![AccessScope {
+                        bucket: "test-bucket".into(),
+                        prefixes: vec![],
+                        actions: vec![Action::GetObject],
+                    }],
+                    assumed_role_id: "role-1".into(),
+                    source_identity: "test".into(),
+                }],
+            }
+        }
+
+        fn empty() -> Self {
+            Self {
+                credentials: vec![],
+                temp_credentials: vec![],
+            }
+        }
+    }
+
+    impl crate::config::ConfigProvider for MockConfig {
+        async fn list_buckets(&self) -> Result<Vec<BucketConfig>, ProxyError> {
+            Ok(vec![])
+        }
+        async fn get_bucket(&self, _: &str) -> Result<Option<BucketConfig>, ProxyError> {
+            Ok(None)
+        }
+        async fn get_role(&self, _: &str) -> Result<Option<RoleConfig>, ProxyError> {
+            Ok(None)
+        }
+        async fn get_credential(
+            &self,
+            access_key_id: &str,
+        ) -> Result<Option<StoredCredential>, ProxyError> {
+            Ok(self
+                .credentials
+                .iter()
+                .find(|c| c.access_key_id == access_key_id)
+                .cloned())
+        }
+        async fn store_temporary_credential(&self, _: &TemporaryCredentials) -> Result<(), ProxyError> {
+            Ok(())
+        }
+        async fn get_temporary_credential(
+            &self,
+            access_key_id: &str,
+        ) -> Result<Option<TemporaryCredentials>, ProxyError> {
+            Ok(self
+                .temp_credentials
+                .iter()
+                .find(|c| c.access_key_id == access_key_id)
+                .cloned())
+        }
+    }
+
+    // ── Test signing helper ───────────────────────────────────────────
+
+    /// Build a valid SigV4 Authorization header value for testing.
+    fn sign_request(
+        method: &http::Method,
+        uri_path: &str,
+        query_string: &str,
+        headers: &HeaderMap,
+        access_key_id: &str,
+        secret_access_key: &str,
+        date_stamp: &str,
+        amz_date: &str,
+        region: &str,
+        signed_header_names: &[&str],
+        payload_hash: &str,
+    ) -> String {
+        let canonical_headers: String = signed_header_names
+            .iter()
+            .map(|name| {
+                let value = headers
+                    .get(*name)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .trim();
+                format!("{}:{}\n", name, value)
+            })
+            .collect();
+
+        let signed_headers_str = signed_header_names.join(";");
+
+        let canonical_request = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method, uri_path, query_string, canonical_headers, signed_headers_str, payload_hash
+        );
+
+        let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+        let credential_scope = format!("{}/{}/s3/aws4_request", date_stamp, region);
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            amz_date, credential_scope, canonical_request_hash
+        );
+
+        let k_date =
+            hmac_sha256(format!("AWS4{}", secret_access_key).as_bytes(), date_stamp.as_bytes())
+                .unwrap();
+        let k_region = hmac_sha256(&k_date, region.as_bytes()).unwrap();
+        let k_service = hmac_sha256(&k_region, b"s3").unwrap();
+        let signing_key = hmac_sha256(&k_service, b"aws4_request").unwrap();
+        let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()).unwrap());
+
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}/{}/s3/aws4_request, SignedHeaders={}, Signature={}",
+            access_key_id, date_stamp, region, signed_headers_str, signature
+        )
+    }
+
+    /// Build headers and auth for a simple GET request.
+    fn make_signed_headers(
+        access_key_id: &str,
+        secret_access_key: &str,
+    ) -> HeaderMap {
+        let date_stamp = "20240101";
+        let amz_date = "20240101T000000Z";
+        let region = "us-east-1";
+        let payload_hash = "UNSIGNED-PAYLOAD";
+
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "s3.example.com".parse().unwrap());
+        headers.insert("x-amz-date", amz_date.parse().unwrap());
+        headers.insert("x-amz-content-sha256", payload_hash.parse().unwrap());
+
+        let auth = sign_request(
+            &http::Method::GET,
+            "/test-bucket/key.txt",
+            "",
+            &headers,
+            access_key_id,
+            secret_access_key,
+            date_stamp,
+            amz_date,
+            region,
+            &["host", "x-amz-content-sha256", "x-amz-date"],
+            payload_hash,
+        );
+        headers.insert("authorization", auth.parse().unwrap());
+        headers
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────
+
+    fn run<F: std::future::Future>(f: F) -> F::Output {
+        futures::executor::block_on(f)
+    }
+
+    #[test]
+    fn no_auth_header_returns_anonymous() {
+        run(async {
+            let headers = HeaderMap::new();
+            let config = MockConfig::empty();
+
+            let identity = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap();
+
+            assert!(matches!(identity, ResolvedIdentity::Anonymous));
+        });
+    }
+
+    #[test]
+    fn valid_signature_resolves_identity() {
+        run(async {
+            let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+            let config = MockConfig::with_credential(secret);
+            let headers = make_signed_headers("AKIAIOSFODNN7EXAMPLE", secret);
+
+            let identity = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap();
+
+            assert!(matches!(identity, ResolvedIdentity::LongLived { .. }));
+        });
+    }
+
+    #[test]
+    fn wrong_signature_is_rejected() {
+        run(async {
+            let real_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+            let wrong_secret = "WRONGSECRETKEYWRONGSECRETSECRET00000000000";
+            let config = MockConfig::with_credential(real_secret);
+            // Sign with wrong secret — access_key_id is correct, signature won't match
+            let headers = make_signed_headers("AKIAIOSFODNN7EXAMPLE", wrong_secret);
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(
+                matches!(err, ProxyError::SignatureDoesNotMatch),
+                "expected SignatureDoesNotMatch, got: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn garbage_signature_is_rejected() {
+        run(async {
+            let real_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+            let config = MockConfig::with_credential(real_secret);
+
+            let mut headers = HeaderMap::new();
+            headers.insert("host", "s3.example.com".parse().unwrap());
+            headers.insert("x-amz-date", "20240101T000000Z".parse().unwrap());
+            headers.insert("x-amz-content-sha256", "UNSIGNED-PAYLOAD".parse().unwrap());
+            headers.insert(
+                "authorization",
+                "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20240101/us-east-1/s3/aws4_request, \
+                 SignedHeaders=host;x-amz-content-sha256;x-amz-date, \
+                 Signature=0000000000000000000000000000000000000000000000000000000000000000"
+                    .parse()
+                    .unwrap(),
+            );
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(err, ProxyError::SignatureDoesNotMatch));
+        });
+    }
+
+    #[test]
+    fn unknown_access_key_is_rejected() {
+        run(async {
+            let config = MockConfig::empty();
+            let headers = make_signed_headers("AKIAUNKNOWN000000000", "some-secret");
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(err, ProxyError::AccessDenied));
+        });
+    }
+
+    #[test]
+    fn temp_credential_valid_signature_and_token() {
+        run(async {
+            let secret = "TempSecretKey1234567890EXAMPLE000000000000";
+            let session_token = "FwoGZXIvYXdzEBYaDGFiY2RlZjEyMzQ1Ng";
+            let config = MockConfig::with_temp_credential(secret, session_token);
+
+            let date_stamp = "20240101";
+            let amz_date = "20240101T000000Z";
+            let payload_hash = "UNSIGNED-PAYLOAD";
+
+            let mut headers = HeaderMap::new();
+            headers.insert("host", "s3.example.com".parse().unwrap());
+            headers.insert("x-amz-date", amz_date.parse().unwrap());
+            headers.insert("x-amz-content-sha256", payload_hash.parse().unwrap());
+            headers.insert("x-amz-security-token", session_token.parse().unwrap());
+
+            let auth = sign_request(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                "ASIATEMP1234EXAMPLE",
+                secret,
+                date_stamp,
+                amz_date,
+                "us-east-1",
+                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                payload_hash,
+            );
+            headers.insert("authorization", auth.parse().unwrap());
+
+            let identity = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap();
+
+            assert!(matches!(identity, ResolvedIdentity::Temporary { .. }));
+        });
+    }
+
+    #[test]
+    fn temp_credential_wrong_session_token_is_rejected() {
+        run(async {
+            let secret = "TempSecretKey1234567890EXAMPLE000000000000";
+            let real_token = "FwoGZXIvYXdzEBYaDGFiY2RlZjEyMzQ1Ng";
+            let wrong_token = "WRONG_TOKEN_VALUE_HERE";
+            let config = MockConfig::with_temp_credential(secret, real_token);
+
+            let date_stamp = "20240101";
+            let amz_date = "20240101T000000Z";
+            let payload_hash = "UNSIGNED-PAYLOAD";
+
+            let mut headers = HeaderMap::new();
+            headers.insert("host", "s3.example.com".parse().unwrap());
+            headers.insert("x-amz-date", amz_date.parse().unwrap());
+            headers.insert("x-amz-content-sha256", payload_hash.parse().unwrap());
+            headers.insert("x-amz-security-token", wrong_token.parse().unwrap());
+
+            let auth = sign_request(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                "ASIATEMP1234EXAMPLE",
+                secret,
+                date_stamp,
+                amz_date,
+                "us-east-1",
+                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                payload_hash,
+            );
+            headers.insert("authorization", auth.parse().unwrap());
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(err, ProxyError::AccessDenied));
+        });
+    }
+
+    #[test]
+    fn temp_credential_wrong_signature_is_rejected() {
+        run(async {
+            let real_secret = "TempSecretKey1234567890EXAMPLE000000000000";
+            let wrong_secret = "WRONGSECRETKEYWRONGSECRETSECRET00000000000";
+            let session_token = "FwoGZXIvYXdzEBYaDGFiY2RlZjEyMzQ1Ng";
+            let config = MockConfig::with_temp_credential(real_secret, session_token);
+
+            let date_stamp = "20240101";
+            let amz_date = "20240101T000000Z";
+            let payload_hash = "UNSIGNED-PAYLOAD";
+
+            let mut headers = HeaderMap::new();
+            headers.insert("host", "s3.example.com".parse().unwrap());
+            headers.insert("x-amz-date", amz_date.parse().unwrap());
+            headers.insert("x-amz-content-sha256", payload_hash.parse().unwrap());
+            headers.insert("x-amz-security-token", session_token.parse().unwrap());
+
+            // Sign with wrong secret — session token is correct but sig won't match
+            let auth = sign_request(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                "ASIATEMP1234EXAMPLE",
+                wrong_secret,
+                date_stamp,
+                amz_date,
+                "us-east-1",
+                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                payload_hash,
+            );
+            headers.insert("authorization", auth.parse().unwrap());
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(
+                matches!(err, ProxyError::SignatureDoesNotMatch),
+                "expected SignatureDoesNotMatch, got: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn disabled_credential_is_rejected_before_sig_check() {
+        run(async {
+            let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+            let mut config = MockConfig::with_credential(secret);
+            config.credentials[0].enabled = false;
+
+            let headers = make_signed_headers("AKIAIOSFODNN7EXAMPLE", secret);
+
+            let err = resolve_identity(
+                &http::Method::GET,
+                "/test-bucket/key.txt",
+                "",
+                &headers,
+                &config,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(err, ProxyError::AccessDenied));
+        });
+    }
 }
 
 /// Check if a resolved identity is authorized to perform an operation.

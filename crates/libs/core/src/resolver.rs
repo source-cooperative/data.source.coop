@@ -138,7 +138,9 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
         );
 
         // Authenticate
-        let identity = auth::resolve_identity(headers, &self.config).await?;
+        let identity =
+            auth::resolve_identity(method, path, query.unwrap_or(""), headers, &self.config)
+                .await?;
         tracing::debug!(identity = ?identity, "resolved identity");
 
         // Authorize
