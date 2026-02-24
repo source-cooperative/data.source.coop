@@ -20,10 +20,25 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
-    pub fn from_proxy_error(err: &ProxyError, resource: &str, request_id: &str) -> Self {
+    /// Build an S3-compatible error response.
+    ///
+    /// When `debug` is `true`, the full internal error message is included
+    /// (useful during development). When `false`, server-side errors (500)
+    /// use a generic message to avoid leaking backend details.
+    pub fn from_proxy_error(
+        err: &ProxyError,
+        resource: &str,
+        request_id: &str,
+        debug: bool,
+    ) -> Self {
+        let message = if debug {
+            err.to_string()
+        } else {
+            err.safe_message()
+        };
         Self {
             code: err.s3_error_code().to_string(),
-            message: err.to_string(),
+            message,
             resource: resource.to_string(),
             request_id: request_id.to_string(),
         }

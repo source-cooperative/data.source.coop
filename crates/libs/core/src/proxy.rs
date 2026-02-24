@@ -70,6 +70,9 @@ pub struct PendingRequest {
 pub struct ProxyHandler<B, R> {
     backend: B,
     resolver: R,
+    /// When true, error responses include full internal details (for development).
+    /// When false, server-side errors use generic messages.
+    debug_errors: bool,
 }
 
 impl<B, R> ProxyHandler<B, R>
@@ -78,7 +81,21 @@ where
     R: RequestResolver,
 {
     pub fn new(backend: B, resolver: R) -> Self {
-        Self { backend, resolver }
+        Self {
+            backend,
+            resolver,
+            debug_errors: false,
+        }
+    }
+
+    /// Enable verbose error messages in S3 error responses.
+    ///
+    /// When enabled, 500-class errors include the full internal message
+    /// (backend errors, config errors, etc.). Disable in production to
+    /// avoid leaking infrastructure details to clients.
+    pub fn with_debug_errors(mut self, enabled: bool) -> Self {
+        self.debug_errors = enabled;
+        self
     }
 
     /// Phase 1: Resolve an incoming request into an action.
@@ -143,7 +160,12 @@ where
                     s3_code = %err.s3_error_code(),
                     "request failed"
                 );
-                HandlerAction::Response(error_response(&err, path, &request_id))
+                HandlerAction::Response(error_response(
+                    &err,
+                    path,
+                    &request_id,
+                    self.debug_errors,
+                ))
             }
         }
     }
@@ -169,7 +191,12 @@ where
                     s3_code = %err.s3_error_code(),
                     "multipart request failed"
                 );
-                error_response(&err, pending.operation.key(), &pending.request_id)
+                error_response(
+                    &err,
+                    pending.operation.key(),
+                    &pending.request_id,
+                    self.debug_errors,
+                )
             }
         }
     }
@@ -478,8 +505,8 @@ pub const RESPONSE_HEADER_ALLOWLIST: &[&str] = &[
     "location",
 ];
 
-fn error_response(err: &ProxyError, resource: &str, request_id: &str) -> ProxyResult {
-    let xml = ErrorResponse::from_proxy_error(err, resource, request_id).to_xml();
+fn error_response(err: &ProxyError, resource: &str, request_id: &str, debug: bool) -> ProxyResult {
+    let xml = ErrorResponse::from_proxy_error(err, resource, request_id, debug).to_xml();
     let body = ProxyResponseBody::from_bytes(Bytes::from(xml));
     let mut headers = HeaderMap::new();
     headers.insert("content-type", "application/xml".parse().unwrap());

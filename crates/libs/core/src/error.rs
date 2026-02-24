@@ -83,6 +83,21 @@ impl ProxyError {
         }
     }
 
+    /// Return a message safe to show to external clients.
+    ///
+    /// For server-side errors (500), returns a generic message to avoid
+    /// leaking backend infrastructure details. For client errors (4xx),
+    /// returns the full message (the client already knows the bucket name,
+    /// key, etc.).
+    pub fn safe_message(&self) -> String {
+        match self {
+            Self::BackendError(_) | Self::ConfigError(_) | Self::Internal(_) => {
+                "Internal server error".to_string()
+            }
+            other => other.to_string(),
+        }
+    }
+
     /// Convert an `object_store::Error` into a `ProxyError`.
     pub fn from_object_store_error(e: object_store::Error) -> Self {
         match e {
