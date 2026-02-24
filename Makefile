@@ -4,6 +4,16 @@ check:
 	cargo check
 	cargo check -p s3-proxy-cf-workers --target wasm32-unknown-unknown
 
+fmt:
+	cargo fmt -- --check
+fmt\:fix:
+	cargo fmt
+
+clippy:
+	cargo clippy -- -D warnings
+clippy\:fix:
+	cargo clippy --fix --allow-dirty --allow-staged
+
 test:
 	cargo test
 
@@ -12,3 +22,4 @@ run\:server:
 
 run\:workers:
 	npx wrangler dev --cwd crates/runtimes/cf-workers
+
