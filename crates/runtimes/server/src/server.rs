@@ -1,22 +1,21 @@
-//! HTTP server using Hyper, wiring everything together.
+//! HTTP server using axum, wiring everything together.
 
-use crate::body::{build_hyper_response, ServerResponseBody};
 use crate::client::ServerBackend;
-use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
-use http::{HeaderMap, Response};
-use http_body_util::{BodyExt, BodyStream, Either, Full, StreamBody};
-use hyper::body::{Frame, Incoming};
-use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use axum::body::Body;
+use axum::extract::State;
+use axum::response::Response;
+use axum::Router;
+use futures::TryStreamExt;
+use http::HeaderMap;
+use http_body_util::BodyStream;
+use s3_proxy_core::axum::{build_proxy_response, error_response};
 use s3_proxy_core::config::ConfigProvider;
-use s3_proxy_core::proxy::{
-    ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
-};
+use s3_proxy_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
 use s3_proxy_core::resolver::DefaultResolver;
+use s3_proxy_sts::{try_handle_sts, JwksCache};
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 
 /// Server configuration.
@@ -36,6 +35,13 @@ impl Default for ServerConfig {
     }
 }
 
+struct AppState<P: ConfigProvider> {
+    handler: ProxyHandler<ServerBackend, DefaultResolver<P>>,
+    reqwest_client: reqwest::Client,
+    sts_config: P,
+    jwks_cache: JwksCache,
+}
+
 /// Run the S3 proxy server.
 ///
 /// # Example
@@ -47,15 +53,17 @@ impl Default for ServerConfig {
 /// #[tokio::main]
 /// async fn main() {
 ///     let config = StaticProvider::from_file("config.toml").unwrap();
+///     let sts_config = config.clone();
 ///     let server_config = ServerConfig {
 ///         listen_addr: ([0, 0, 0, 0], 8080).into(),
 ///         virtual_host_domain: Some("s3.local".to_string()),
 ///     };
-///     run(config, server_config).await.unwrap();
+///     run(config, sts_config, server_config).await.unwrap();
 /// }
 /// ```
 pub async fn run<P>(
     config: P,
+    sts_config: P,
     server_config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -63,80 +71,76 @@ where
 {
     let backend = ServerBackend::new();
     let reqwest_client = backend.client().clone();
+    let jwks_cache = JwksCache::new(reqwest_client.clone(), Duration::from_secs(900));
     let resolver = DefaultResolver::new(config, server_config.virtual_host_domain);
-    let handler = Arc::new(ProxyHandler::new(backend, resolver));
+    let handler = ProxyHandler::new(backend, resolver);
+
+    let state = Arc::new(AppState {
+        handler,
+        reqwest_client,
+        sts_config,
+        jwks_cache,
+    });
+
+    let app = Router::new()
+        .fallback(request_handler::<P>)
+        .with_state(state);
 
     let listener = TcpListener::bind(server_config.listen_addr).await?;
     tracing::info!("listening on {}", server_config.listen_addr);
 
-    loop {
-        let (stream, remote_addr) = listener.accept().await?;
-        let handler = handler.clone();
-        let client = reqwest_client.clone();
-
-        tokio::spawn(async move {
-            let service = service_fn(move |req: http::Request<Incoming>| {
-                let handler = handler.clone();
-                let client = client.clone();
-
-                async move {
-                    tracing::debug!(
-                        remote_addr = %remote_addr,
-                        method = %req.method(),
-                        uri = %req.uri(),
-                        "incoming connection"
-                    );
-                    let result = handle_hyper_request(req, &handler, &client).await;
-                    match result {
-                        Ok(resp) => Ok::<_, hyper::Error>(resp),
-                        Err(e) => {
-                            tracing::error!(remote_addr = %remote_addr, error = %e, "handler error");
-                            let body = Full::new(Bytes::from(format!("Internal error: {}", e)));
-                            Ok(Response::builder()
-                                .status(500)
-                                .body(Either::Right(Either::Left(body)))
-                                .unwrap())
-                        }
-                    }
-                }
-            });
-
-            if let Err(err) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::error!(remote_addr = %remote_addr, error = %err, "connection error");
-            }
-        });
-    }
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
-async fn handle_hyper_request<R>(
-    req: http::Request<Incoming>,
-    handler: &ProxyHandler<ServerBackend, R>,
-    client: &reqwest::Client,
-) -> Result<Response<ServerResponseBody>, Box<dyn std::error::Error + Send + Sync>>
-where
-    R: s3_proxy_core::resolver::RequestResolver + Send + Sync,
-{
-    let (parts, incoming_body) = req.into_parts();
+async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
+    State(state): State<Arc<AppState<P>>>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
     let method = parts.method;
     let uri = parts.uri;
     let path = uri.path().to_string();
     let query = uri.query().map(|q| q.to_string());
     let headers = parts.headers;
 
-    let action = handler
+    tracing::debug!(
+        method = %method,
+        uri = %uri,
+        "incoming request"
+    );
+
+    // Intercept STS AssumeRoleWithWebIdentity requests
+    if let Some((status, xml)) =
+        try_handle_sts(query.as_deref(), &state.sts_config, &state.jwks_cache).await
+    {
+        return Response::builder()
+            .status(status)
+            .header("content-type", "application/xml")
+            .body(Body::from(xml))
+            .unwrap();
+    }
+
+    let action = state
+        .handler
         .resolve_request(method, &path, query.as_deref(), &headers)
         .await;
 
     match action {
-        HandlerAction::Response(result) => build_hyper_response(result),
-        HandlerAction::Forward(fwd) => forward_to_backend(client, fwd, incoming_body).await,
+        HandlerAction::Response(result) => build_proxy_response(result),
+        HandlerAction::Forward(fwd) => {
+            forward_to_backend(&state.reqwest_client, fwd, body).await
+        }
         HandlerAction::NeedsBody(pending) => {
-            let body = incoming_body.collect().await?.to_bytes();
-            let result = handler.handle_with_body(pending, body).await;
-            build_hyper_response(result)
+            let collected = match axum::body::to_bytes(body, usize::MAX).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to read request body");
+                    return error_response(500, "Internal error");
+                }
+            };
+            let result = state.handler.handle_with_body(pending, collected).await;
+            build_proxy_response(result)
         }
     }
 }
@@ -145,8 +149,8 @@ where
 async fn forward_to_backend(
     client: &reqwest::Client,
     fwd: ForwardRequest,
-    incoming_body: Incoming,
-) -> Result<Response<ServerResponseBody>, Box<dyn std::error::Error + Send + Sync>> {
+    body: Body,
+) -> Response {
     let mut req_builder = client.request(fwd.method.clone(), fwd.url.as_str());
 
     for (k, v) in fwd.headers.iter() {
@@ -155,15 +159,18 @@ async fn forward_to_backend(
 
     // Attach streaming body for PUT
     if fwd.method == http::Method::PUT {
-        let body_stream = BodyStream::new(incoming_body)
+        let body_stream = BodyStream::new(body)
             .try_filter_map(|frame| async move { Ok(frame.into_data().ok()) });
         req_builder = req_builder.body(reqwest::Body::wrap_stream(body_stream));
     }
 
-    let backend_resp = req_builder.send().await.map_err(|e| {
-        tracing::error!(error = %e, "forward request failed");
-        Box::new(e) as Box<dyn std::error::Error + Send + Sync>
-    })?;
+    let backend_resp = match req_builder.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::error!(error = %e, "forward request failed");
+            return error_response(502, "Bad Gateway");
+        }
+    };
 
     let status = backend_resp.status().as_u16();
 
@@ -176,17 +183,12 @@ async fn forward_to_backend(
     }
 
     // Stream the response body
-    let body_stream = backend_resp.bytes_stream();
-    let framed = body_stream
-        .map_ok(Frame::data)
-        .map_err(|e| std::io::Error::other(e.to_string()));
-    let body: ServerResponseBody = Either::Left(StreamBody::new(Box::pin(framed)
-        as Pin<Box<dyn Stream<Item = Result<Frame<Bytes>, std::io::Error>> + Send>>));
+    let body = Body::from_stream(backend_resp.bytes_stream());
 
     let mut builder = Response::builder().status(status);
     for (k, v) in resp_headers.iter() {
         builder = builder.header(k, v);
     }
 
-    Ok(builder.body(body)?)
+    builder.body(body).unwrap()
 }

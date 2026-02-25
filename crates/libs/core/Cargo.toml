@@ -7,6 +7,7 @@ description = "Runtime-agnostic core library for the S3 proxy gateway"
 
 [features]
 default = []
+axum = ["dep:axum"]
 config-dynamodb = ["aws-sdk-dynamodb", "tokio"]
 config-postgres = ["sqlx"]
 config-http = ["reqwest"]
@@ -32,6 +33,9 @@ quick-xml.workspace = true
 tracing.workspace = true
 object_store.workspace = true
 futures.workspace = true
+
+# Optional framework deps
+axum = { workspace = true, features = ["json"], optional = true }
 
 # Optional config backend deps
 aws-sdk-dynamodb = { workspace = true, optional = true }

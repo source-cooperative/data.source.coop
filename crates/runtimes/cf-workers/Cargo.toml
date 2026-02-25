@@ -9,9 +9,10 @@ description = "Cloudflare Workers runtime for the S3 proxy gateway"
 crate-type = ["cdylib"]
 
 [dependencies]
-s3-proxy-core = { workspace = true, features = [] }
+s3-proxy-core = { workspace = true, features = ["axum"] }
 s3-proxy-sts.workspace = true
 s3-proxy-source-coop.workspace = true
+axum = { workspace = true, features = ["json"] }
 bytes.workspace = true
 http.workspace = true
 serde.workspace = true
@@ -26,9 +27,10 @@ futures.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 async-trait.workspace = true
+reqwest.workspace = true
 
 # Cloudflare Workers SDK
-worker = "0.7"
+worker = { version = "0.7", features = ["http", "axum"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

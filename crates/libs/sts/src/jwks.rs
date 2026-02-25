@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 use base64::Engine;
 use rsa::pkcs1v15::VerifyingKey;
@@ -30,12 +32,14 @@ pub struct JwkKey {
 }
 
 /// Fetch JWKS from an OIDC provider's well-known endpoint.
-pub async fn fetch_jwks(issuer: &str) -> Result<JwksResponse, ProxyError> {
+pub async fn fetch_jwks(
+    client: &reqwest::Client,
+    issuer: &str,
+) -> Result<JwksResponse, ProxyError> {
     let issuer = issuer.trim_end_matches('/');
 
     // First, try the .well-known/openid-configuration endpoint
     let config_url = format!("{}/.well-known/openid-configuration", issuer);
-    let client = reqwest::Client::new();
 
     let config_resp =
         client.get(&config_url).send().await.map_err(|e| {
@@ -193,15 +197,20 @@ pub fn verify_token(
 /// OIDC providers publish JWKS keys that change infrequently. Caching avoids
 /// a network round-trip to the provider on every token validation and prevents
 /// DoS via repeated validation attempts.
+///
+/// Uses `DateTime<Utc>` instead of `std::time::Instant` for WASM compatibility
+/// (`Instant` panics on `wasm32-unknown-unknown`).
 pub struct JwksCache {
+    client: reqwest::Client,
     ttl: Duration,
-    entries: Mutex<HashMap<String, (Instant, JwksResponse)>>,
+    entries: Mutex<HashMap<String, (DateTime<Utc>, JwksResponse)>>,
 }
 
 impl JwksCache {
-    /// Create a new cache with the given TTL.
-    pub fn new(ttl: Duration) -> Self {
+    /// Create a new cache with the given TTL and HTTP client.
+    pub fn new(client: reqwest::Client, ttl: Duration) -> Self {
         Self {
+            client,
             ttl,
             entries: Mutex::new(HashMap::new()),
         }
@@ -215,10 +224,10 @@ impl JwksCache {
         }
 
         // Cache miss — fetch from the network
-        let jwks = fetch_jwks(issuer).await?;
+        let jwks = fetch_jwks(&self.client, issuer).await?;
 
         let mut entries = self.entries.lock().unwrap();
-        entries.insert(issuer.to_string(), (Instant::now(), jwks.clone()));
+        entries.insert(issuer.to_string(), (Utc::now(), jwks.clone()));
 
         Ok(jwks)
     }
@@ -226,7 +235,10 @@ impl JwksCache {
     fn get_cached(&self, issuer: &str) -> Option<JwksResponse> {
         let entries = self.entries.lock().unwrap();
         if let Some((fetched_at, jwks)) = entries.get(issuer) {
-            if fetched_at.elapsed() < self.ttl {
+            let elapsed = Utc::now()
+                .signed_duration_since(*fetched_at)
+                .num_seconds();
+            if elapsed >= 0 && (elapsed as u64) < self.ttl.as_secs() {
                 return Some(jwks.clone());
             }
         }

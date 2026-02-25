@@ -22,10 +22,35 @@ pub mod sts;
 
 use base64::Engine;
 pub use jwks::JwksCache;
+pub use request::try_parse_sts_request;
 use request::StsRequest;
+pub use responses::{build_sts_error_response, build_sts_response};
 use s3_proxy_core::config::ConfigProvider;
 use s3_proxy_core::error::ProxyError;
 use s3_proxy_core::types::TemporaryCredentials;
+
+/// Try to handle an STS request. Returns `Some((status, xml))` if the query
+/// contained an STS action, or `None` if it wasn't an STS request.
+pub async fn try_handle_sts<C: ConfigProvider>(
+    query: Option<&str>,
+    config: &C,
+    jwks_cache: &JwksCache,
+) -> Option<(u16, String)> {
+    let sts_result = try_parse_sts_request(query)?;
+    let (status, xml) = match sts_result {
+        Ok(sts_request) => {
+            match assume_role_with_web_identity(config, &sts_request, "STSPRXY", jwks_cache).await {
+                Ok(creds) => build_sts_response(&creds),
+                Err(e) => {
+                    tracing::warn!(error = %e, "STS request failed");
+                    build_sts_error_response(&e)
+                }
+            }
+        }
+        Err(e) => build_sts_error_response(&e),
+    };
+    Some((status, xml))
+}
 
 /// Decode JWT header and claims without signature verification.
 fn jwt_decode_unverified(

@@ -1,7 +1,7 @@
 //! S3 Proxy Server binary.
 //!
 //! Usage:
-//!     s3-proxy --config config.toml [--listen 0.0.0.0:8080] [--domain s3.local]
+//!     s3-proxy --config config.toml [--sts-config sts.toml] [--listen 0.0.0.0:8080] [--domain s3.local]
 
 use s3_proxy_core::config::cached::CachedProvider;
 use s3_proxy_core::config::static_file::StaticProvider;
@@ -40,15 +40,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    let sts_config_path = args
+        .iter()
+        .position(|a| a == "--sts-config")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| s.as_str());
+
     tracing::info!(config = %config_path, listen = %listen_addr, "starting s3-proxy");
 
     let base_config = StaticProvider::from_file(config_path)?;
+    let sts_base = match sts_config_path {
+        Some(path) => {
+            tracing::info!(sts_config = %path, "using separate STS config");
+            StaticProvider::from_file(path)?
+        }
+        None => base_config.clone(),
+    };
+
     let config = CachedProvider::new(base_config, Duration::from_secs(60));
+    let sts_config = CachedProvider::new(sts_base, Duration::from_secs(60));
 
     let server_config = ServerConfig {
         listen_addr,
         virtual_host_domain: domain,
     };
 
-    run(config, server_config).await
+    run(config, sts_config, server_config).await
 }

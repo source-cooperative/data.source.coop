@@ -1,6 +1,8 @@
 //! STS XML response serialization.
 
 use quick_xml::se::to_string as xml_to_string;
+use s3_proxy_core::error::ProxyError;
+use s3_proxy_core::types::TemporaryCredentials;
 use serde::Serialize;
 
 /// STS AssumeRoleWithWebIdentity response.
@@ -46,4 +48,46 @@ impl AssumeRoleWithWebIdentityResponse {
             xml_to_string(self).unwrap_or_default()
         )
     }
+}
+
+/// Build an STS success response (status code + XML body) from temporary credentials.
+pub fn build_sts_response(creds: &TemporaryCredentials) -> (u16, String) {
+    let response = AssumeRoleWithWebIdentityResponse {
+        result: AssumeRoleWithWebIdentityResult {
+            credentials: StsCredentials {
+                access_key_id: creds.access_key_id.clone(),
+                secret_access_key: creds.secret_access_key.clone(),
+                session_token: creds.session_token.clone(),
+                expiration: creds.expiration.to_rfc3339(),
+            },
+            assumed_role_user: AssumedRoleUser {
+                assumed_role_id: creds.assumed_role_id.clone(),
+                arn: creds.assumed_role_id.clone(),
+            },
+        },
+    };
+    (200, response.to_xml())
+}
+
+/// Build an STS error response (status code + XML body) from a ProxyError.
+pub fn build_sts_error_response(err: &ProxyError) -> (u16, String) {
+    let (status, code, message) = match err {
+        ProxyError::RoleNotFound(r) => (400, "MalformedPolicyDocument", format!("role not found: {}", r)),
+        ProxyError::InvalidOidcToken(msg) => (400, "InvalidIdentityToken", msg.clone()),
+        ProxyError::InvalidRequest(msg) => (400, "InvalidParameterValue", msg.clone()),
+        ProxyError::AccessDenied => (403, "AccessDenied", "access denied".to_string()),
+        _ => (500, "InternalError", "internal error".to_string()),
+    };
+
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <ErrorResponse>\
+           <Error>\
+             <Code>{}</Code>\
+             <Message>{}</Message>\
+           </Error>\
+         </ErrorResponse>",
+        code, message
+    );
+    (status, xml)
 }
