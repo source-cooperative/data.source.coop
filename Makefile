@@ -23,3 +23,8 @@ run\:server:
 run\:workers:
 	npx wrangler dev --cwd crates/runtimes/cf-workers
 
+build\:cli:
+	cargo build -p source-coop-cli
+
+build\:cli\:staging:
+	cargo build -p source-coop-cli --no-default-features --features staging
