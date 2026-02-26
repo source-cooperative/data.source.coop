@@ -149,7 +149,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         .unwrap_or(3600)
         .clamp(MIN_SESSION_DURATION_SECS, role.max_session_duration_secs);
 
-    let creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix);
+    let creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix, &claims);
 
     // Store them
     config.store_temporary_credential(&creds).await?;

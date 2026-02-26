@@ -89,6 +89,21 @@ bucket = "deploy-bundles"
 prefixes = []  # full bucket access
 actions = ["get_object", "head_object", "put_object", "create_multipart_upload", "upload_part", "complete_multipart_upload"]
 
+# Role for Source Cooperative CLI users (OIDC login via Ory)
+[[roles]]
+role_id = "source-user"
+name = "Source Cooperative User"
+trusted_oidc_issuers = ["https://auth.source.coop", "https://auth.staging.source.coop"]
+subject_conditions = ["*"]
+max_session_duration_secs = 3600
+
+# Template variables like {sub} are resolved against the user's JWT claims.
+# This gives each user read/write access to a bucket matching their username.
+[[roles.allowed_scopes]]
+bucket = "{sub}"
+prefixes = []
+actions = ["get_object", "head_object", "put_object", "list_bucket"]
+
 # Read-only role for CI
 [[roles]]
 role_id = "ci-readonly"

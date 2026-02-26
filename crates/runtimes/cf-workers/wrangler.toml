@@ -11,7 +11,6 @@ VIRTUAL_HOST_DOMAIN = "s3.local"
 
 # For production, consider storing this in Workers KV or a Secrets binding.
 [vars.PROXY_CONFIG]
-roles = []
 
 [[vars.PROXY_CONFIG.buckets]]
 allowed_roles = []
@@ -88,4 +87,21 @@ actions = [
   "complete_multipart_upload",
 ]
 bucket = "private-uploads"
+prefixes = []
+
+[vars.STS_CONFIG]
+[[vars.STS_CONFIG.roles]]
+max_session_duration_secs = 3600
+name = "Source Cooperative User"
+role_id = "source-coop-user"
+subject_conditions = ["*"]
+trusted_oidc_issuers = [
+  "https://auth.source.coop",
+  "https://auth.staging.source.coop",
+  "https://optimistic-jackson-tvx6h5ig8s.projects.oryapis.com",
+]
+
+[[vars.STS_CONFIG.roles.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"] 
+bucket = "{sub}" # this user
 prefixes = []
