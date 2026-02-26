@@ -191,10 +191,7 @@ pub async fn resolve_identity<C: ConfigProvider>(
                 .get("x-amz-security-token")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if !constant_time_eq(
-                session_token.as_bytes(),
-                temp_cred.session_token.as_bytes(),
-            ) {
+            if !constant_time_eq(session_token.as_bytes(), temp_cred.session_token.as_bytes()) {
                 return Err(ProxyError::AccessDenied);
             }
 
@@ -330,7 +327,10 @@ mod tests {
                 .find(|c| c.access_key_id == access_key_id)
                 .cloned())
         }
-        async fn store_temporary_credential(&self, _: &TemporaryCredentials) -> Result<(), ProxyError> {
+        async fn store_temporary_credential(
+            &self,
+            _: &TemporaryCredentials,
+        ) -> Result<(), ProxyError> {
             Ok(())
         }
         async fn get_temporary_credential(
@@ -387,9 +387,11 @@ mod tests {
             amz_date, credential_scope, canonical_request_hash
         );
 
-        let k_date =
-            hmac_sha256(format!("AWS4{}", secret_access_key).as_bytes(), date_stamp.as_bytes())
-                .unwrap();
+        let k_date = hmac_sha256(
+            format!("AWS4{}", secret_access_key).as_bytes(),
+            date_stamp.as_bytes(),
+        )
+        .unwrap();
         let k_region = hmac_sha256(&k_date, region.as_bytes()).unwrap();
         let k_service = hmac_sha256(&k_region, b"s3").unwrap();
         let signing_key = hmac_sha256(&k_service, b"aws4_request").unwrap();
@@ -402,10 +404,7 @@ mod tests {
     }
 
     /// Build headers and auth for a simple GET request.
-    fn make_signed_headers(
-        access_key_id: &str,
-        secret_access_key: &str,
-    ) -> HeaderMap {
+    fn make_signed_headers(access_key_id: &str, secret_access_key: &str) -> HeaderMap {
         let date_stamp = "20240101";
         let amz_date = "20240101T000000Z";
         let region = "us-east-1";
@@ -587,7 +586,12 @@ mod tests {
                 date_stamp,
                 amz_date,
                 "us-east-1",
-                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                &[
+                    "host",
+                    "x-amz-content-sha256",
+                    "x-amz-date",
+                    "x-amz-security-token",
+                ],
                 payload_hash,
             );
             headers.insert("authorization", auth.parse().unwrap());
@@ -634,7 +638,12 @@ mod tests {
                 date_stamp,
                 amz_date,
                 "us-east-1",
-                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                &[
+                    "host",
+                    "x-amz-content-sha256",
+                    "x-amz-date",
+                    "x-amz-security-token",
+                ],
                 payload_hash,
             );
             headers.insert("authorization", auth.parse().unwrap());
@@ -682,7 +691,12 @@ mod tests {
                 date_stamp,
                 amz_date,
                 "us-east-1",
-                &["host", "x-amz-content-sha256", "x-amz-date", "x-amz-security-token"],
+                &[
+                    "host",
+                    "x-amz-content-sha256",
+                    "x-amz-date",
+                    "x-amz-security-token",
+                ],
                 payload_hash,
             );
             headers.insert("authorization", auth.parse().unwrap());

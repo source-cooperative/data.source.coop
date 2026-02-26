@@ -1,9 +1,9 @@
 //! STS XML response serialization.
 
 use quick_xml::se::to_string as xml_to_string;
+use serde::Serialize;
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::TemporaryCredentials;
-use serde::Serialize;
 
 /// STS AssumeRoleWithWebIdentity response.
 #[derive(Debug, Serialize)]
@@ -72,7 +72,11 @@ pub fn build_sts_response(creds: &TemporaryCredentials) -> (u16, String) {
 /// Build an STS error response (status code + XML body) from a ProxyError.
 pub fn build_sts_error_response(err: &ProxyError) -> (u16, String) {
     let (status, code, message) = match err {
-        ProxyError::RoleNotFound(r) => (400, "MalformedPolicyDocument", format!("role not found: {}", r)),
+        ProxyError::RoleNotFound(r) => (
+            400,
+            "MalformedPolicyDocument",
+            format!("role not found: {}", r),
+        ),
         ProxyError::InvalidOidcToken(msg) => (400, "InvalidIdentityToken", msg.clone()),
         ProxyError::InvalidRequest(msg) => (400, "InvalidParameterValue", msg.clone()),
         ProxyError::AccessDenied => (403, "AccessDenied", "access denied".to_string()),

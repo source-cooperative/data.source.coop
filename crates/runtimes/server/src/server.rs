@@ -10,7 +10,9 @@ use http::HeaderMap;
 use http_body_util::BodyStream;
 use source_coop_core::axum::{build_proxy_response, error_response};
 use source_coop_core::config::ConfigProvider;
-use source_coop_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
+use source_coop_core::proxy::{
+    ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
+};
 use source_coop_core::resolver::DefaultResolver;
 use source_coop_sts::{try_handle_sts, JwksCache};
 use std::net::SocketAddr;
@@ -128,9 +130,7 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
 
     match action {
         HandlerAction::Response(result) => build_proxy_response(result),
-        HandlerAction::Forward(fwd) => {
-            forward_to_backend(&state.reqwest_client, fwd, body).await
-        }
+        HandlerAction::Forward(fwd) => forward_to_backend(&state.reqwest_client, fwd, body).await,
         HandlerAction::NeedsBody(pending) => {
             let collected = match axum::body::to_bytes(body, usize::MAX).await {
                 Ok(b) => b,
@@ -146,11 +146,7 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
 }
 
 /// Execute a Forward request via reqwest, streaming both request and response bodies.
-async fn forward_to_backend(
-    client: &reqwest::Client,
-    fwd: ForwardRequest,
-    body: Body,
-) -> Response {
+async fn forward_to_backend(client: &reqwest::Client, fwd: ForwardRequest, body: Body) -> Response {
     let mut req_builder = client.request(fwd.method.clone(), fwd.url.as_str());
 
     for (k, v) in fwd.headers.iter() {
@@ -159,8 +155,8 @@ async fn forward_to_backend(
 
     // Attach streaming body for PUT
     if fwd.method == http::Method::PUT {
-        let body_stream = BodyStream::new(body)
-            .try_filter_map(|frame| async move { Ok(frame.into_data().ok()) });
+        let body_stream =
+            BodyStream::new(body).try_filter_map(|frame| async move { Ok(frame.into_data().ok()) });
         req_builder = req_builder.body(reqwest::Body::wrap_stream(body_stream));
     }
 

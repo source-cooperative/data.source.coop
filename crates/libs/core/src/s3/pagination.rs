@@ -28,7 +28,12 @@ pub struct PaginatedList {
 /// Parse `max-keys`, `continuation-token`, and `start-after` from a query string.
 pub fn parse_pagination_params(raw_query: Option<&str>) -> PaginationParams {
     let pairs = url::form_urlencoded::parse(raw_query.unwrap_or("").as_bytes());
-    let find = |name| pairs.clone().find(|(k, _)| k == name).map(|(_, v)| v.to_string());
+    let find = |name| {
+        pairs
+            .clone()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.to_string())
+    };
 
     PaginationParams {
         max_keys: find("max-keys")
@@ -91,8 +96,11 @@ pub fn paginate(
     let is_truncated = page.len() > params.max_keys;
     page.truncate(params.max_keys);
 
-    let next_continuation_token =
-        if is_truncated { page.last().map(|e| B64.encode(e.key())) } else { None };
+    let next_continuation_token = if is_truncated {
+        page.last().map(|e| B64.encode(e.key()))
+    } else {
+        None
+    };
 
     // Split back into contents and common_prefixes
     let mut result_contents = Vec::new();
@@ -131,7 +139,9 @@ mod tests {
     fn make_prefixes(prefixes: &[&str]) -> Vec<ListCommonPrefix> {
         prefixes
             .iter()
-            .map(|p| ListCommonPrefix { prefix: p.to_string() })
+            .map(|p| ListCommonPrefix {
+                prefix: p.to_string(),
+            })
             .collect()
     }
 
@@ -146,7 +156,10 @@ mod tests {
     #[test]
     fn parse_max_keys_clamped_to_1000() {
         assert_eq!(parse_pagination_params(Some("max-keys=5")).max_keys, 5);
-        assert_eq!(parse_pagination_params(Some("max-keys=9999")).max_keys, 1000);
+        assert_eq!(
+            parse_pagination_params(Some("max-keys=9999")).max_keys,
+            1000
+        );
         assert_eq!(parse_pagination_params(Some("max-keys=abc")).max_keys, 1000);
     }
 
@@ -162,9 +175,16 @@ mod tests {
 
     #[test]
     fn no_truncation() {
-        let r = paginate(make_contents(&["a", "b", "c"]), vec![], &PaginationParams {
-            max_keys: 1000, continuation_token: None, start_after: None,
-        }).unwrap();
+        let r = paginate(
+            make_contents(&["a", "b", "c"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 1000,
+                continuation_token: None,
+                start_after: None,
+            },
+        )
+        .unwrap();
         assert_eq!(r.contents.len(), 3);
         assert!(!r.is_truncated);
         assert!(r.next_continuation_token.is_none());
@@ -172,9 +192,16 @@ mod tests {
 
     #[test]
     fn truncation_and_token() {
-        let r = paginate(make_contents(&["a", "b", "c", "d", "e"]), vec![], &PaginationParams {
-            max_keys: 2, continuation_token: None, start_after: None,
-        }).unwrap();
+        let r = paginate(
+            make_contents(&["a", "b", "c", "d", "e"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 2,
+                continuation_token: None,
+                start_after: None,
+            },
+        )
+        .unwrap();
         assert_eq!(r.contents.len(), 2);
         assert!(r.is_truncated);
         assert_eq!(r.contents[0].key, "a");
@@ -185,35 +212,66 @@ mod tests {
     #[test]
     fn continuation_token_round_trip() {
         let items = make_contents(&["a", "b", "c", "d", "e"]);
-        let mk = |token| PaginationParams { max_keys: 2, continuation_token: token, start_after: None };
+        let mk = |token| PaginationParams {
+            max_keys: 2,
+            continuation_token: token,
+            start_after: None,
+        };
 
         let p1 = paginate(items.clone(), vec![], &mk(None)).unwrap();
-        assert_eq!(p1.contents.iter().map(|c| &c.key).collect::<Vec<_>>(), &["a", "b"]);
+        assert_eq!(
+            p1.contents.iter().map(|c| &c.key).collect::<Vec<_>>(),
+            &["a", "b"]
+        );
 
         let p2 = paginate(items.clone(), vec![], &mk(p1.next_continuation_token)).unwrap();
-        assert_eq!(p2.contents.iter().map(|c| &c.key).collect::<Vec<_>>(), &["c", "d"]);
+        assert_eq!(
+            p2.contents.iter().map(|c| &c.key).collect::<Vec<_>>(),
+            &["c", "d"]
+        );
 
         let p3 = paginate(items.clone(), vec![], &mk(p2.next_continuation_token)).unwrap();
-        assert_eq!(p3.contents.iter().map(|c| &c.key).collect::<Vec<_>>(), &["e"]);
+        assert_eq!(
+            p3.contents.iter().map(|c| &c.key).collect::<Vec<_>>(),
+            &["e"]
+        );
         assert!(!p3.is_truncated);
     }
 
     #[test]
     fn start_after() {
-        let r = paginate(make_contents(&["a", "b", "c", "d"]), vec![], &PaginationParams {
-            max_keys: 1000, continuation_token: None, start_after: Some("b".into()),
-        }).unwrap();
-        assert_eq!(r.contents.iter().map(|c| &c.key).collect::<Vec<_>>(), &["c", "d"]);
+        let r = paginate(
+            make_contents(&["a", "b", "c", "d"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 1000,
+                continuation_token: None,
+                start_after: Some("b".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r.contents.iter().map(|c| &c.key).collect::<Vec<_>>(),
+            &["c", "d"]
+        );
     }
 
     #[test]
     fn continuation_token_overrides_start_after() {
-        let r = paginate(make_contents(&["a", "b", "c", "d", "e"]), vec![], &PaginationParams {
-            max_keys: 1000,
-            continuation_token: Some(B64.encode("c")),
-            start_after: Some("a".into()),
-        }).unwrap();
-        assert_eq!(r.contents.iter().map(|c| &c.key).collect::<Vec<_>>(), &["d", "e"]);
+        let r = paginate(
+            make_contents(&["a", "b", "c", "d", "e"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 1000,
+                continuation_token: Some(B64.encode("c")),
+                start_after: Some("a".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r.contents.iter().map(|c| &c.key).collect::<Vec<_>>(),
+            &["d", "e"]
+        );
     }
 
     #[test]
@@ -221,8 +279,13 @@ mod tests {
         let r = paginate(
             make_contents(&["a.txt", "c.txt"]),
             make_prefixes(&["b/", "d/"]),
-            &PaginationParams { max_keys: 3, continuation_token: None, start_after: None },
-        ).unwrap();
+            &PaginationParams {
+                max_keys: 3,
+                continuation_token: None,
+                start_after: None,
+            },
+        )
+        .unwrap();
         assert_eq!(r.contents.len(), 2);
         assert_eq!(r.common_prefixes.len(), 1);
         assert_eq!(r.contents[0].key, "a.txt");
@@ -233,26 +296,46 @@ mod tests {
 
     #[test]
     fn invalid_token_returns_error() {
-        let r = paginate(make_contents(&["a"]), vec![], &PaginationParams {
-            max_keys: 1000, continuation_token: Some("not-valid!!!".into()), start_after: None,
-        });
+        let r = paginate(
+            make_contents(&["a"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 1000,
+                continuation_token: Some("not-valid!!!".into()),
+                start_after: None,
+            },
+        );
         assert!(r.is_err());
     }
 
     #[test]
     fn max_keys_zero() {
-        let r = paginate(make_contents(&["a", "b"]), vec![], &PaginationParams {
-            max_keys: 0, continuation_token: None, start_after: None,
-        }).unwrap();
+        let r = paginate(
+            make_contents(&["a", "b"]),
+            vec![],
+            &PaginationParams {
+                max_keys: 0,
+                continuation_token: None,
+                start_after: None,
+            },
+        )
+        .unwrap();
         assert!(r.contents.is_empty());
         assert!(r.is_truncated);
     }
 
     #[test]
     fn empty_input() {
-        let r = paginate(vec![], vec![], &PaginationParams {
-            max_keys: 1000, continuation_token: None, start_after: None,
-        }).unwrap();
+        let r = paginate(
+            vec![],
+            vec![],
+            &PaginationParams {
+                max_keys: 1000,
+                continuation_token: None,
+                start_after: None,
+            },
+        )
+        .unwrap();
         assert_eq!(r.contents.len(), 0);
         assert!(!r.is_truncated);
     }

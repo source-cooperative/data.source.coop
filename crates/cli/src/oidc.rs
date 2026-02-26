@@ -25,10 +25,7 @@ pub async fn discover(issuer: &str) -> Result<OidcEndpoints, String> {
         .map_err(|e| format!("Failed to fetch OIDC discovery document: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!(
-            "OIDC discovery returned status {}",
-            resp.status()
-        ));
+        return Err(format!("OIDC discovery returned status {}", resp.status()));
     }
 
     let doc: serde_json::Value = resp

@@ -36,10 +36,7 @@ fn resolve_template(template: &str, claims: &serde_json::Value) -> String {
         if let Some(end) = result[start..].find('}') {
             let end = start + end;
             let key = &result[start + 1..end];
-            let value = claims
-                .get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let value = claims.get(key).and_then(|v| v.as_str()).unwrap_or("");
             result = format!("{}{}{}", &result[..start], value, &result[end + 1..]);
         } else {
             break;
@@ -103,8 +100,8 @@ fn rand_byte() -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use source_coop_core::types::Action;
     use serde_json::json;
+    use source_coop_core::types::Action;
 
     fn scope(bucket: &str, prefixes: &[&str], actions: &[Action]) -> AccessScope {
         AccessScope {
@@ -150,7 +147,11 @@ mod tests {
 
     #[test]
     fn missing_claim_resolves_to_empty() {
-        let scopes = vec![scope("{missing}", &["{also_missing}/"], &[Action::GetObject])];
+        let scopes = vec![scope(
+            "{missing}",
+            &["{also_missing}/"],
+            &[Action::GetObject],
+        )];
         let claims = json!({"sub": "alice"});
         let resolved = resolve_scopes(&scopes, &claims);
         assert_eq!(resolved[0].bucket, "");

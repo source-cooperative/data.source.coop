@@ -10,10 +10,10 @@ use base64::Engine;
 use rsa::pkcs1v15::VerifyingKey;
 use rsa::signature::Verifier;
 use rsa::{BigUint, RsaPublicKey};
-use source_coop_core::error::ProxyError;
-use source_coop_core::types::RoleConfig;
 use serde::Deserialize;
 use sha2::Sha256;
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::RoleConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JwksResponse {
@@ -185,7 +185,9 @@ pub fn verify_token(
 
     if let Some(nbf) = claims.get("nbf").and_then(|v| v.as_i64()) {
         if now < nbf - CLOCK_SKEW_SECS {
-            return Err(ProxyError::InvalidOidcToken("token is not yet valid".into()));
+            return Err(ProxyError::InvalidOidcToken(
+                "token is not yet valid".into(),
+            ));
         }
     }
 
@@ -235,9 +237,7 @@ impl JwksCache {
     fn get_cached(&self, issuer: &str) -> Option<JwksResponse> {
         let entries = self.entries.lock().unwrap();
         if let Some((fetched_at, jwks)) = entries.get(issuer) {
-            let elapsed = Utc::now()
-                .signed_duration_since(*fetched_at)
-                .num_seconds();
+            let elapsed = Utc::now().signed_duration_since(*fetched_at).num_seconds();
             if elapsed >= 0 && (elapsed as u64) < self.ttl.as_secs() {
                 return Some(jwks.clone());
             }

@@ -9,13 +9,13 @@ use bytes::Bytes;
 use http::HeaderMap;
 use object_store::signer::Signer;
 use object_store::ObjectStore;
+use serde::de::DeserializeOwned;
+use source_coop_api::api::{CacheOptions, HttpClient};
 use source_coop_core::backend::{
     build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder,
 };
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::BucketConfig;
-use source_coop_api::api::{CacheOptions, HttpClient};
-use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use worker::{Cache, Fetch};
 

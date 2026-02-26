@@ -28,12 +28,14 @@ mod fetch_connector;
 mod tracing_layer;
 
 use client::WorkerBackend;
-use source_coop_core::axum::{build_proxy_response, error_response};
-use source_coop_core::config::static_file::{StaticConfig, StaticProvider};
-use source_coop_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
-use source_coop_core::resolver::{DefaultResolver, RequestResolver};
 use source_coop_api::api::{CacheTtls, SourceApiClient};
 use source_coop_api::resolver::SourceCoopResolver;
+use source_coop_core::axum::{build_proxy_response, error_response};
+use source_coop_core::config::static_file::{StaticConfig, StaticProvider};
+use source_coop_core::proxy::{
+    ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
+};
+use source_coop_core::resolver::{DefaultResolver, RequestResolver};
 use source_coop_sts::{try_handle_sts, try_parse_sts_request, JwksCache};
 
 use axum::body::Body;
@@ -78,9 +80,7 @@ async fn fetch(
     // STS uses STS_CONFIG (falling back to PROXY_CONFIG) for role definitions.
     if try_parse_sts_request(query.as_deref()).is_some() {
         let config = load_sts_config(&env)?;
-        if let Some((status, xml)) =
-            try_handle_sts(query.as_deref(), &config, &jwks_cache).await
-        {
+        if let Some((status, xml)) = try_handle_sts(query.as_deref(), &config, &jwks_cache).await {
             return Ok(Response::builder()
                 .status(status)
                 .header("content-type", "application/xml")
@@ -118,10 +118,16 @@ async fn fetch(
         let resolver = SourceCoopResolver::new(api_client);
         let handler = ProxyHandler::new(WorkerBackend, resolver);
 
-        return Ok(
-            handle_action(method, &handler, &reqwest_client, &path, query.as_deref(), &headers, body)
-                .await,
-        );
+        return Ok(handle_action(
+            method,
+            &handler,
+            &reqwest_client,
+            &path,
+            query.as_deref(),
+            &headers,
+            body,
+        )
+        .await);
     }
 
     let config = load_static_config(&env)?;
@@ -129,10 +135,16 @@ async fn fetch(
     let resolver = DefaultResolver::new(config, virtual_host_domain);
     let handler = ProxyHandler::new(WorkerBackend, resolver);
 
-    Ok(
-        handle_action(method, &handler, &reqwest_client, &path, query.as_deref(), &headers, body)
-            .await,
+    Ok(handle_action(
+        method,
+        &handler,
+        &reqwest_client,
+        &path,
+        query.as_deref(),
+        &headers,
+        body,
     )
+    .await)
 }
 
 // ── Two-phase request handling ──────────────────────────────────────
@@ -170,11 +182,7 @@ async fn handle_action<R: RequestResolver>(
 ///
 /// On WASM, reqwest wraps `web_sys::fetch` internally. Bodies are collected
 /// to bytes since WASM reqwest doesn't support streaming.
-async fn forward_to_backend(
-    client: &reqwest::Client,
-    fwd: ForwardRequest,
-    body: Body,
-) -> Response {
+async fn forward_to_backend(client: &reqwest::Client, fwd: ForwardRequest, body: Body) -> Response {
     let mut req_builder = client.request(fwd.method.clone(), fwd.url.as_str());
 
     for (k, v) in fwd.headers.iter() {
@@ -236,7 +244,11 @@ async fn forward_to_backend(
 fn load_config_from_env(env: &Env, var_name: &str) -> Result<StaticProvider> {
     if let Ok(var) = env.var(var_name) {
         let config_str = var.to_string();
-        tracing::debug!(var = var_name, config_len = config_str.len(), "loaded config as string");
+        tracing::debug!(
+            var = var_name,
+            config_len = config_str.len(),
+            "loaded config as string"
+        );
         StaticProvider::from_json(&config_str)
             .map_err(|e| worker::Error::RustError(format!("{} config error: {}", var_name, e)))
     } else {
@@ -254,8 +266,7 @@ fn load_static_config(env: &Env) -> Result<StaticProvider> {
 
 /// Load STS config: tries STS_CONFIG first, falls back to PROXY_CONFIG.
 fn load_sts_config(env: &Env) -> Result<StaticProvider> {
-    load_config_from_env(env, "STS_CONFIG")
-        .or_else(|_| load_config_from_env(env, "PROXY_CONFIG"))
+    load_config_from_env(env, "STS_CONFIG").or_else(|_| load_config_from_env(env, "PROXY_CONFIG"))
 }
 
 /// Load cache TTL overrides from environment variables.

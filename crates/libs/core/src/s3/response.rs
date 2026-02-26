@@ -176,7 +176,10 @@ pub struct ListBucketResult {
     pub start_after: Option<String>,
     #[serde(rename = "ContinuationToken", skip_serializing_if = "Option::is_none")]
     pub continuation_token: Option<String>,
-    #[serde(rename = "NextContinuationToken", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "NextContinuationToken",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub next_continuation_token: Option<String>,
     #[serde(rename = "Contents", default)]
     pub contents: Vec<ListContents>,

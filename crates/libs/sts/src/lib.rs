@@ -105,10 +105,7 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     }
 
     // Fail fast on unsupported algorithms before making any network requests
-    let alg = header
-        .get("alg")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let alg = header.get("alg").and_then(|v| v.as_str()).unwrap_or("");
     if alg != "RS256" {
         return Err(ProxyError::InvalidOidcToken(format!(
             "unsupported JWT algorithm: {}",

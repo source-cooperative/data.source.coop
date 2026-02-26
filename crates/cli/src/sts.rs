@@ -16,8 +16,7 @@ pub async fn assume_role(
     web_identity_token: &str,
     duration_seconds: Option<u64>,
 ) -> Result<Credentials, String> {
-    let mut url = url::Url::parse(proxy_url)
-        .map_err(|e| format!("Invalid proxy URL: {e}"))?;
+    let mut url = url::Url::parse(proxy_url).map_err(|e| format!("Invalid proxy URL: {e}"))?;
 
     url.query_pairs_mut()
         .append_pair("Action", "AssumeRoleWithWebIdentity")

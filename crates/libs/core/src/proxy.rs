@@ -161,12 +161,7 @@ where
                     s3_code = %err.s3_error_code(),
                     "request failed"
                 );
-                HandlerAction::Response(error_response(
-                    &err,
-                    path,
-                    &request_id,
-                    self.debug_errors,
-                ))
+                HandlerAction::Response(error_response(&err, path, &request_id, self.debug_errors))
             }
         }
     }
@@ -750,7 +745,10 @@ mod tests {
 
     fn test_bucket_config() -> BucketConfig {
         let mut backend_options = HashMap::new();
-        backend_options.insert("endpoint".into(), "https://s3.us-east-1.amazonaws.com".into());
+        backend_options.insert(
+            "endpoint".into(),
+            "https://s3.us-east-1.amazonaws.com".into(),
+        );
         backend_options.insert("bucket_name".into(), "my-backend-bucket".into());
         BucketConfig {
             name: "test".into(),
@@ -778,15 +776,21 @@ mod tests {
         // The & and = characters in upload_id must be percent-encoded so they
         // cannot act as query parameter separators/assignments.
         let query = url.split_once('?').unwrap().1;
-        let params: Vec<(String, String)> =
-            url::form_urlencoded::parse(query.as_bytes())
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
+        let params: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
 
         // Should be exactly 2 params: partNumber and uploadId
-        assert_eq!(params.len(), 2, "expected 2 query params, got: {:?}", params);
+        assert_eq!(
+            params.len(),
+            2,
+            "expected 2 query params, got: {:?}",
+            params
+        );
         assert!(params.iter().any(|(k, v)| k == "partNumber" && v == "1"));
-        assert!(params.iter().any(|(k, v)| k == "uploadId" && v == malicious_upload_id));
+        assert!(params
+            .iter()
+            .any(|(k, v)| k == "uploadId" && v == malicious_upload_id));
     }
 
     #[test]
@@ -821,6 +825,9 @@ mod tests {
 
         assert!(url.starts_with("https://s3.us-east-1.amazonaws.com/my-backend-bucket/file.bin?"));
         assert!(url.contains("partNumber=3"));
-        assert!(url.contains("uploadId=2~abcdef1234567890") || url.contains("uploadId=2%7Eabcdef1234567890"));
+        assert!(
+            url.contains("uploadId=2~abcdef1234567890")
+                || url.contains("uploadId=2%7Eabcdef1234567890")
+        );
     }
 }

@@ -4,10 +4,10 @@
 //! API keys, and permissions. The actual HTTP transport is abstracted behind
 //! the [`HttpClient`] trait so each runtime can provide its own implementation.
 
-use source_coop_core::error::ProxyError;
-use source_coop_core::maybe_send::{MaybeSend, MaybeSync};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use source_coop_core::error::ProxyError;
+use source_coop_core::maybe_send::{MaybeSend, MaybeSync};
 use std::collections::HashMap;
 use std::future::Future;
 
