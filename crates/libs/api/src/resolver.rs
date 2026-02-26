@@ -40,16 +40,8 @@ impl<H: HttpClient> SourceCoopResolver<H> {
         let product = self
             .api_client
             .get_product(account_id, repo_id)
-            .await
-            .map_err(|e| {
-                tracing::warn!(
-                    account_id = account_id,
-                    repo_id = repo_id,
-                    error = %e,
-                    "failed to fetch product from Source API"
-                );
-                ProxyError::BucketNotFound(bucket_name.clone())
-            })?;
+            .await?
+            .ok_or_else(|| ProxyError::BucketNotFound(bucket_name.clone()))?;
 
         if product.disabled {
             return Err(ProxyError::BucketNotFound(bucket_name));
@@ -69,7 +61,13 @@ impl<H: HttpClient> SourceCoopResolver<H> {
         let conn = self
             .api_client
             .get_data_connection(&mirror.connection_id)
-            .await?;
+            .await?
+            .ok_or_else(|| {
+                ProxyError::ConfigError(format!(
+                    "data connection '{}' not found",
+                    mirror.connection_id
+                ))
+            })?;
 
         let base_prefix = conn.details.base_prefix.unwrap_or_default();
 
@@ -173,7 +171,8 @@ impl<H: HttpClient> SourceCoopResolver<H> {
         let perms = self
             .api_client
             .get_permissions(account_id, repo_id, &sig.access_key_id)
-            .await?;
+            .await?
+            .ok_or(ProxyError::AccessDenied)?;
 
         let is_write = matches!(*method, Method::PUT | Method::POST | Method::DELETE);
 
@@ -206,7 +205,11 @@ impl<H: HttpClient> SourceCoopResolver<H> {
             account_id = account_id,
             "handling account listing for account"
         );
-        let account = self.api_client.list_account_repos(account_id).await?;
+        let account = self
+            .api_client
+            .list_account_repos(account_id)
+            .await?
+            .ok_or_else(|| ProxyError::BucketNotFound(account_id.to_string()))?;
 
         tracing::info!(
             account_id = account_id,

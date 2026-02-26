@@ -42,7 +42,7 @@ impl HttpClient for WorkerHttpClient {
         url: &str,
         headers: &[(&str, &str)],
         cache: Option<&CacheOptions>,
-    ) -> Result<T, ProxyError> {
+    ) -> Result<Option<T>, ProxyError> {
         // Check cache for a hit before making the request.
         let cache_state = if let Some(opts) = cache {
             let key = cache_key_url(url, opts);
@@ -51,7 +51,7 @@ impl HttpClient for WorkerHttpClient {
                 Ok(Some(mut cached)) => {
                     if let Ok(text) = cached.text().await {
                         if let Ok(value) = serde_json::from_str(&text) {
-                            return Ok(value);
+                            return Ok(Some(value));
                         }
                     }
                     // Cache hit but couldn't deserialize — fall through to fetch.
@@ -88,6 +88,10 @@ impl HttpClient for WorkerHttpClient {
             .await
             .map_err(|e| ProxyError::Internal(format!("failed to read text: {}", e)))?;
 
+        if status == 404 {
+            return Ok(None);
+        }
+
         if !(200..300).contains(&status) {
             return Err(ProxyError::BackendError(format!(
                 "API request to {} returned status {}",
@@ -108,6 +112,7 @@ impl HttpClient for WorkerHttpClient {
         }
 
         serde_json::from_str(&text)
+            .map(Some)
             .map_err(|e| ProxyError::Internal(format!("failed to deserialize response: {}", e)))
     }
 }

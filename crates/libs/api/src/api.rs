@@ -18,13 +18,16 @@ pub struct CacheOptions {
 }
 
 /// Trait abstracting HTTP JSON fetching so each runtime can provide its own implementation.
+///
+/// `fetch_json` returns `Ok(Some(T))` on 2xx, `Ok(None)` on 404 (resource not
+/// found), and `Err` for all other failures (network errors, 5xx, 429, etc.).
 pub trait HttpClient: Clone + MaybeSend + MaybeSync + 'static {
     fn fetch_json<T: DeserializeOwned + MaybeSend>(
         &self,
         url: &str,
         headers: &[(&str, &str)],
         cache: Option<&CacheOptions>,
-    ) -> impl Future<Output = Result<T, ProxyError>> + MaybeSend;
+    ) -> impl Future<Output = Result<Option<T>, ProxyError>> + MaybeSend;
 }
 
 /// Per-endpoint cache TTLs (seconds). Set to 0 to disable caching.
@@ -199,11 +202,13 @@ impl<H: HttpClient> SourceApiClient<H> {
     }
 
     /// `GET /api/v1/products/{account_id}/{repo_id}`
+    ///
+    /// Returns `Ok(None)` when the API returns 404 (product does not exist).
     pub async fn get_product(
         &self,
         account_id: &str,
         repo_id: &str,
-    ) -> Result<SourceProduct, ProxyError> {
+    ) -> Result<Option<SourceProduct>, ProxyError> {
         let url = format!(
             "{}/api/v1/products/{}/{}",
             self.api_url, account_id, repo_id
@@ -218,7 +223,12 @@ impl<H: HttpClient> SourceApiClient<H> {
     }
 
     /// `GET /api/v1/data-connections/{id}`
-    pub async fn get_data_connection(&self, id: &str) -> Result<DataConnection, ProxyError> {
+    ///
+    /// Returns `Ok(None)` when the API returns 404 (connection does not exist).
+    pub async fn get_data_connection(
+        &self,
+        id: &str,
+    ) -> Result<Option<DataConnection>, ProxyError> {
         let url = format!("{}/api/v1/data-connections/{}", self.api_url, id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -230,7 +240,12 @@ impl<H: HttpClient> SourceApiClient<H> {
     }
 
     /// `GET /api/v1/api-keys/{access_key_id}/auth`
-    pub async fn get_api_key(&self, access_key_id: &str) -> Result<SourceApiKey, ProxyError> {
+    ///
+    /// Returns `Ok(None)` when the API returns 404 (key does not exist).
+    pub async fn get_api_key(
+        &self,
+        access_key_id: &str,
+    ) -> Result<Option<SourceApiKey>, ProxyError> {
         let url = format!("{}/api/v1/api-keys/{}/auth", self.api_url, access_key_id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -248,12 +263,14 @@ impl<H: HttpClient> SourceApiClient<H> {
     ///
     /// A custom `cacheKey` incorporating the user's API key prevents
     /// cross-user cache poisoning (the URL is the same for all users).
+    ///
+    /// Returns `Ok(None)` when the API returns 404.
     pub async fn get_permissions(
         &self,
         account_id: &str,
         repo_id: &str,
         user_api_key: &str,
-    ) -> Result<PermissionsResponse, ProxyError> {
+    ) -> Result<Option<PermissionsResponse>, ProxyError> {
         let url = format!(
             "{}/api/v1/products/{}/{}/permissions",
             self.api_url, account_id, repo_id
@@ -270,10 +287,12 @@ impl<H: HttpClient> SourceApiClient<H> {
     }
 
     /// `GET /api/v1/accounts/{account_id}`
+    ///
+    /// Returns `Ok(None)` when the API returns 404 (account does not exist).
     pub async fn list_account_repos(
         &self,
         account_id: &str,
-    ) -> Result<AccountResponse, ProxyError> {
+    ) -> Result<Option<AccountResponse>, ProxyError> {
         let url = format!("{}/api/v1/products/{}", self.api_url, account_id);
         let auth = self.auth_headers();
         let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (*k, v.as_str())).collect();

@@ -60,7 +60,7 @@ impl ProxyError {
             Self::ExpiredCredentials => "ExpiredToken",
             Self::InvalidOidcToken(_) => "InvalidIdentityToken",
             Self::RoleNotFound(_) => "AccessDenied",
-            Self::BackendError(_) => "InternalError",
+            Self::BackendError(_) => "ServiceUnavailable",
             Self::PreconditionFailed => "PreconditionFailed",
             Self::NotModified => "NotModified",
             Self::ConfigError(_) => "InternalError",
@@ -79,21 +79,21 @@ impl ProxyError {
             Self::RoleNotFound(_) => 403,
             Self::PreconditionFailed => 412,
             Self::NotModified => 304,
-            Self::BackendError(_) | Self::ConfigError(_) | Self::Internal(_) => 500,
+            Self::BackendError(_) => 503,
+            Self::ConfigError(_) | Self::Internal(_) => 500,
         }
     }
 
     /// Return a message safe to show to external clients.
     ///
-    /// For server-side errors (500), returns a generic message to avoid
+    /// For server-side errors (5xx), returns a generic message to avoid
     /// leaking backend infrastructure details. For client errors (4xx),
     /// returns the full message (the client already knows the bucket name,
     /// key, etc.).
     pub fn safe_message(&self) -> String {
         match self {
-            Self::BackendError(_) | Self::ConfigError(_) | Self::Internal(_) => {
-                "Internal server error".to_string()
-            }
+            Self::BackendError(_) => "Service unavailable".to_string(),
+            Self::ConfigError(_) | Self::Internal(_) => "Internal server error".to_string(),
             other => other.to_string(),
         }
     }
