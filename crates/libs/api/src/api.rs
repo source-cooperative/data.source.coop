@@ -85,7 +85,8 @@ pub struct ProductMirror {
 #[derive(Debug, Deserialize)]
 pub struct DataConnection {
     pub details: ConnectionDetails,
-    pub authentication: ConnectionAuth,
+    #[serde(default)]
+    pub authentication: Option<ConnectionAuth>,
 }
 
 #[derive(Debug, Deserialize)]

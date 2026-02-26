@@ -97,13 +97,17 @@ impl<H: HttpClient> SourceCoopResolver<H> {
                 opts.insert("endpoint".to_string(), endpoint);
                 opts.insert("bucket_name".to_string(), bucket);
                 opts.insert("region".to_string(), region);
-                if let Some(ak) = &conn.authentication.access_key_id {
-                    opts.insert("access_key_id".to_string(), ak.clone());
-                }
-                if let Some(sk) = &conn.authentication.secret_access_key {
-                    opts.insert("secret_access_key".to_string(), sk.clone());
-                }
-                if conn.authentication.access_key_id.is_none() {
+                if let Some(ref auth) = conn.authentication {
+                    if let Some(ak) = &auth.access_key_id {
+                        opts.insert("access_key_id".to_string(), ak.clone());
+                    }
+                    if let Some(sk) = &auth.secret_access_key {
+                        opts.insert("secret_access_key".to_string(), sk.clone());
+                    }
+                    if auth.access_key_id.is_none() {
+                        opts.insert("skip_signature".to_string(), "true".to_string());
+                    }
+                } else {
                     opts.insert("skip_signature".to_string(), "true".to_string());
                 }
                 opts
@@ -116,10 +120,14 @@ impl<H: HttpClient> SourceCoopResolver<H> {
                 if let Some(container) = &conn.details.container_name {
                     opts.insert("container_name".to_string(), container.clone());
                 }
-                if let Some(key) = &conn.authentication.access_key {
-                    opts.insert("access_key".to_string(), key.clone());
-                }
-                if conn.authentication.access_key.is_none() {
+                if let Some(ref auth) = conn.authentication {
+                    if let Some(key) = &auth.access_key {
+                        opts.insert("access_key".to_string(), key.clone());
+                    }
+                    if auth.access_key.is_none() {
+                        opts.insert("skip_signature".to_string(), "true".to_string());
+                    }
+                } else {
                     opts.insert("skip_signature".to_string(), "true".to_string());
                 }
                 opts
