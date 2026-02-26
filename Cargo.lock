@@ -2271,7 +2271,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s3-proxy-cf-workers"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "axum",
@@ -2304,7 +2304,7 @@ dependencies = [
 
 [[package]]
 name = "s3-proxy-core"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "aws-sdk-dynamodb",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "s3-proxy-oidc-provider"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "s3-proxy-server"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "axum",
  "bytes",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "s3-proxy-source-coop"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "bytes",
  "http 1.4.0",
@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "s3-proxy-sts"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "async-trait",
  "base64",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "source-coop-cli"
-version = "0.1.0"
+version = "1.0.4"
 dependencies = [
  "base64",
  "clap",
