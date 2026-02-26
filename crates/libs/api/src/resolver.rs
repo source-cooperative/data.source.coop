@@ -7,10 +7,10 @@
 use crate::api::{HttpClient, SourceApiClient};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::resolver::{ListRewrite, RequestResolver, ResolvedAction};
-use s3_proxy_core::s3::request::build_s3_operation;
-use s3_proxy_core::types::BucketConfig;
+use source_coop_core::error::ProxyError;
+use source_coop_core::resolver::{ListRewrite, RequestResolver, ResolvedAction};
+use source_coop_core::s3::request::build_s3_operation;
+use source_coop_core::types::BucketConfig;
 use std::collections::HashMap;
 
 /// Request resolver for Source Cooperative.
@@ -160,7 +160,7 @@ impl<H: HttpClient> SourceCoopResolver<H> {
             None => return Ok(()), // Anonymous — skip permission check
         };
 
-        let sig = s3_proxy_core::auth::parse_sigv4_auth(auth_header)?;
+        let sig = source_coop_core::auth::parse_sigv4_auth(auth_header)?;
 
         let perms = self
             .api_client

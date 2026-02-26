@@ -28,13 +28,13 @@ mod fetch_connector;
 mod tracing_layer;
 
 use client::WorkerBackend;
-use s3_proxy_core::axum::{build_proxy_response, error_response};
-use s3_proxy_core::config::static_file::{StaticConfig, StaticProvider};
-use s3_proxy_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
-use s3_proxy_core::resolver::{DefaultResolver, RequestResolver};
-use s3_proxy_source_coop::api::{CacheTtls, SourceApiClient};
-use s3_proxy_source_coop::resolver::SourceCoopResolver;
-use s3_proxy_sts::{try_handle_sts, try_parse_sts_request, JwksCache};
+use source_coop_core::axum::{build_proxy_response, error_response};
+use source_coop_core::config::static_file::{StaticConfig, StaticProvider};
+use source_coop_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
+use source_coop_core::resolver::{DefaultResolver, RequestResolver};
+use source_coop_api::api::{CacheTtls, SourceApiClient};
+use source_coop_api::resolver::SourceCoopResolver;
+use source_coop_sts::{try_handle_sts, try_parse_sts_request, JwksCache};
 
 use axum::body::Body;
 use axum::response::Response;

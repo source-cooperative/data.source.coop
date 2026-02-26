@@ -1,4 +1,4 @@
-# s3-proxy-server
+# source-coop-server
 
 Tokio/Hyper runtime for the S3 proxy gateway. This is the container-deployment crate — it wires the core library into a production HTTP server using native Rust async I/O.
 
@@ -19,32 +19,32 @@ src/
 ├── client.rs        ServerBackend implementing ProxyBackend
 ├── server.rs        Hyper server setup, two-phase request handling, Forward execution
 └── bin/
-    └── s3-proxy.rs  CLI binary entry point
+    └── source-coop-proxy.rs  CLI binary entry point
 ```
 
 ## Binary Usage
 
 ```bash
-cargo build --release -p s3-proxy-server
+cargo build --release -p source-coop-server
 
 # Minimal
-./target/release/s3-proxy --config config.toml
+./target/release/source-coop-proxy --config config.toml
 
 # Full options
-./target/release/s3-proxy \
-    --config /etc/s3-proxy/config.toml \
+./target/release/source-coop-proxy \
+    --config /etc/source-coop-proxy/config.toml \
     --listen 0.0.0.0:9000 \
     --domain s3.local
 
 # Environment variable for log level
-RUST_LOG=s3_proxy=debug ./target/release/s3-proxy --config config.toml
+RUST_LOG=source_coop=debug ./target/release/source-coop-proxy --config config.toml
 ```
 
 ## Docker
 
 ```bash
-docker build -t s3-proxy .
-docker run -v ./config.toml:/etc/s3-proxy/config.toml -p 8080:8080 s3-proxy
+docker build -t source-coop-proxy .
+docker run -v ./config.toml:/etc/source-coop-proxy/config.toml -p 8080:8080 source-coop-proxy
 ```
 
 ## Using a Different Config Provider
@@ -52,9 +52,9 @@ docker run -v ./config.toml:/etc/s3-proxy/config.toml -p 8080:8080 s3-proxy
 The default binary uses `StaticProvider` (TOML file) wrapped in `CachedProvider`. The `run()` function accepts any `ConfigProvider` and wraps it in a `DefaultResolver` internally. To use a different provider, modify the binary or write your own:
 
 ```rust
-use s3_proxy_core::config::cached::CachedProvider;
-use s3_proxy_core::config::http::HttpProvider;  // requires config-http feature
-use s3_proxy_server::server::{run, ServerConfig};
+use source_coop_core::config::cached::CachedProvider;
+use source_coop_core::config::http::HttpProvider;  // requires config-http feature
+use source_coop_server::server::{run, ServerConfig};
 use std::time::Duration;
 
 #[tokio::main]
@@ -74,9 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For full control over request routing and authorization, you can bypass `run()` and wire up a `ProxyHandler` with a custom `RequestResolver` directly. This is useful when your URL namespace doesn't follow the standard S3 bucket/key pattern, or when authorization is handled by an external service.
 
 ```rust
-use s3_proxy_core::proxy::ProxyHandler;
-use s3_proxy_core::resolver::{RequestResolver, ResolvedAction};
-use s3_proxy_core::error::ProxyError;
+use source_coop_core::proxy::ProxyHandler;
+use source_coop_core::resolver::{RequestResolver, ResolvedAction};
+use source_coop_core::error::ProxyError;
 
 #[derive(Clone)]
 struct MyResolver { /* ... */ }

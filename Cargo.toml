@@ -3,19 +3,19 @@ members = [
     "crates/libs/core",
     "crates/libs/sts",
     "crates/libs/oidc-provider",
-    "crates/libs/source-coop",
+    "crates/libs/api",
     "crates/runtimes/server",
     "crates/runtimes/cf-workers",
     "crates/cli",
 ]
 # Worker crate is excluded from default builds because it contains !Send
 # WASM types that only compile correctly for wasm32 targets. Build it
-# separately via: cargo check -p s3-proxy-cf-workers --target wasm32-unknown-unknown
+# separately via: cargo check -p source-coop-cf-workers --target wasm32-unknown-unknown
 default-members = [
     "crates/libs/core",
     "crates/libs/sts",
     "crates/libs/oidc-provider",
-    "crates/libs/source-coop",
+    "crates/libs/api",
     "crates/runtimes/server",
     "crates/cli",
 ]
@@ -77,7 +77,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Internal crates
-s3-proxy-core = { path = "crates/libs/core" }
-s3-proxy-sts = { path = "crates/libs/sts" }
-s3-proxy-oidc-provider = { path = "crates/libs/oidc-provider" }
-s3-proxy-source-coop = { path = "crates/libs/source-coop" }
+source-coop-core = { path = "crates/libs/core" }
+source-coop-sts = { path = "crates/libs/sts" }
+source-coop-oidc-provider = { path = "crates/libs/oidc-provider" }
+source-coop-api = { path = "crates/libs/api" }

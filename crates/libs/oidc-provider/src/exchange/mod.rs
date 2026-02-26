@@ -15,12 +15,12 @@ use crate::{CloudCredentials, HttpExchange, OidcProviderError};
 /// - Azure: Federated token exchange via Azure AD
 /// - GCP: STS token exchange + `generateAccessToken` via IAM
 pub trait CredentialExchange<H: HttpExchange>:
-    s3_proxy_core::maybe_send::MaybeSend + s3_proxy_core::maybe_send::MaybeSync
+    source_coop_core::maybe_send::MaybeSend + source_coop_core::maybe_send::MaybeSync
 {
     fn exchange(
         &self,
         http: &H,
         jwt: &str,
     ) -> impl std::future::Future<Output = Result<CloudCredentials, OidcProviderError>>
-           + s3_proxy_core::maybe_send::MaybeSend;
+           + source_coop_core::maybe_send::MaybeSend;
 }

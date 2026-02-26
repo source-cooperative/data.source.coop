@@ -21,7 +21,7 @@
 //! network calls (HTTP, DynamoDB, Postgres).
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::config::{cached::CachedProvider, static_file::StaticProvider};
+//! use source_coop_core::config::{cached::CachedProvider, static_file::StaticProvider};
 //! use std::time::Duration;
 //!
 //! let base = StaticProvider::from_file("config.toml").unwrap();

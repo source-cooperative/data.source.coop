@@ -1,11 +1,11 @@
-//! S3 Proxy Server binary.
+//! Source Cooperative Proxy Server binary.
 //!
 //! Usage:
-//!     s3-proxy --config config.toml [--sts-config sts.toml] [--listen 0.0.0.0:8080] [--domain s3.local]
+//!     source-coop-proxy --config config.toml [--sts-config sts.toml] [--listen 0.0.0.0:8080] [--domain s3.local]
 
-use s3_proxy_core::config::cached::CachedProvider;
-use s3_proxy_core::config::static_file::StaticProvider;
-use s3_proxy_server::server::{run, ServerConfig};
+use source_coop_core::config::cached::CachedProvider;
+use source_coop_core::config::static_file::StaticProvider;
+use source_coop_server::server::{run, ServerConfig};
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "s3_proxy=info".into()),
+                .unwrap_or_else(|_| "source_coop=info".into()),
         )
         .init();
 
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str());
 
-    tracing::info!(config = %config_path, listen = %listen_addr, "starting s3-proxy");
+    tracing::info!(config = %config_path, listen = %listen_addr, "starting source-coop-proxy");
 
     let base_config = StaticProvider::from_file(config_path)?;
     let sts_base = match sts_config_path {

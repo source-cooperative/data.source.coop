@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::config::dynamodb::DynamoDbProvider;
+//! use source_coop_core::config::dynamodb::DynamoDbProvider;
 //! use aws_sdk_dynamodb::Client;
 //!
 //! let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;

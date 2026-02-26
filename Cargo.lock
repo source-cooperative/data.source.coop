@@ -2270,143 +2270,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "s3-proxy-cf-workers"
-version = "1.0.4"
-dependencies = [
- "async-trait",
- "axum",
- "bytes",
- "chrono",
- "console_error_panic_hook",
- "futures",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-body-util",
- "js-sys",
- "object_store",
- "quick-xml 0.37.5",
- "reqwest",
- "s3-proxy-core",
- "s3-proxy-source-coop",
- "s3-proxy-sts",
- "serde",
- "serde_json",
- "thiserror",
- "tracing",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "worker",
-]
-
-[[package]]
-name = "s3-proxy-core"
-version = "1.0.4"
-dependencies = [
- "async-trait",
- "aws-sdk-dynamodb",
- "axum",
- "base64",
- "bytes",
- "chrono",
- "futures",
- "hex",
- "hmac",
- "http 1.4.0",
- "object_store",
- "quick-xml 0.37.5",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "s3-proxy-oidc-provider"
-version = "1.0.4"
-dependencies = [
- "async-trait",
- "base64",
- "chrono",
- "rand 0.8.5",
- "rsa",
- "s3-proxy-core",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "s3-proxy-server"
-version = "1.0.4"
-dependencies = [
- "axum",
- "bytes",
- "futures",
- "http 1.4.0",
- "http-body-util",
- "object_store",
- "reqwest",
- "s3-proxy-core",
- "s3-proxy-source-coop",
- "s3-proxy-sts",
- "serde",
- "thiserror",
- "tokio",
- "toml",
- "tower-service",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "s3-proxy-source-coop"
-version = "1.0.4"
-dependencies = [
- "bytes",
- "http 1.4.0",
- "s3-proxy-core",
- "serde",
- "serde_json",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "s3-proxy-sts"
-version = "1.0.4"
-dependencies = [
- "async-trait",
- "base64",
- "chrono",
- "quick-xml 0.37.5",
- "reqwest",
- "rsa",
- "s3-proxy-core",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2639,6 +2502,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "source-coop-api"
+version = "1.0.4"
+dependencies = [
+ "bytes",
+ "http 1.4.0",
+ "serde",
+ "serde_json",
+ "source-coop-core",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "source-coop-cf-workers"
+version = "1.0.4"
+dependencies = [
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono",
+ "console_error_panic_hook",
+ "futures",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "js-sys",
+ "object_store",
+ "quick-xml 0.37.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "source-coop-api",
+ "source-coop-core",
+ "source-coop-sts",
+ "thiserror",
+ "tracing",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "worker",
+]
+
+[[package]]
 name = "source-coop-cli"
 version = "1.0.4"
 dependencies = [
@@ -2653,6 +2562,97 @@ dependencies = [
  "sha2",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "source-coop-core"
+version = "1.0.4"
+dependencies = [
+ "async-trait",
+ "aws-sdk-dynamodb",
+ "axum",
+ "base64",
+ "bytes",
+ "chrono",
+ "futures",
+ "hex",
+ "hmac",
+ "http 1.4.0",
+ "object_store",
+ "quick-xml 0.37.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "source-coop-oidc-provider"
+version = "1.0.4"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "rand 0.8.5",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-coop-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "source-coop-server"
+version = "1.0.4"
+dependencies = [
+ "axum",
+ "bytes",
+ "futures",
+ "http 1.4.0",
+ "http-body-util",
+ "object_store",
+ "reqwest",
+ "serde",
+ "source-coop-api",
+ "source-coop-core",
+ "source-coop-sts",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tower-service",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "source-coop-sts"
+version = "1.0.4"
+dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
+ "quick-xml 0.37.5",
+ "reqwest",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-coop-core",
+ "thiserror",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

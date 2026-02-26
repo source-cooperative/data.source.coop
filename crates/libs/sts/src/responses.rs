@@ -1,8 +1,8 @@
 //! STS XML response serialization.
 
 use quick_xml::se::to_string as xml_to_string;
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::types::TemporaryCredentials;
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::TemporaryCredentials;
 use serde::Serialize;
 
 /// STS AssumeRoleWithWebIdentity response.

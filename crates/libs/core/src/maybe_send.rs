@@ -13,7 +13,7 @@
 //! Use `MaybeSend` instead of `Send` in trait bounds throughout the core:
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::maybe_send::MaybeSend;
+//! use source_coop_core::maybe_send::MaybeSend;
 //!
 //! pub trait MyTrait: MaybeSend {
 //!     fn do_work(&self) -> impl Future<Output = ()> + MaybeSend;

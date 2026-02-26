@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::config::cached::CachedProvider;
+//! use source_coop_core::config::cached::CachedProvider;
 //! use std::time::Duration;
 //!
 //! // Wrap any provider with a 5-minute cache

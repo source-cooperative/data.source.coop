@@ -25,9 +25,9 @@ pub use jwks::JwksCache;
 pub use request::try_parse_sts_request;
 use request::StsRequest;
 pub use responses::{build_sts_error_response, build_sts_response};
-use s3_proxy_core::config::ConfigProvider;
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::types::TemporaryCredentials;
+use source_coop_core::config::ConfigProvider;
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::TemporaryCredentials;
 
 /// Try to handle an STS request. Returns `Some((status, xml))` if the query
 /// contained an STS action, or `None` if it wasn't an STS request.

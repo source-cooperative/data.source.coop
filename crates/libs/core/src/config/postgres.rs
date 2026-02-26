@@ -30,7 +30,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::config::postgres::PostgresProvider;
+//! use source_coop_core::config::postgres::PostgresProvider;
 //! use sqlx::PgPool;
 //!
 //! let pool = PgPool::connect("postgres://user:pass@localhost/s3proxy").await?;

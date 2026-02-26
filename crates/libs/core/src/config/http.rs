@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use s3_proxy_core::config::http::HttpProvider;
+//! use source_coop_core::config::http::HttpProvider;
 //!
 //! let provider = HttpProvider::new(
 //!     "https://config-api.internal:8080".to_string(),

@@ -9,12 +9,12 @@ use bytes::Bytes;
 use http::HeaderMap;
 use object_store::signer::Signer;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{
+use source_coop_core::backend::{
     build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder,
 };
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::types::BucketConfig;
-use s3_proxy_source_coop::api::{CacheOptions, HttpClient};
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::BucketConfig;
+use source_coop_api::api::{CacheOptions, HttpClient};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use worker::{Cache, Fetch};

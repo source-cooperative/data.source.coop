@@ -1,5 +1,5 @@
 [package]
-name = "s3-proxy-core"
+name = "source-coop-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

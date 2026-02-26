@@ -8,11 +8,11 @@ use axum::Router;
 use futures::TryStreamExt;
 use http::HeaderMap;
 use http_body_util::BodyStream;
-use s3_proxy_core::axum::{build_proxy_response, error_response};
-use s3_proxy_core::config::ConfigProvider;
-use s3_proxy_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
-use s3_proxy_core::resolver::DefaultResolver;
-use s3_proxy_sts::{try_handle_sts, JwksCache};
+use source_coop_core::axum::{build_proxy_response, error_response};
+use source_coop_core::config::ConfigProvider;
+use source_coop_core::proxy::{ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST};
+use source_coop_core::resolver::DefaultResolver;
+use source_coop_sts::{try_handle_sts, JwksCache};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,8 +47,8 @@ struct AppState<P: ConfigProvider> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use s3_proxy_core::config::static_file::StaticProvider;
-/// use s3_proxy_server::server::{run, ServerConfig};
+/// use source_coop_core::config::static_file::StaticProvider;
+/// use source_coop_server::server::{run, ServerConfig};
 ///
 /// #[tokio::main]
 /// async fn main() {

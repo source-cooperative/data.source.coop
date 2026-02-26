@@ -1,4 +1,4 @@
-# s3-proxy-core
+# data.source.coop
 
 Runtime-agnostic core library for the S3 proxy gateway. This crate contains all business logic — S3 request parsing, SigV4 signing/verification, authorization, configuration retrieval, and the proxy handler — without depending on any async runtime.
 
@@ -53,16 +53,16 @@ src/
 
 ## Usage
 
-This crate is not used directly. Runtime crates (`s3-proxy-server`, `s3-proxy-cf-workers`) depend on it and provide concrete `ProxyBackend` implementations. If you're building a custom runtime integration, depend on this crate and implement `ProxyBackend`, and optionally `ConfigProvider` or `RequestResolver`.
+This crate is not used directly. Runtime crates (`source-coop-server`, `source-coop-cf-workers`) depend on it and provide concrete `ProxyBackend` implementations. If you're building a custom runtime integration, depend on this crate and implement `ProxyBackend`, and optionally `ConfigProvider` or `RequestResolver`.
 
 ### Standard usage with a ConfigProvider
 
 Wrap your config provider in `DefaultResolver` for standard S3 proxy behavior (path/virtual-host parsing, SigV4 auth, scope-based authorization):
 
 ```rust
-use s3_proxy_core::proxy::ProxyHandler;
-use s3_proxy_core::resolver::DefaultResolver;
-use s3_proxy_core::config::static_file::StaticProvider;
+use source_coop_core::proxy::ProxyHandler;
+use source_coop_core::resolver::DefaultResolver;
+use source_coop_core::config::static_file::StaticProvider;
 
 let backend = MyBackend::new();
 let config = StaticProvider::from_file("config.toml")?;
@@ -80,8 +80,8 @@ let action = handler.resolve_request(method, path, query, &headers).await;
 For non-standard URL namespaces or external auth, implement `RequestResolver` directly:
 
 ```rust
-use s3_proxy_core::resolver::{RequestResolver, ResolvedAction};
-use s3_proxy_core::error::ProxyError;
+use source_coop_core::resolver::{RequestResolver, ResolvedAction};
+use source_coop_core::error::ProxyError;
 
 #[derive(Clone)]
 struct MyResolver { /* ... */ }

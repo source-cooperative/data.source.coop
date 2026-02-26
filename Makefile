@@ -2,7 +2,7 @@
 
 check:
 	cargo check
-	cargo check -p s3-proxy-cf-workers --target wasm32-unknown-unknown
+	cargo check -p source-coop-cf-workers --target wasm32-unknown-unknown
 
 fmt:
 	cargo fmt -- --check
@@ -18,7 +18,7 @@ test:
 	cargo test
 
 run\:server:
-	cargo run -p s3-proxy-server -- $(ARGS)
+	cargo run -p source-coop-server -- $(ARGS)
 
 run\:workers:
 	npx wrangler dev --cwd crates/runtimes/cf-workers

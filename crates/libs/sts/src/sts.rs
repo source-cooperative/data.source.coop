@@ -1,7 +1,7 @@
 //! STS credential minting.
 
 use chrono::{Duration, Utc};
-use s3_proxy_core::types::{AccessScope, RoleConfig, TemporaryCredentials};
+use source_coop_core::types::{AccessScope, RoleConfig, TemporaryCredentials};
 use uuid::Uuid;
 
 /// Resolve `{claim_name}` template variables in access scopes against JWT claims.
@@ -103,7 +103,7 @@ fn rand_byte() -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use s3_proxy_core::types::Action;
+    use source_coop_core::types::Action;
     use serde_json::json;
 
     fn scope(bucket: &str, prefixes: &[&str], actions: &[Action]) -> AccessScope {

@@ -1,4 +1,4 @@
-# s3-proxy-cf-workers
+# source-coop-cf-workers
 
 Cloudflare Workers runtime for the S3 proxy gateway. Deploys the proxy to the edge using Cloudflare's global network, using presigned URLs for zero-copy streaming and `object_store` with a custom `FetchConnector` for LIST operations.
 
@@ -11,7 +11,7 @@ Client request
     -> Pick resolver:
        - SOURCE_API_URL set? -> SourceCoopResolver (dynamic Source Cooperative backends)
        - Otherwise           -> DefaultResolver (static PROXY_CONFIG)
-    -> ProxyHandler::resolve_request() (from s3-proxy-core)
+    -> ProxyHandler::resolve_request() (from source-coop-core)
     -> Forward: fetch(presigned URL) with ReadableStream passthrough (GET/HEAD/PUT/DELETE)
     -> Response: LIST XML via object_store, errors, synthetic responses
     -> NeedsBody: multipart operations via raw signed HTTP
@@ -68,8 +68,8 @@ SOURCE_API_URL = "https://api.source.coop"
 To add a new operating mode, implement `RequestResolver` in a new module:
 
 ```rust
-use s3_proxy_core::resolver::{RequestResolver, ResolvedAction, ListRewrite};
-use s3_proxy_core::error::ProxyError;
+use source_coop_core::resolver::{RequestResolver, ResolvedAction, ListRewrite};
+use source_coop_core::error::ProxyError;
 
 #[derive(Clone)]
 struct MyResolver { /* ... */ }
@@ -139,5 +139,5 @@ Cloudflare Workers compile to `wasm32-unknown-unknown` and link against `worker-
 This crate must always be built with `--target wasm32-unknown-unknown`:
 
 ```bash
-cargo check -p s3-proxy-cf-workers --target wasm32-unknown-unknown
+cargo check -p source-coop-cf-workers --target wasm32-unknown-unknown
 ```

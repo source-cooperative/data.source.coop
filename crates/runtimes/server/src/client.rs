@@ -4,9 +4,9 @@ use bytes::Bytes;
 use http::HeaderMap;
 use object_store::signer::Signer;
 use object_store::ObjectStore;
-use s3_proxy_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse};
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::types::BucketConfig;
+use source_coop_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse};
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::BucketConfig;
 use std::sync::Arc;
 
 /// Backend for the Tokio/Hyper server runtime.

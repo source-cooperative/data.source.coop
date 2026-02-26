@@ -1,4 +1,4 @@
-# s3-proxy-sts
+# source-coop-sts
 
 OIDC token exchange and STS credential minting for the S3 proxy gateway. Implements the `AssumeRoleWithWebIdentity` flow, allowing workloads like GitHub Actions to exchange OIDC JWTs for temporary, scoped S3 credentials.
 
@@ -10,7 +10,7 @@ GitHub Actions (or any OIDC provider)
     │  JWT (signed by provider)
     ▼
 ┌─────────────────────────────┐
-│  s3-proxy-sts              │
+│  source-coop-sts           │
 │                             │
 │  1. Decode JWT header       │
 │  2. Fetch JWKS from issuer  │
@@ -53,8 +53,8 @@ src/
 Called by the proxy handler when it receives an STS `AssumeRoleWithWebIdentity` request:
 
 ```rust
-use s3_proxy_sts::assume_role_with_web_identity;
-use s3_proxy_sts::request::{StsRequest, try_parse_sts_request};
+use source_coop_sts::assume_role_with_web_identity;
+use source_coop_sts::request::{StsRequest, try_parse_sts_request};
 
 // Parse from query string
 let sts_request = try_parse_sts_request(Some(query))

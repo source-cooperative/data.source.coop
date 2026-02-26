@@ -38,14 +38,14 @@ pub struct CloudCredentials {
 /// Each runtime provides its own implementation — `reqwest` on native,
 /// `Fetch` on Cloudflare Workers.
 pub trait HttpExchange:
-    Clone + s3_proxy_core::maybe_send::MaybeSend + s3_proxy_core::maybe_send::MaybeSync + 'static
+    Clone + source_coop_core::maybe_send::MaybeSend + source_coop_core::maybe_send::MaybeSync + 'static
 {
     fn post_form(
         &self,
         url: &str,
         form: &[(&str, &str)],
     ) -> impl std::future::Future<Output = Result<String, OidcProviderError>>
-           + s3_proxy_core::maybe_send::MaybeSend;
+           + source_coop_core::maybe_send::MaybeSend;
 }
 
 /// Top-level provider that combines signing, exchange, and caching.
@@ -122,9 +122,9 @@ pub enum OidcProviderError {
     HttpError(String),
 }
 
-impl From<OidcProviderError> for s3_proxy_core::error::ProxyError {
+impl From<OidcProviderError> for source_coop_core::error::ProxyError {
     fn from(e: OidcProviderError) -> Self {
-        s3_proxy_core::error::ProxyError::Internal(e.to_string())
+        source_coop_core::error::ProxyError::Internal(e.to_string())
     }
 }
 
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn error_converts_to_proxy_error() {
         let err = OidcProviderError::ExchangeError("test".into());
-        let proxy_err: s3_proxy_core::error::ProxyError = err.into();
+        let proxy_err: source_coop_core::error::ProxyError = err.into();
         assert!(proxy_err.to_string().contains("test"));
         assert_eq!(proxy_err.status_code(), 500);
     }

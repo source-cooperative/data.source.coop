@@ -2,7 +2,7 @@
 //!
 //! Extracts `AssumeRoleWithWebIdentity` parameters from query strings.
 
-use s3_proxy_core::error::ProxyError;
+use source_coop_core::error::ProxyError;
 
 /// Parsed STS `AssumeRoleWithWebIdentity` request parameters.
 #[derive(Debug, Clone)]

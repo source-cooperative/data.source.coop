@@ -1,14 +1,14 @@
 [package]
-name = "s3-proxy-server"
+name = "source-coop-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Tokio/Hyper runtime for the S3 proxy gateway"
 
 [dependencies]
-s3-proxy-core = { workspace = true, features = ["axum", "azure", "gcp"] }
-s3-proxy-sts.workspace = true
-s3-proxy-source-coop.workspace = true
+source-coop-core = { workspace = true, features = ["axum", "azure", "gcp"] }
+source-coop-sts.workspace = true
+source-coop-api.workspace = true
 axum = { workspace = true, features = ["json", "tokio", "http1", "http2"] }
 tower-service.workspace = true
 tokio.workspace = true

@@ -10,8 +10,8 @@ use base64::Engine;
 use rsa::pkcs1v15::VerifyingKey;
 use rsa::signature::Verifier;
 use rsa::{BigUint, RsaPublicKey};
-use s3_proxy_core::error::ProxyError;
-use s3_proxy_core::types::RoleConfig;
+use source_coop_core::error::ProxyError;
+use source_coop_core::types::RoleConfig;
 use serde::Deserialize;
 use sha2::Sha256;
 
