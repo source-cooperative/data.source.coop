@@ -28,6 +28,7 @@ impl WorkerSubscriber {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_max_level(mut self, level: Level) -> Self {
         self.max_level = level;
         self
