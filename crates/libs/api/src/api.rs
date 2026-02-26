@@ -127,12 +127,43 @@ pub enum RepositoryPermission {
 }
 
 /// API response for the permissions endpoint.
+///
+/// The API may return permission fields as booleans (`true`/`false`) or as
+/// strings (e.g., `"read"`, `"write"`). The custom deserializer handles both.
 #[derive(Debug, Deserialize)]
 pub struct PermissionsResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_truthy")]
     pub read: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_truthy")]
     pub write: bool,
+}
+
+/// Deserialize a value as `true` if it is a boolean `true` or any non-empty string.
+fn deserialize_truthy<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct TruthyVisitor;
+
+    impl<'de> de::Visitor<'de> for TruthyVisitor {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a boolean or a string")
+        }
+
+        fn visit_bool<E: de::Error>(self, v: bool) -> Result<bool, E> {
+            Ok(v)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<bool, E> {
+            Ok(!v.is_empty())
+        }
+    }
+
+    deserializer.deserialize_any(TruthyVisitor)
 }
 
 /// API response for listing products under an account.
