@@ -24,6 +24,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -- -D warnings
 
   check:
@@ -35,6 +36,7 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
       - name: Check workspace
         run: cargo check
       - name: Check cf-workers (wasm32)
@@ -48,6 +50,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test
 
   build:
@@ -58,6 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build server
         run: cargo build -p source-coop-server
       - name: Build CLI
