@@ -1,0 +1,39 @@
+services:
+  # ── MinIO (backing object store) ──────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Seed MinIO with example buckets and data ──────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb --ignore-existing local/public-data
+        mc mb --ignore-existing local/private-uploads
+        mc anonymous set download local/public-data
+        echo "Hello from s3-proxy!" | mc pipe local/public-data/hello.txt
+        echo '{"status":"ok"}' | mc pipe local/public-data/health.json
+        echo "Secret payload" | mc pipe local/private-uploads/docs/secret.txt
+
+volumes:
+  minio-data:

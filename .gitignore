@@ -1,3 +1,5 @@
-/target
 .DS_Store
 scripts/task_definition.json
+target
+.wrangler
+crates/runtimes/cf-workers/.env

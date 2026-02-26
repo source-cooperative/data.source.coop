@@ -1,0 +1,22 @@
+[package]
+name = "s3-proxy-sts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OIDC/STS authentication for the S3 proxy gateway"
+
+[dependencies]
+s3-proxy-core.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+base64.workspace = true
+rsa.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+tracing.workspace = true
+quick-xml.workspace = true
+url.workspace = true
