@@ -1,7 +1,7 @@
 use quick_xml::de::from_str as xml_from_str;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credentials {
     pub access_key_id: String,
     pub secret_access_key: String,

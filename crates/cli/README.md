@@ -12,20 +12,57 @@ cargo install --path crates/cli
 
 ## Usage
 
+### Recommended: login + credential-process
+
+1. Log in once (opens browser, caches credentials to `~/.source-coop/credentials/`):
+
 ```bash
-source-coop login --role-arn <ARN>
+source-coop login
 ```
 
-This opens your browser to the Source Cooperative login page. After authenticating, temporary S3 credentials are printed to stdout.
+2. Configure `~/.aws/config` to use cached credentials:
 
-### Options
+```ini
+[profile source-coop]
+credential_process = source-coop credential-process
+endpoint_url = https://data.source.coop
+```
+
+3. Use AWS tools normally:
+
+```bash
+aws s3 ls s3://my-bucket/ --profile source-coop
+```
+
+When credentials expire, run `source-coop login` again.
+
+### Multiple roles
+
+Each role's credentials are cached separately:
+
+```bash
+source-coop login --role-arn reader-role
+source-coop login --role-arn admin-role
+```
+
+```ini
+[profile source-coop]
+credential_process = source-coop credential-process --role-arn reader-role
+endpoint_url = https://data.source.coop
+
+[profile source-coop-admin]
+credential_process = source-coop credential-process --role-arn admin-role
+endpoint_url = https://data.source.coop
+```
+
+### Login options
 
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
 | `--issuer` | `SOURCE_OIDC_ISSUER` | `https://auth.source.coop` | OIDC issuer URL |
 | `--client-id` | `SOURCE_OIDC_CLIENT_ID` | `d037d00b-...` | OAuth2 client ID |
-| `--proxy-url` | `SOURCE_PROXY_URL` | `http://localhost:8787` | S3 proxy URL for STS |
-| `--role-arn` | `SOURCE_ROLE_ARN` | *(required)* | Role ARN to assume |
+| `--proxy-url` | `SOURCE_PROXY_URL` | `https://data.source.coop` | S3 proxy URL for STS |
+| `--role-arn` | `SOURCE_ROLE_ARN` | `source-coop-user` | Role ARN to assume |
 | `--format` | | `credential-process` | Output format: `credential-process` or `env` |
 | `--duration` | | | Session duration in seconds |
 | `--scope` | | `openid` | OAuth2 scopes |
@@ -33,17 +70,18 @@ This opens your browser to the Source Cooperative login page. After authenticati
 
 ### Output formats
 
-**credential-process** (default) — for use with `~/.aws/config`:
+In addition to caching, `login` prints credentials to stdout:
 
-```ini
-[profile source-coop]
-credential_process = source-coop login --role-arn <ARN>
-```
-
-**env** — for shell eval:
+**credential-process** (default) — AWS credential_process JSON:
 
 ```bash
-eval $(source-coop login --role-arn <ARN> --format env)
+source-coop login
+```
+
+**env** — shell export statements:
+
+```bash
+eval $(source-coop login --format env)
 ```
 
 ## OIDC provider setup

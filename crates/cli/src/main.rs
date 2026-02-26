@@ -1,3 +1,4 @@
+mod cache;
 mod oidc;
 mod output;
 mod sts;
@@ -31,6 +32,8 @@ struct Cli {
 enum Commands {
     /// Authenticate via OIDC and obtain temporary S3 credentials
     Login(LoginArgs),
+    /// Output cached credentials for AWS credential_process
+    CredentialProcess(CredentialProcessArgs),
 }
 
 #[derive(Parser)]
@@ -68,6 +71,13 @@ struct LoginArgs {
     port: u16,
 }
 
+#[derive(Parser)]
+struct CredentialProcessArgs {
+    /// Role ARN to read cached credentials for
+    #[arg(long, env = "SOURCE_ROLE_ARN", default_value = defaults::ROLE_ARN)]
+    role_arn: String,
+}
+
 #[derive(Clone, ValueEnum)]
 enum OutputFormat {
     /// AWS credential_process JSON format
@@ -87,6 +97,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::CredentialProcess(args) => {
+            if let Err(e) = run_credential_process(args) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -101,13 +117,32 @@ async fn run_login(args: LoginArgs) -> Result<(), String> {
 
     // 3. STS credential exchange
     eprintln!("Exchanging token for credentials...");
-    let creds = sts::assume_role(&args.proxy_url, &args.role_arn, &id_token, args.duration).await?;
+    let creds =
+        sts::assume_role(&args.proxy_url, &args.role_arn, &id_token, args.duration).await?;
 
-    // 4. Output
+    // 4. Cache credentials
+    let path = cache::write_credentials(&args.role_arn, &creds)?;
+    eprintln!("Credentials cached to {}", path.display());
+
+    // 5. Output
     match args.format {
         OutputFormat::CredentialProcess => output::print_credential_process(&creds),
         OutputFormat::Env => output::print_env(&creds),
     }
 
+    Ok(())
+}
+
+fn run_credential_process(args: CredentialProcessArgs) -> Result<(), String> {
+    let creds = cache::read_credentials(&args.role_arn)?
+        .ok_or("No cached credentials found. Run 'source-coop login' first.")?;
+
+    if cache::is_expired(&creds)? {
+        return Err(
+            "Cached credentials have expired. Run 'source-coop login' to refresh.".to_string(),
+        );
+    }
+
+    output::print_credential_process(&creds);
     Ok(())
 }
