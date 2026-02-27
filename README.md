@@ -373,6 +373,8 @@ The proxy validates the JWT against the OIDC provider's JWKS, checks the trust p
 openssl rand -base64 32
 ```
 
+**OIDC backend auth:** When `OIDC_PROVIDER_KEY` (PEM-encoded RSA private key) and `OIDC_PROVIDER_ISSUER` (publicly reachable URL) are configured, the proxy acts as its own OIDC identity provider for backend authentication. Buckets configured with `auth_type=oidc` and `oidc_role_arn` in their `backend_options` will have credentials resolved automatically — the proxy mints a self-signed JWT, exchanges it with the cloud provider's STS for temporary credentials, and caches them. This eliminates the need to store long-lived backend credentials. The proxy serves `/.well-known/openid-configuration` and `/.well-known/jwks.json` for cloud provider JWKS discovery. Currently supports AWS S3 only.
+
 ## Multi-Runtime Design
 
 The crate workspace separates concerns so the core logic compiles to both native and WASM targets:

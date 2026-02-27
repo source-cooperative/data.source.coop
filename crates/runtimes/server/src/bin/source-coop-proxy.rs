@@ -66,10 +66,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| TokenKey::from_base64(&v))
         .transpose()?;
 
+    let oidc_provider_key = std::env::var("OIDC_PROVIDER_KEY").ok();
+    let oidc_provider_issuer = std::env::var("OIDC_PROVIDER_ISSUER").ok();
+
     let server_config = ServerConfig {
         listen_addr,
         virtual_host_domain: domain,
         token_key,
+        oidc_provider_key,
+        oidc_provider_issuer,
     };
 
     run(config, sts_config, server_config).await

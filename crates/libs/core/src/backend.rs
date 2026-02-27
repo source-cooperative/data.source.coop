@@ -233,15 +233,22 @@ pub struct S3RequestSigner {
     pub secret_access_key: String,
     pub region: String,
     pub service: String,
+    pub session_token: Option<String>,
 }
 
 impl S3RequestSigner {
-    pub fn new(access_key_id: String, secret_access_key: String, region: String) -> Self {
+    pub fn new(
+        access_key_id: String,
+        secret_access_key: String,
+        region: String,
+        session_token: Option<String>,
+    ) -> Self {
         Self {
             access_key_id,
             secret_access_key,
             region,
             service: "s3".to_string(),
+            session_token,
         }
     }
 
@@ -267,6 +274,10 @@ impl S3RequestSigner {
         // Set required headers
         headers.insert("x-amz-date", amz_date.parse().unwrap());
         headers.insert("x-amz-content-sha256", payload_hash.parse().unwrap());
+
+        if let Some(token) = &self.session_token {
+            headers.insert("x-amz-security-token", token.parse().unwrap());
+        }
 
         let host = url
             .host_str()

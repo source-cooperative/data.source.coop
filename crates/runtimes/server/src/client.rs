@@ -7,6 +7,7 @@ use object_store::ObjectStore;
 use source_coop_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse};
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::BucketConfig;
+use source_coop_oidc_provider::{HttpExchange, OidcProviderError};
 use std::sync::Arc;
 
 /// Backend for the Tokio/Hyper server runtime.
@@ -88,5 +89,37 @@ impl ProxyBackend for ServerBackend {
             headers: resp_headers,
             body: resp_body,
         })
+    }
+}
+
+/// [`HttpExchange`] implementation using reqwest (native).
+#[derive(Clone)]
+pub struct ReqwestHttpExchange {
+    client: reqwest::Client,
+}
+
+impl ReqwestHttpExchange {
+    pub fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+impl HttpExchange for ReqwestHttpExchange {
+    async fn post_form(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> Result<String, OidcProviderError> {
+        let resp = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+
+        resp.text()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
     }
 }

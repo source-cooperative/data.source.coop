@@ -16,6 +16,7 @@
 
 use crate::backend::{hash_payload, ProxyBackend, S3RequestSigner, UNSIGNED_PAYLOAD};
 use crate::error::ProxyError;
+use crate::oidc_backend::{NoOidcAuth, OidcBackendAuth};
 use crate::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use crate::response_body::ProxyResponseBody;
 use crate::s3::pagination::{self, paginate};
@@ -68,9 +69,11 @@ pub struct PendingRequest {
 ///
 /// - `B`: The runtime's backend for object store creation, signing, and raw HTTP
 /// - `R`: The request resolver that decides what action to take for each request
-pub struct ProxyHandler<B, R> {
+/// - `O`: OIDC backend auth for resolving credentials via token exchange
+pub struct ProxyHandler<B, R, O = NoOidcAuth> {
     backend: B,
     resolver: R,
+    oidc_auth: O,
     /// When true, error responses include full internal details (for development).
     /// When false, server-side errors use generic messages.
     debug_errors: bool,
@@ -85,7 +88,29 @@ where
         Self {
             backend,
             resolver,
+            oidc_auth: NoOidcAuth,
             debug_errors: false,
+        }
+    }
+}
+
+impl<B, R, O> ProxyHandler<B, R, O>
+where
+    B: ProxyBackend,
+    R: RequestResolver,
+    O: OidcBackendAuth,
+{
+    /// Set the OIDC backend auth implementation.
+    ///
+    /// When configured, `dispatch_operation` calls `resolve_credentials`
+    /// before accessing the backend — enabling OIDC-based credential
+    /// resolution for buckets with `auth_type=oidc`.
+    pub fn with_oidc_auth<O2: OidcBackendAuth>(self, oidc_auth: O2) -> ProxyHandler<B, R, O2> {
+        ProxyHandler {
+            backend: self.backend,
+            resolver: self.resolver,
+            oidc_auth,
+            debug_errors: self.debug_errors,
         }
     }
 
@@ -244,6 +269,12 @@ where
         list_rewrite: Option<&ListRewrite>,
         request_id: &str,
     ) -> Result<HandlerAction, ProxyError> {
+        // Resolve OIDC credentials if auth_type=oidc is configured.
+        // This injects temporary credentials into a cloned config so the
+        // existing builder pipeline works unmodified.
+        let bucket_config = self.oidc_auth.resolve_credentials(bucket_config).await?;
+        let bucket_config = &bucket_config;
+
         match operation {
             S3Operation::GetObject { key, .. } => {
                 let fwd = self
@@ -534,10 +565,12 @@ fn sign_s3_request(
         Url::parse(url).map_err(|e| ProxyError::Internal(format!("invalid backend URL: {}", e)))?;
 
     if has_credentials {
+        let session_token = config.option("token").map(|s| s.to_string());
         let signer = S3RequestSigner::new(
             access_key.to_string(),
             secret_key.to_string(),
             region.to_string(),
+            session_token,
         );
         signer.sign_request(method, &parsed_url, headers, payload_hash)?;
     } else {

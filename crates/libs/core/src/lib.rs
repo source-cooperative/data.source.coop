@@ -23,6 +23,7 @@ pub mod backend;
 pub mod config;
 pub mod error;
 pub mod maybe_send;
+pub mod oidc_backend;
 pub mod proxy;
 pub mod resolver;
 pub mod response_body;

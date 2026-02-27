@@ -16,7 +16,7 @@ A `ProxyBackend` implementation plus a server binary:
 src/
 ├── lib.rs           Crate root
 ├── body.rs          ProxyResult → Hyper response conversion (Bytes/Empty only)
-├── client.rs        ServerBackend implementing ProxyBackend
+├── client.rs        ServerBackend implementing ProxyBackend, ReqwestHttpExchange
 ├── server.rs        Hyper server setup, two-phase request handling, Forward execution
 └── bin/
     └── source-coop-proxy.rs  CLI binary entry point
@@ -35,6 +35,11 @@ cargo build --release -p source-coop-server
     --config /etc/source-coop-proxy/config.toml \
     --listen 0.0.0.0:9000 \
     --domain s3.local
+
+# Enable OIDC backend auth (exchange self-signed JWTs for cloud credentials)
+OIDC_PROVIDER_KEY="$(cat private_key.pem)" \
+OIDC_PROVIDER_ISSUER="https://data.example.com" \
+./target/release/source-coop-proxy --config config.toml
 
 # Environment variable for log level
 RUST_LOG=source_coop=debug ./target/release/source-coop-proxy --config config.toml

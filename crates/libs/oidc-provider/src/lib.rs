@@ -12,6 +12,7 @@
 //! [`HttpExchange`] trait so that each runtime (reqwest, Fetch API, etc.)
 //! can provide its own implementation.
 
+pub mod backend_auth;
 pub mod cache;
 pub mod discovery;
 pub mod exchange;

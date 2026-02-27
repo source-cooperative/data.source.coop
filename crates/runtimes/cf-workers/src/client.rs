@@ -16,6 +16,7 @@ use source_coop_core::backend::{
 };
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::BucketConfig;
+use source_coop_oidc_provider::{HttpExchange, OidcProviderError};
 use std::sync::Arc;
 use worker::{Cache, Fetch};
 
@@ -226,4 +227,28 @@ pub fn extract_response_headers(ws_headers: &web_sys::Headers) -> HeaderMap {
         }
     }
     resp_headers
+}
+
+/// [`HttpExchange`] implementation using reqwest on WASM (wraps `web_sys::fetch`).
+#[derive(Clone)]
+pub struct FetchHttpExchange;
+
+impl HttpExchange for FetchHttpExchange {
+    async fn post_form(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> Result<String, OidcProviderError> {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+
+        resp.text()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
+    }
 }

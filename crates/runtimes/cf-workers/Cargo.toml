@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 source-coop-core = { workspace = true, features = ["axum"] }
 source-coop-sts.workspace = true
+source-coop-oidc-provider.workspace = true
 source-coop-api.workspace = true
 axum = { workspace = true, features = ["json"] }
 bytes.workspace = true

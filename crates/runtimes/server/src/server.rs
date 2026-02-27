@@ -1,6 +1,6 @@
 //! HTTP server using axum, wiring everything together.
 
-use crate::client::ServerBackend;
+use crate::client::{ReqwestHttpExchange, ServerBackend};
 use axum::body::Body;
 use axum::extract::State;
 use axum::response::Response;
@@ -15,6 +15,9 @@ use source_coop_core::proxy::{
 };
 use source_coop_core::resolver::DefaultResolver;
 use source_coop_core::sealed_token::TokenKey;
+use source_coop_oidc_provider::backend_auth::MaybeOidcAuth;
+use source_coop_oidc_provider::jwt::JwtSigner;
+use source_coop_oidc_provider::OidcCredentialProvider;
 use source_coop_sts::{try_handle_sts, JwksCache};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -29,6 +32,10 @@ pub struct ServerConfig {
     pub virtual_host_domain: Option<String>,
     /// Optional AES-256-GCM key for self-contained encrypted session tokens.
     pub token_key: Option<TokenKey>,
+    /// PEM-encoded RSA private key for OIDC provider (minting JWTs for backend auth).
+    pub oidc_provider_key: Option<String>,
+    /// Issuer URL for the OIDC provider (must be publicly reachable for JWKS discovery).
+    pub oidc_provider_issuer: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -37,16 +44,27 @@ impl Default for ServerConfig {
             listen_addr: ([0, 0, 0, 0], 8080).into(),
             virtual_host_domain: None,
             token_key: None,
+            oidc_provider_key: None,
+            oidc_provider_issuer: None,
         }
     }
 }
 
+type OidcAuth = MaybeOidcAuth<ReqwestHttpExchange>;
+
 struct AppState<P: ConfigProvider> {
-    handler: ProxyHandler<ServerBackend, DefaultResolver<P>>,
+    handler: ProxyHandler<ServerBackend, DefaultResolver<P>, OidcAuth>,
     reqwest_client: reqwest::Client,
     sts_config: P,
     jwks_cache: JwksCache,
     token_key: Option<TokenKey>,
+    /// OIDC discovery data (issuer + signer), set when OIDC provider is configured.
+    oidc_discovery: Option<OidcDiscovery>,
+}
+
+struct OidcDiscovery {
+    issuer: String,
+    signer: JwtSigner,
 }
 
 /// Run the S3 proxy server.
@@ -82,7 +100,31 @@ where
     let jwks_cache = JwksCache::new(reqwest_client.clone(), Duration::from_secs(900));
     let token_key = server_config.token_key;
     let resolver = DefaultResolver::new(config, server_config.virtual_host_domain, token_key.clone());
-    let handler = ProxyHandler::new(backend, resolver);
+
+    // Build OIDC provider if both key and issuer are configured.
+    let (oidc_auth, oidc_discovery) = match (
+        &server_config.oidc_provider_key,
+        &server_config.oidc_provider_issuer,
+    ) {
+        (Some(key_pem), Some(issuer)) => {
+            let signer = JwtSigner::from_pem(key_pem, "proxy-key-1".into(), 300)
+                .map_err(|e| format!("failed to create OIDC JWT signer: {e}"))?;
+            let http = ReqwestHttpExchange::new(reqwest_client.clone());
+            let provider =
+                OidcCredentialProvider::new(signer.clone(), http, issuer.clone(), "sts.amazonaws.com".into());
+            let auth = MaybeOidcAuth::Enabled(
+                source_coop_oidc_provider::backend_auth::AwsOidcBackendAuth::new(provider),
+            );
+            let discovery = OidcDiscovery {
+                issuer: issuer.clone(),
+                signer,
+            };
+            (auth, Some(discovery))
+        }
+        _ => (MaybeOidcAuth::Disabled, None),
+    };
+
+    let handler = ProxyHandler::new(backend, resolver).with_oidc_auth(oidc_auth);
 
     let state = Arc::new(AppState {
         handler,
@@ -90,6 +132,7 @@ where
         sts_config,
         jwks_cache,
         token_key,
+        oidc_discovery,
     });
 
     let app = Router::new()
@@ -119,6 +162,31 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
         uri = %uri,
         "incoming request"
     );
+
+    // Intercept OIDC discovery endpoints when OIDC provider is configured.
+    if let Some(disc) = &state.oidc_discovery {
+        if path == "/.well-known/openid-configuration" {
+            let jwks_uri = format!("{}/.well-known/jwks.json", disc.issuer);
+            let json =
+                source_coop_oidc_provider::discovery::openid_configuration_json(&disc.issuer, &jwks_uri);
+            return Response::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(Body::from(json))
+                .unwrap();
+        }
+        if path == "/.well-known/jwks.json" {
+            let json = source_coop_oidc_provider::jwks::jwks_json(
+                disc.signer.public_key(),
+                disc.signer.kid(),
+            );
+            return Response::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(Body::from(json))
+                .unwrap();
+        }
+    }
 
     // Intercept STS AssumeRoleWithWebIdentity requests
     if let Some((status, xml)) =

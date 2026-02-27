@@ -25,7 +25,7 @@ Client request
 src/
 ├── lib.rs              Worker entry point, two-phase request handling, Forward execution
 ├── body.rs             ProxyResult → worker::Response conversion (Bytes/Empty only)
-├── client.rs           WorkerBackend implementing ProxyBackend, WorkerHttpClient
+├── client.rs           WorkerBackend implementing ProxyBackend, WorkerHttpClient, FetchHttpExchange
 ├── fetch_connector.rs  FetchConnector/FetchService bridging object_store to Fetch API (LIST only)
 └── tracing_layer.rs    Minimal tracing subscriber for Workers console_log
 ```
@@ -41,6 +41,10 @@ Reads bucket configuration from the `PROXY_CONFIG` environment variable. Uses `D
 [vars]
 PROXY_CONFIG = '{"buckets":[...],"roles":[...],"credentials":[...]}'
 VIRTUAL_HOST_DOMAIN = "s3.example.com"  # optional, for virtual-hosted style
+OIDC_PROVIDER_ISSUER = "https://data.example.com"  # optional, for OIDC backend auth
+
+# Set via wrangler secret (PEM-encoded RSA private key):
+# wrangler secret put OIDC_PROVIDER_KEY
 ```
 
 ### Source Cooperative Mode
@@ -58,9 +62,11 @@ Authentication is handled by the Source API permissions endpoint rather than the
 # wrangler.toml
 [vars]
 SOURCE_API_URL = "https://api.source.coop"
+OIDC_PROVIDER_ISSUER = "https://data.source.coop"  # optional, for OIDC backend auth
 
 # Set via wrangler secret:
 # wrangler secret put SOURCE_API_KEY
+# wrangler secret put OIDC_PROVIDER_KEY  # optional, PEM-encoded RSA private key
 ```
 
 ### Implementing a Custom Resolver
