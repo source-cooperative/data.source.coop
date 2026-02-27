@@ -86,9 +86,9 @@ fn generate_random_id(len: usize) -> String {
 }
 
 fn generate_session_token() -> String {
-    // Real AWS session tokens are much longer; this is a simplified version
-    let id = Uuid::new_v4();
-    format!("FwoGZXIvYXdzE{}", id.to_string().replace('-', ""))
+    use base64::Engine;
+    let bytes: Vec<u8> = (0..32).map(|_| rand_byte()).collect();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 
 /// Simple random byte using UUID as entropy source (avoids extra deps).

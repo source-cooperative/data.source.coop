@@ -29,6 +29,7 @@ hex.workspace = true
 url.workspace = true
 hmac.workspace = true
 sha2.workspace = true
+aes-gcm.workspace = true
 quick-xml.workspace = true
 tracing.workspace = true
 object_store.workspace = true

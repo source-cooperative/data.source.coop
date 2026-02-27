@@ -43,6 +43,7 @@ src/
 ├── error.rs         ProxyError with S3-compatible error codes
 ├── proxy.rs         ProxyHandler — the main request handler
 ├── resolver.rs      RequestResolver trait, ResolvedAction, DefaultResolver
+├── sealed_token.rs  AES-256-GCM encrypted session tokens (TokenKey)
 ├── s3/
 │   ├── request.rs   Parse incoming HTTP → S3Operation enum
 │   ├── response.rs  Serialize S3 XML responses
@@ -66,7 +67,11 @@ use source_coop_core::config::static_file::StaticProvider;
 
 let backend = MyBackend::new();
 let config = StaticProvider::from_file("config.toml")?;
-let resolver = DefaultResolver::new(config, Some("s3.example.com".into()));
+// Optional: enable sealed session tokens for STS temporary credentials.
+// When set, TemporaryCredentials are AES-256-GCM encrypted into the session
+// token itself — no server-side storage needed (critical for stateless runtimes).
+let token_key = None; // or Some(TokenKey::from_base64(&key_b64)?)
+let resolver = DefaultResolver::new(config, Some("s3.example.com".into()), token_key);
 
 let handler = ProxyHandler::new(backend, resolver);
 
@@ -105,6 +110,16 @@ let handler = ProxyHandler::new(backend, MyResolver::new());
 ```
 
 See `crates/libs/source-coop/src/resolver.rs` for a real-world example that maps a `/{account}/{repo}/{key}` namespace to dynamically-resolved S3 backends with external API authorization.
+
+## Sealed Session Tokens
+
+The `sealed_token` module provides stateless temporary credential verification using AES-256-GCM. When a `TokenKey` is configured (via `SESSION_TOKEN_KEY`), the STS handler encrypts the full `TemporaryCredentials` struct into the session token itself. On subsequent requests, `resolve_identity()` decrypts the token to recover the credentials — no server-side storage or config lookup is needed.
+
+This is critical for stateless runtimes like Cloudflare Workers where in-memory state does not persist across invocations. The `TokenKey` wraps `Arc<Aes256Gcm>` and is `Clone + Send + Sync`.
+
+Token format: `base64url(nonce[12] || ciphertext + tag)`. Expired tokens return `Err(ExpiredCredentials)`. Tokens that fail decryption (wrong key, not a sealed token) return `Ok(None)` allowing graceful rejection.
+
+Note: because scopes are sealed into the token at mint time, changes to a role's `allowed_scopes` in config only take effect for newly minted credentials — existing tokens retain the scopes they were issued with.
 
 ## Feature Flags
 

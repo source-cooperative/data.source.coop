@@ -14,6 +14,7 @@ use source_coop_core::proxy::{
     ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
 };
 use source_coop_core::resolver::DefaultResolver;
+use source_coop_core::sealed_token::TokenKey;
 use source_coop_sts::{try_handle_sts, JwksCache};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -26,6 +27,8 @@ pub struct ServerConfig {
     /// The base domain for virtual-hosted-style requests (e.g., "s3.example.com").
     /// If set, requests to `{bucket}.s3.example.com` use virtual-hosted style.
     pub virtual_host_domain: Option<String>,
+    /// Optional AES-256-GCM key for self-contained encrypted session tokens.
+    pub token_key: Option<TokenKey>,
 }
 
 impl Default for ServerConfig {
@@ -33,6 +36,7 @@ impl Default for ServerConfig {
         Self {
             listen_addr: ([0, 0, 0, 0], 8080).into(),
             virtual_host_domain: None,
+            token_key: None,
         }
     }
 }
@@ -42,6 +46,7 @@ struct AppState<P: ConfigProvider> {
     reqwest_client: reqwest::Client,
     sts_config: P,
     jwks_cache: JwksCache,
+    token_key: Option<TokenKey>,
 }
 
 /// Run the S3 proxy server.
@@ -59,6 +64,7 @@ struct AppState<P: ConfigProvider> {
 ///     let server_config = ServerConfig {
 ///         listen_addr: ([0, 0, 0, 0], 8080).into(),
 ///         virtual_host_domain: Some("s3.local".to_string()),
+///         ..Default::default()
 ///     };
 ///     run(config, sts_config, server_config).await.unwrap();
 /// }
@@ -74,7 +80,8 @@ where
     let backend = ServerBackend::new();
     let reqwest_client = backend.client().clone();
     let jwks_cache = JwksCache::new(reqwest_client.clone(), Duration::from_secs(900));
-    let resolver = DefaultResolver::new(config, server_config.virtual_host_domain);
+    let token_key = server_config.token_key;
+    let resolver = DefaultResolver::new(config, server_config.virtual_host_domain, token_key.clone());
     let handler = ProxyHandler::new(backend, resolver);
 
     let state = Arc::new(AppState {
@@ -82,6 +89,7 @@ where
         reqwest_client,
         sts_config,
         jwks_cache,
+        token_key,
     });
 
     let app = Router::new()
@@ -114,7 +122,7 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
 
     // Intercept STS AssumeRoleWithWebIdentity requests
     if let Some((status, xml)) =
-        try_handle_sts(query.as_deref(), &state.sts_config, &state.jwks_cache).await
+        try_handle_sts(query.as_deref(), &state.sts_config, &state.jwks_cache, state.token_key.as_ref()).await
     {
         return Response::builder()
             .status(status)

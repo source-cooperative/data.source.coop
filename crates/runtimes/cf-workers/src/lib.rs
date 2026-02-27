@@ -36,6 +36,7 @@ use source_coop_core::proxy::{
     ForwardRequest, HandlerAction, ProxyHandler, RESPONSE_HEADER_ALLOWLIST,
 };
 use source_coop_core::resolver::{DefaultResolver, RequestResolver};
+use source_coop_core::sealed_token::TokenKey;
 use source_coop_sts::{try_handle_sts, try_parse_sts_request, JwksCache};
 
 use axum::body::Body;
@@ -67,6 +68,7 @@ async fn fetch(
 
     let reqwest_client = reqwest::Client::new();
     let jwks_cache = JwksCache::new(reqwest_client.clone(), std::time::Duration::from_secs(900));
+    let token_key = load_token_key(&env)?;
 
     let (parts, worker_body) = req.into_parts();
     let body = Body::new(worker_body);
@@ -80,7 +82,9 @@ async fn fetch(
     // STS uses STS_CONFIG (falling back to PROXY_CONFIG) for role definitions.
     if try_parse_sts_request(query.as_deref()).is_some() {
         let config = load_sts_config(&env)?;
-        if let Some((status, xml)) = try_handle_sts(query.as_deref(), &config, &jwks_cache).await {
+        if let Some((status, xml)) =
+            try_handle_sts(query.as_deref(), &config, &jwks_cache, token_key.as_ref()).await
+        {
             return Ok(Response::builder()
                 .status(status)
                 .header("content-type", "application/xml")
@@ -132,7 +136,7 @@ async fn fetch(
 
     let config = load_static_config(&env)?;
     let virtual_host_domain = env.var("VIRTUAL_HOST_DOMAIN").ok().map(|v| v.to_string());
-    let resolver = DefaultResolver::new(config, virtual_host_domain);
+    let resolver = DefaultResolver::new(config, virtual_host_domain, token_key);
     let handler = ProxyHandler::new(WorkerBackend, resolver);
 
     Ok(handle_action(
@@ -262,6 +266,18 @@ fn load_config_from_env(env: &Env, var_name: &str) -> Result<StaticProvider> {
 
 fn load_static_config(env: &Env) -> Result<StaticProvider> {
     load_config_from_env(env, "PROXY_CONFIG")
+}
+
+/// Load the optional session token encryption key from the `SESSION_TOKEN_KEY` secret.
+fn load_token_key(env: &Env) -> Result<Option<TokenKey>> {
+    match env.secret("SESSION_TOKEN_KEY") {
+        Ok(val) => {
+            let key = TokenKey::from_base64(&val.to_string())
+                .map_err(|e| worker::Error::RustError(e.to_string()))?;
+            Ok(Some(key))
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 /// Load STS config: tries STS_CONFIG first, falls back to PROXY_CONFIG.

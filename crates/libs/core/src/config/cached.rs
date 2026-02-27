@@ -22,7 +22,7 @@
 
 use crate::config::ConfigProvider;
 use crate::error::ProxyError;
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -43,8 +43,6 @@ impl<T: Clone> CacheEntry<T> {
 /// Wraps a [`ConfigProvider`] with in-memory TTL-based caching.
 ///
 /// Thread-safe via `RwLock`. Cache entries are evicted lazily on access.
-/// Temporary credential storage is delegated directly to the underlying
-/// provider (no caching for writes).
 #[derive(Clone)]
 pub struct CachedProvider<P> {
     inner: P,
@@ -200,23 +198,5 @@ impl<P: ConfigProvider> ConfigProvider for CachedProvider<P> {
         }
 
         Ok(result)
-    }
-
-    /// Temporary credential writes bypass the cache and go directly to
-    /// the underlying provider.
-    async fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> Result<(), ProxyError> {
-        self.inner.store_temporary_credential(cred).await
-    }
-
-    /// Temporary credential reads also bypass the cache — they're already
-    /// short-lived and we don't want stale session tokens.
-    async fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> Result<Option<TemporaryCredentials>, ProxyError> {
-        self.inner.get_temporary_credential(access_key_id).await
     }
 }

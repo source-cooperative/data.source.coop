@@ -18,13 +18,8 @@
 //!
 //! CREATE TABLE proxy_credentials (
 //!     access_key_id TEXT PRIMARY KEY,
-//!     credential_type TEXT NOT NULL, -- 'long_lived' or 'temporary'
-//!     config_json JSONB NOT NULL,
-//!     expires_at TIMESTAMPTZ
+//!     config_json JSONB NOT NULL
 //! );
-//!
-//! CREATE INDEX idx_credentials_expires ON proxy_credentials(expires_at)
-//!     WHERE credential_type = 'temporary';
 //! ```
 //!
 //! # Example
@@ -39,7 +34,7 @@
 
 use crate::config::ConfigProvider;
 use crate::error::ProxyError;
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -119,46 +114,4 @@ impl ConfigProvider for PostgresProvider {
         .transpose()
     }
 
-    async fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> Result<(), ProxyError> {
-        let json = serde_json::to_value(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
-
-        sqlx::query(
-            "INSERT INTO proxy_credentials (access_key_id, credential_type, config_json, expires_at)
-             VALUES ($1, 'temporary', $2, $3)
-             ON CONFLICT (access_key_id) DO UPDATE
-             SET config_json = EXCLUDED.config_json, expires_at = EXCLUDED.expires_at",
-        )
-        .bind(&cred.access_key_id)
-        .bind(&json)
-        .bind(cred.expiration)
-        .execute(self.pool.as_ref())
-        .await
-        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> Result<Option<TemporaryCredentials>, ProxyError> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
-            "SELECT config_json FROM proxy_credentials
-             WHERE access_key_id = $1
-               AND credential_type = 'temporary'
-               AND expires_at > NOW()",
-        )
-        .bind(access_key_id)
-        .fetch_optional(self.pool.as_ref())
-        .await
-        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        row.map(|(json,)| {
-            serde_json::from_value(json).map_err(|e| ProxyError::ConfigError(e.to_string()))
-        })
-        .transpose()
-    }
 }

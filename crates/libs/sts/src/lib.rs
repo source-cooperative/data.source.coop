@@ -27,19 +27,33 @@ use request::StsRequest;
 pub use responses::{build_sts_error_response, build_sts_response};
 use source_coop_core::config::ConfigProvider;
 use source_coop_core::error::ProxyError;
+use source_coop_core::sealed_token::TokenKey;
 use source_coop_core::types::TemporaryCredentials;
 
 /// Try to handle an STS request. Returns `Some((status, xml))` if the query
 /// contained an STS action, or `None` if it wasn't an STS request.
+///
+/// Requires a `TokenKey` — minted credentials are encrypted into the session
+/// token itself, so no server-side storage is needed. If `token_key` is `None`
+/// and an STS request arrives, an error response is returned.
 pub async fn try_handle_sts<C: ConfigProvider>(
     query: Option<&str>,
     config: &C,
     jwks_cache: &JwksCache,
+    token_key: Option<&TokenKey>,
 ) -> Option<(u16, String)> {
     let sts_result = try_parse_sts_request(query)?;
     let (status, xml) = match sts_result {
         Ok(sts_request) => {
-            match assume_role_with_web_identity(config, &sts_request, "STSPRXY", jwks_cache).await {
+            let Some(key) = token_key else {
+                tracing::error!("STS request received but SESSION_TOKEN_KEY is not configured");
+                return Some(build_sts_error_response(&ProxyError::ConfigError(
+                    "STS requires SESSION_TOKEN_KEY to be configured".into(),
+                )));
+            };
+            match assume_role_with_web_identity(config, &sts_request, "STSPRXY", jwks_cache, key)
+                .await
+            {
                 Ok(creds) => build_sts_response(&creds),
                 Err(e) => {
                     tracing::warn!(error = %e, "STS request failed");
@@ -76,11 +90,15 @@ fn jwt_decode_unverified(
 }
 
 /// Validate an OIDC token and mint temporary credentials.
+///
+/// Credentials are encrypted into a self-contained session token via `token_key`.
+/// No server-side credential storage is needed.
 pub async fn assume_role_with_web_identity<C: ConfigProvider>(
     config: &C,
     sts_request: &StsRequest,
     key_prefix: &str,
     jwks_cache: &JwksCache,
+    token_key: &TokenKey,
 ) -> Result<TemporaryCredentials, ProxyError> {
     // Look up the role
     let role = config
@@ -146,10 +164,10 @@ pub async fn assume_role_with_web_identity<C: ConfigProvider>(
         .unwrap_or(3600)
         .clamp(MIN_SESSION_DURATION_SECS, role.max_session_duration_secs);
 
-    let creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix, &claims);
+    let mut creds = sts::mint_temporary_credentials(&role, subject, duration, key_prefix, &claims);
 
-    // Store them
-    config.store_temporary_credential(&creds).await?;
+    // Encrypt the full credentials into the session token — stateless, no storage needed
+    creds.session_token = token_key.seal(&creds)?;
 
     Ok(creds)
 }

@@ -208,8 +208,6 @@ impl ConfigProvider for MyProvider {
     async fn get_bucket(&self, name: &str) -> Result<Option<BucketConfig>, ProxyError> { todo!() }
     async fn get_role(&self, role_id: &str) -> Result<Option<RoleConfig>, ProxyError> { todo!() }
     async fn get_credential(&self, access_key_id: &str) -> Result<Option<StoredCredential>, ProxyError> { todo!() }
-    async fn store_temporary_credential(&self, cred: &TemporaryCredentials) -> Result<(), ProxyError> { todo!() }
-    async fn get_temporary_credential(&self, access_key_id: &str) -> Result<Option<TemporaryCredentials>, ProxyError> { todo!() }
 }
 ```
 
@@ -276,7 +274,7 @@ provider.invalidate_all();
 provider.invalidate_bucket("my-bucket");
 ```
 
-The cache is thread-safe (`RwLock`-based) and evicts entries lazily on access. Temporary credential writes and reads always go directly to the underlying provider — they're already short-lived and caching them would create security issues with stale session tokens.
+The cache is thread-safe (`RwLock`-based) and evicts entries lazily on access.
 
 ### Roles
 
@@ -368,6 +366,12 @@ jobs:
 ```
 
 The proxy validates the JWT against the OIDC provider's JWKS, checks the trust policy (issuer, audience, subject conditions with glob matching), and mints temporary credentials scoped to the role's allowed buckets/prefixes.
+
+**Sealed session tokens:** When `SESSION_TOKEN_KEY` is configured (a base64-encoded 32-byte AES-256-GCM key), the full `TemporaryCredentials` are encrypted into the session token itself. The proxy decrypts the token on each subsequent request — no server-side credential storage is needed. This is required for stateless runtimes like Cloudflare Workers. Generate a key with:
+
+```bash
+openssl rand -base64 32
+```
 
 ## Multi-Runtime Design
 

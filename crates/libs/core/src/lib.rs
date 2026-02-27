@@ -27,4 +27,5 @@ pub mod proxy;
 pub mod resolver;
 pub mod response_body;
 pub mod s3;
+pub mod sealed_token;
 pub mod types;

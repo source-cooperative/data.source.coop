@@ -6,7 +6,7 @@ name = "source-coop-proxy"
 command = "cargo install worker-build && worker-build --release"
 
 [vars]
-SOURCE_API_URL = "https://staging.source.coop"
+# SOURCE_API_URL = "https://staging.source.coop"
 VIRTUAL_HOST_DOMAIN = "s3.local"
 
 # For production, consider storing this in Workers KV or a Secrets binding.
@@ -104,4 +104,9 @@ trusted_oidc_issuers = [
 [[vars.STS_CONFIG.roles.allowed_scopes]]
 actions = ["get_object", "head_object", "put_object", "list_bucket"] 
 bucket = "{sub}" # this user
+prefixes = [] 
+
+[[vars.STS_CONFIG.roles.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"]
+bucket = "private-uploads"
 prefixes = []

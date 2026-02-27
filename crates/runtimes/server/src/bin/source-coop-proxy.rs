@@ -5,6 +5,7 @@
 
 use source_coop_core::config::cached::CachedProvider;
 use source_coop_core::config::static_file::StaticProvider;
+use source_coop_core::sealed_token::TokenKey;
 use source_coop_server::server::{run, ServerConfig};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -60,9 +61,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = CachedProvider::new(base_config, Duration::from_secs(60));
     let sts_config = CachedProvider::new(sts_base, Duration::from_secs(60));
 
+    let token_key = std::env::var("SESSION_TOKEN_KEY")
+        .ok()
+        .map(|v| TokenKey::from_base64(&v))
+        .transpose()?;
+
     let server_config = ServerConfig {
         listen_addr,
         virtual_host_domain: domain,
+        token_key,
     };
 
     run(config, sts_config, server_config).await

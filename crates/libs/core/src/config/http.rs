@@ -10,8 +10,6 @@
 //! - `GET /buckets/{name}` → `Option<BucketConfig>`
 //! - `GET /roles/{role_id}` → `Option<RoleConfig>`
 //! - `GET /credentials/{access_key_id}` → `Option<StoredCredential>`
-//! - `POST /temporary-credentials` → stores a `TemporaryCredentials`
-//! - `GET /temporary-credentials/{access_key_id}` → `Option<TemporaryCredentials>`
 //!
 //! # Example
 //!
@@ -26,7 +24,7 @@
 
 use crate::config::ConfigProvider;
 use crate::error::ProxyError;
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use std::sync::Arc;
 
 /// Validate that a value is safe to use as a single URL path segment.
@@ -158,47 +156,6 @@ impl ConfigProvider for HttpProvider {
             .map_err(|e| ProxyError::ConfigError(e.to_string()))
     }
 
-    async fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> Result<(), ProxyError> {
-        let mut req = self
-            .inner
-            .client
-            .post(format!("{}/temporary-credentials", self.inner.base_url))
-            .json(cred);
-
-        if let Some(ref auth) = self.inner.auth_header {
-            req = req.header("authorization", auth);
-        }
-
-        req.send()
-            .await
-            .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> Result<Option<TemporaryCredentials>, ProxyError> {
-        validate_path_segment(access_key_id, "access key ID")?;
-        let resp = self
-            .request(&format!("/temporary-credentials/{}", access_key_id))
-            .send()
-            .await
-            .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        if resp.status().as_u16() == 404 {
-            return Ok(None);
-        }
-
-        resp.json()
-            .await
-            .map(Some)
-            .map_err(|e| ProxyError::ConfigError(e.to_string()))
-    }
 }
 
 #[cfg(test)]

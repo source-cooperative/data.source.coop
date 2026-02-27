@@ -1,14 +1,13 @@
 //! Static file-based configuration provider.
 //!
-//! Loads configuration from a TOML or JSON file at startup. Stores temporary
-//! credentials in memory. Suitable for simple deployments or development.
+//! Loads configuration from a TOML or JSON file at startup.
+//! Suitable for simple deployments or development.
 
 use crate::config::ConfigProvider;
 use crate::error::ProxyError;
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Full configuration file structure.
 #[derive(Debug, Clone, Deserialize)]
@@ -48,8 +47,6 @@ pub struct StaticProvider {
 
 struct StaticProviderInner {
     config: StaticConfig,
-    /// In-memory store for temporary credentials.
-    temp_creds: RwLock<HashMap<String, TemporaryCredentials>>,
 }
 
 impl StaticProvider {
@@ -80,10 +77,7 @@ impl StaticProvider {
 
     pub fn from_config(config: StaticConfig) -> Self {
         Self {
-            inner: Arc::new(StaticProviderInner {
-                config,
-                temp_creds: RwLock::new(HashMap::new()),
-            }),
+            inner: Arc::new(StaticProviderInner { config }),
         }
     }
 }
@@ -126,43 +120,4 @@ impl ConfigProvider for StaticProvider {
             .cloned())
     }
 
-    async fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> Result<(), ProxyError> {
-        let mut map = self
-            .inner
-            .temp_creds
-            .write()
-            .map_err(|e| ProxyError::Internal(e.to_string()))?;
-
-        // Evict expired entries opportunistically
-        let now = chrono::Utc::now();
-        map.retain(|_, v| v.expiration > now);
-
-        map.insert(cred.access_key_id.clone(), cred.clone());
-        Ok(())
-    }
-
-    async fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> Result<Option<TemporaryCredentials>, ProxyError> {
-        let map = self
-            .inner
-            .temp_creds
-            .read()
-            .map_err(|e| ProxyError::Internal(e.to_string()))?;
-
-        let cred = map.get(access_key_id).cloned();
-
-        // Check expiration
-        if let Some(ref c) = cred {
-            if c.expiration <= chrono::Utc::now() {
-                return Ok(None);
-            }
-        }
-
-        Ok(cred)
-    }
 }

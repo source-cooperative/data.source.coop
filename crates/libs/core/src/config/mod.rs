@@ -42,7 +42,7 @@ pub mod postgres;
 
 use crate::error::ProxyError;
 use crate::maybe_send::{MaybeSend, MaybeSync};
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use std::future::Future;
 
 /// Trait for retrieving proxy configuration from a backend store.
@@ -52,6 +52,9 @@ use std::future::Future;
 /// Methods use [`MaybeSend`] bounds — on native targets this resolves to `Send`
 /// (required by Tokio's task spawning), on WASM it's a no-op (allowing `!Send`
 /// JS interop types).
+///
+/// Temporary credentials are not stored via this trait — they are encrypted
+/// into self-contained session tokens using [`TokenKey`](crate::sealed_token::TokenKey).
 pub trait ConfigProvider: Clone + MaybeSend + MaybeSync + 'static {
     fn list_buckets(
         &self,
@@ -72,16 +75,4 @@ pub trait ConfigProvider: Clone + MaybeSend + MaybeSync + 'static {
         &self,
         access_key_id: &str,
     ) -> impl Future<Output = Result<Option<StoredCredential>, ProxyError>> + MaybeSend;
-
-    /// Store a temporary credential (minted by the STS API).
-    fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> impl Future<Output = Result<(), ProxyError>> + MaybeSend;
-
-    /// Look up a temporary credential by its access key ID.
-    fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> impl Future<Output = Result<Option<TemporaryCredentials>, ProxyError>> + MaybeSend;
 }

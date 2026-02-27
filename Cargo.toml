@@ -45,6 +45,7 @@ url = "2"
 hmac = "0.12"
 sha2 = { version = "0.10", features = ["oid"] }
 rsa = "0.9"
+aes-gcm = "0.10"
 
 # Object store
 object_store = { version = "0.12", default-features = false, features = ["aws"] }

@@ -11,6 +11,7 @@ use crate::error::ProxyError;
 use crate::maybe_send::{MaybeSend, MaybeSync};
 use crate::s3::request::{self, HostStyle};
 use crate::s3::response::{BucketEntry, BucketList, BucketOwner, ListAllMyBucketsResult};
+use crate::sealed_token::TokenKey;
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
@@ -65,13 +66,19 @@ pub struct ListRewrite {
 pub struct DefaultResolver<P> {
     config: P,
     virtual_host_domain: Option<String>,
+    token_key: Option<TokenKey>,
 }
 
 impl<P> DefaultResolver<P> {
-    pub fn new(config: P, virtual_host_domain: Option<String>) -> Self {
+    pub fn new(
+        config: P,
+        virtual_host_domain: Option<String>,
+        token_key: Option<TokenKey>,
+    ) -> Self {
         Self {
             config,
             virtual_host_domain,
+            token_key,
         }
     }
 }
@@ -138,9 +145,15 @@ impl<P: ConfigProvider> RequestResolver for DefaultResolver<P> {
         );
 
         // Authenticate
-        let identity =
-            auth::resolve_identity(method, path, query.unwrap_or(""), headers, &self.config)
-                .await?;
+        let identity = auth::resolve_identity(
+            method,
+            path,
+            query.unwrap_or(""),
+            headers,
+            &self.config,
+            self.token_key.as_ref(),
+        )
+        .await?;
         tracing::debug!(identity = ?identity, "resolved identity");
 
         // Authorize

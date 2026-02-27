@@ -12,7 +12,6 @@
 //! | `BUCKET#{name}` | `CONFIG` | BucketConfig fields |
 //! | `ROLE#{role_id}` | `CONFIG` | RoleConfig fields |
 //! | `CRED#{access_key_id}` | `LONG_LIVED` | StoredCredential fields |
-//! | `CRED#{access_key_id}` | `TEMPORARY` | TemporaryCredentials fields (with TTL) |
 //!
 //! # Example
 //!
@@ -27,7 +26,7 @@
 
 use crate::config::ConfigProvider;
 use crate::error::ProxyError;
-use crate::types::{BucketConfig, RoleConfig, StoredCredential, TemporaryCredentials};
+use crate::types::{BucketConfig, RoleConfig, StoredCredential};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use std::sync::Arc;
@@ -168,64 +167,4 @@ impl ConfigProvider for DynamoDbProvider {
         }
     }
 
-    async fn store_temporary_credential(
-        &self,
-        cred: &TemporaryCredentials,
-    ) -> Result<(), ProxyError> {
-        let json = serde_json::to_string(cred).map_err(|e| ProxyError::Internal(e.to_string()))?;
-
-        // TTL for DynamoDB auto-expiry
-        let ttl_epoch = cred.expiration.timestamp();
-
-        self.client()
-            .put_item()
-            .table_name(self.table())
-            .item(
-                "PK",
-                AttributeValue::S(format!("CRED#{}", cred.access_key_id)),
-            )
-            .item("SK", AttributeValue::S("TEMPORARY".into()))
-            .item("config_json", AttributeValue::S(json))
-            .item("ttl", AttributeValue::N(ttl_epoch.to_string()))
-            .send()
-            .await
-            .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn get_temporary_credential(
-        &self,
-        access_key_id: &str,
-    ) -> Result<Option<TemporaryCredentials>, ProxyError> {
-        let result = self
-            .client()
-            .get_item()
-            .table_name(self.table())
-            .key("PK", AttributeValue::S(format!("CRED#{}", access_key_id)))
-            .key("SK", AttributeValue::S("TEMPORARY".into()))
-            .send()
-            .await
-            .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-        match result.item() {
-            Some(item) => {
-                let json_val = item
-                    .get("config_json")
-                    .and_then(|v| v.as_s().ok())
-                    .ok_or_else(|| ProxyError::ConfigError("missing config_json".into()))?;
-
-                let cred: TemporaryCredentials = serde_json::from_str(json_val)
-                    .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-
-                // Check expiration
-                if cred.expiration <= chrono::Utc::now() {
-                    return Ok(None);
-                }
-
-                Ok(Some(cred))
-            }
-            None => Ok(None),
-        }
-    }
 }
