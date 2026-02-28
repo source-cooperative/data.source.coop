@@ -23,7 +23,7 @@ thiserror.workspace = true
 chrono.workspace = true
 quick-xml.workspace = true
 url.workspace = true
-object_store = { version = "0.12", default-features = false, features = ["aws"] }
+object_store = { workspace = true }
 futures.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
