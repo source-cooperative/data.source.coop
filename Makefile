@@ -2,6 +2,8 @@
 
 check:
 	cargo check
+
+check-wasm:
 	cargo check -p source-coop-cf-workers --target wasm32-unknown-unknown
 
 fmt:
@@ -29,7 +31,7 @@ build-cli:
 build-cli-staging:
 	cargo build -p source-coop-cli --no-default-features --features staging
 
-ci-fast: fmt clippy check
+ci-fast: fmt clippy check-wasm
 ci: ci-fast test
 
 setup:
