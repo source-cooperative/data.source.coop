@@ -79,7 +79,7 @@ impl<H: HttpExchange> OidcBackendAuth for AwsOidcBackendAuth<H> {
 /// When disabled and a bucket specifies `auth_type=oidc`, a `ConfigError`
 /// is returned (same as `NoOidcAuth`).
 pub enum MaybeOidcAuth<H: HttpExchange> {
-    Enabled(AwsOidcBackendAuth<H>),
+    Enabled(Box<AwsOidcBackendAuth<H>>),
     Disabled,
 }
 

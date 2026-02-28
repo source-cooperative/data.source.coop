@@ -117,9 +117,9 @@ where
                 issuer.clone(),
                 "sts.amazonaws.com".into(),
             );
-            let auth = MaybeOidcAuth::Enabled(
+            let auth = MaybeOidcAuth::Enabled(Box::new(
                 source_coop_oidc_provider::backend_auth::AwsOidcBackendAuth::new(provider),
-            );
+            ));
             let discovery = OidcDiscovery {
                 issuer: issuer.clone(),
                 signer,
