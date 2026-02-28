@@ -1,4 +1,4 @@
-.PHONY: check test run\:server run\:workers
+.PHONY: check test run\:server run\:workers ci setup
 
 check:
 	cargo check
@@ -28,3 +28,8 @@ build\:cli:
 
 build\:cli\:staging:
 	cargo build -p source-coop-cli --no-default-features --features staging
+
+ci: fmt clippy check test
+
+setup:
+	git config core.hooksPath .githooks
