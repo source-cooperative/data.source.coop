@@ -23,16 +23,13 @@ impl<H: HttpExchange> AwsOidcBackendAuth<H> {
         Self { provider }
     }
 
-    async fn resolve_aws(
-        &self,
-        config: &BucketConfig,
-    ) -> Result<BucketConfig, ProxyError> {
+    async fn resolve_aws(&self, config: &BucketConfig) -> Result<BucketConfig, ProxyError> {
         let role_arn = config.option("oidc_role_arn").ok_or_else(|| {
-            ProxyError::ConfigError("auth_type=oidc requires 'oidc_role_arn' in backend_options".into())
+            ProxyError::ConfigError(
+                "auth_type=oidc requires 'oidc_role_arn' in backend_options".into(),
+            )
         })?;
-        let subject = config
-            .option("oidc_subject")
-            .unwrap_or("s3-proxy");
+        let subject = config.option("oidc_subject").unwrap_or("s3-proxy");
 
         let exchange = AwsExchange::new(role_arn.to_string());
         let creds = self
@@ -61,10 +58,7 @@ impl<H: HttpExchange> AwsOidcBackendAuth<H> {
 }
 
 impl<H: HttpExchange> OidcBackendAuth for AwsOidcBackendAuth<H> {
-    async fn resolve_credentials(
-        &self,
-        config: &BucketConfig,
-    ) -> Result<BucketConfig, ProxyError> {
+    async fn resolve_credentials(&self, config: &BucketConfig) -> Result<BucketConfig, ProxyError> {
         if config.option("auth_type") != Some("oidc") {
             return Ok(config.clone());
         }
@@ -90,10 +84,7 @@ pub enum MaybeOidcAuth<H: HttpExchange> {
 }
 
 impl<H: HttpExchange> OidcBackendAuth for MaybeOidcAuth<H> {
-    async fn resolve_credentials(
-        &self,
-        config: &BucketConfig,
-    ) -> Result<BucketConfig, ProxyError> {
+    async fn resolve_credentials(&self, config: &BucketConfig) -> Result<BucketConfig, ProxyError> {
         match self {
             MaybeOidcAuth::Enabled(auth) => auth.resolve_credentials(config).await,
             MaybeOidcAuth::Disabled => {
@@ -167,7 +158,10 @@ mod tests {
         let mut opts = HashMap::new();
         opts.insert("auth_type".into(), "oidc".into());
         opts.insert("oidc_role_arn".into(), "arn:aws:iam::123:role/Test".into());
-        opts.insert("endpoint".into(), "https://s3.us-east-1.amazonaws.com".into());
+        opts.insert(
+            "endpoint".into(),
+            "https://s3.us-east-1.amazonaws.com".into(),
+        );
         opts.insert("bucket_name".into(), "my-bucket".into());
         opts.insert("region".into(), "us-east-1".into());
         BucketConfig {
@@ -184,7 +178,10 @@ mod tests {
         let mut opts = HashMap::new();
         opts.insert("access_key_id".into(), "AKID_STATIC".into());
         opts.insert("secret_access_key".into(), "secret_static".into());
-        opts.insert("endpoint".into(), "https://s3.us-east-1.amazonaws.com".into());
+        opts.insert(
+            "endpoint".into(),
+            "https://s3.us-east-1.amazonaws.com".into(),
+        );
         opts.insert("bucket_name".into(), "my-bucket".into());
         BucketConfig {
             name: "test".into(),

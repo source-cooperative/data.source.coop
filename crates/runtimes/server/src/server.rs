@@ -99,7 +99,8 @@ where
     let reqwest_client = backend.client().clone();
     let jwks_cache = JwksCache::new(reqwest_client.clone(), Duration::from_secs(900));
     let token_key = server_config.token_key;
-    let resolver = DefaultResolver::new(config, server_config.virtual_host_domain, token_key.clone());
+    let resolver =
+        DefaultResolver::new(config, server_config.virtual_host_domain, token_key.clone());
 
     // Build OIDC provider if both key and issuer are configured.
     let (oidc_auth, oidc_discovery) = match (
@@ -110,8 +111,12 @@ where
             let signer = JwtSigner::from_pem(key_pem, "proxy-key-1".into(), 300)
                 .map_err(|e| format!("failed to create OIDC JWT signer: {e}"))?;
             let http = ReqwestHttpExchange::new(reqwest_client.clone());
-            let provider =
-                OidcCredentialProvider::new(signer.clone(), http, issuer.clone(), "sts.amazonaws.com".into());
+            let provider = OidcCredentialProvider::new(
+                signer.clone(),
+                http,
+                issuer.clone(),
+                "sts.amazonaws.com".into(),
+            );
             let auth = MaybeOidcAuth::Enabled(
                 source_coop_oidc_provider::backend_auth::AwsOidcBackendAuth::new(provider),
             );
@@ -167,8 +172,10 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
     if let Some(disc) = &state.oidc_discovery {
         if path == "/.well-known/openid-configuration" {
             let jwks_uri = format!("{}/.well-known/jwks.json", disc.issuer);
-            let json =
-                source_coop_oidc_provider::discovery::openid_configuration_json(&disc.issuer, &jwks_uri);
+            let json = source_coop_oidc_provider::discovery::openid_configuration_json(
+                &disc.issuer,
+                &jwks_uri,
+            );
             return Response::builder()
                 .status(200)
                 .header("content-type", "application/json")
@@ -189,8 +196,13 @@ async fn request_handler<P: ConfigProvider + Send + Sync + 'static>(
     }
 
     // Intercept STS AssumeRoleWithWebIdentity requests
-    if let Some((status, xml)) =
-        try_handle_sts(query.as_deref(), &state.sts_config, &state.jwks_cache, state.token_key.as_ref()).await
+    if let Some((status, xml)) = try_handle_sts(
+        query.as_deref(),
+        &state.sts_config,
+        &state.jwks_cache,
+        state.token_key.as_ref(),
+    )
+    .await
     {
         return Response::builder()
             .status(status)

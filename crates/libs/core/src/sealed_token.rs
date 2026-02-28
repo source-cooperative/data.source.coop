@@ -24,7 +24,9 @@ impl TokenKey {
     pub fn from_base64(encoded: &str) -> Result<Self, ProxyError> {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded.trim())
-            .map_err(|e| ProxyError::ConfigError(format!("invalid SESSION_TOKEN_KEY base64: {e}")))?;
+            .map_err(|e| {
+                ProxyError::ConfigError(format!("invalid SESSION_TOKEN_KEY base64: {e}"))
+            })?;
         if bytes.len() != 32 {
             return Err(ProxyError::ConfigError(format!(
                 "SESSION_TOKEN_KEY must be 32 bytes, got {}",
@@ -40,8 +42,8 @@ impl TokenKey {
     ///
     /// Format: `base64url(nonce[12] || ciphertext+tag)`
     pub fn seal(&self, creds: &TemporaryCredentials) -> Result<String, ProxyError> {
-        let plaintext =
-            serde_json::to_vec(creds).map_err(|e| ProxyError::Internal(format!("seal json: {e}")))?;
+        let plaintext = serde_json::to_vec(creds)
+            .map_err(|e| ProxyError::Internal(format!("seal json: {e}")))?;
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ciphertext = self
             .0
@@ -144,7 +146,10 @@ mod tests {
     #[test]
     fn non_sealed_token_returns_none() {
         let key = make_key();
-        assert!(key.unseal("FwoGZXIvYXdzEBYaDGFiY2RlZjEyMzQ1Ng").unwrap().is_none());
+        assert!(key
+            .unseal("FwoGZXIvYXdzEBYaDGFiY2RlZjEyMzQ1Ng")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

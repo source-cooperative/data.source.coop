@@ -119,5 +119,4 @@ impl ConfigProvider for StaticProvider {
             .find(|c| c.access_key_id == access_key_id)
             .cloned())
     }
-
 }

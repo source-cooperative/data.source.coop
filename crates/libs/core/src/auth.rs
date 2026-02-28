@@ -220,10 +220,7 @@ pub async fn resolve_identity<C: ConfigProvider>(
 
         match key.unseal(session_token)? {
             Some(creds) => {
-                if !constant_time_eq(
-                    sig.access_key_id.as_bytes(),
-                    creds.access_key_id.as_bytes(),
-                ) {
+                if !constant_time_eq(sig.access_key_id.as_bytes(), creds.access_key_id.as_bytes()) {
                     tracing::warn!(
                         header_key = %sig.access_key_id,
                         sealed_key = %creds.access_key_id,
@@ -248,9 +245,7 @@ pub async fn resolve_identity<C: ConfigProvider>(
                     scopes = ?creds.allowed_scopes,
                     "sealed token identity resolved"
                 );
-                return Ok(ResolvedIdentity::Temporary {
-                    credentials: creds,
-                });
+                return Ok(ResolvedIdentity::Temporary { credentials: creds });
             }
             None => {
                 tracing::warn!("session token could not be unsealed (decryption failed)");
@@ -626,10 +621,8 @@ mod tests {
 
         run(async {
             let key_bytes = [0x42u8; 32];
-            let encoded = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                key_bytes,
-            );
+            let encoded =
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_bytes);
             let token_key = TokenKey::from_base64(&encoded).unwrap();
             let config = MockConfig::empty();
 
@@ -688,10 +681,8 @@ mod tests {
 
         run(async {
             let key_bytes = [0x42u8; 32];
-            let encoded = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                key_bytes,
-            );
+            let encoded =
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_bytes);
             let token_key = TokenKey::from_base64(&encoded).unwrap();
 
             let real_secret = "TempSecretKey1234567890EXAMPLE000000000000";
@@ -911,14 +902,8 @@ mod tests {
         headers.insert("authorization", auth.parse().unwrap());
 
         // Verify with UNSORTED query (as it arrives from the raw URL)
-        let sig = parse_sigv4_auth(
-            headers
-                .get("authorization")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-        )
-        .unwrap();
+        let sig =
+            parse_sigv4_auth(headers.get("authorization").unwrap().to_str().unwrap()).unwrap();
 
         let result = verify_sigv4_signature(
             &http::Method::GET,
@@ -931,7 +916,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result, "S3 ListObjects with security token and host:port must verify");
+        assert!(
+            result,
+            "S3 ListObjects with security token and host:port must verify"
+        );
     }
 
     // ── Sealed token tests ──────────────────────────────────────────
@@ -943,10 +931,8 @@ mod tests {
 
         run(async {
             let key_bytes = [0x42u8; 32];
-            let encoded = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                key_bytes,
-            );
+            let encoded =
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_bytes);
             let token_key = TokenKey::from_base64(&encoded).unwrap();
 
             let secret = "TempSecretKey1234567890EXAMPLE000000000000";

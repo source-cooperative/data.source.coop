@@ -33,10 +33,7 @@ pub trait OidcBackendAuth: MaybeSend + 'static {
 pub struct NoOidcAuth;
 
 impl OidcBackendAuth for NoOidcAuth {
-    async fn resolve_credentials(
-        &self,
-        config: &BucketConfig,
-    ) -> Result<BucketConfig, ProxyError> {
+    async fn resolve_credentials(&self, config: &BucketConfig) -> Result<BucketConfig, ProxyError> {
         if config.option("auth_type") == Some("oidc") {
             return Err(ProxyError::ConfigError(
                 "bucket requires auth_type=oidc but no OIDC provider is configured".into(),

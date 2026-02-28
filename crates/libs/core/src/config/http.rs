@@ -155,7 +155,6 @@ impl ConfigProvider for HttpProvider {
             .map(Some)
             .map_err(|e| ProxyError::ConfigError(e.to_string()))
     }
-
 }
 
 #[cfg(test)]

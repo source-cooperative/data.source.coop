@@ -117,8 +117,7 @@ async fn run_login(args: LoginArgs) -> Result<(), String> {
 
     // 3. STS credential exchange
     eprintln!("Exchanging token for credentials...");
-    let creds =
-        sts::assume_role(&args.proxy_url, &args.role_arn, &id_token, args.duration).await?;
+    let creds = sts::assume_role(&args.proxy_url, &args.role_arn, &id_token, args.duration).await?;
 
     // 4. Cache credentials
     let path = cache::write_credentials(&args.role_arn, &creds)?;

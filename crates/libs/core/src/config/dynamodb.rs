@@ -166,5 +166,4 @@ impl ConfigProvider for DynamoDbProvider {
             None => Ok(None),
         }
     }
-
 }

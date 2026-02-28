@@ -113,5 +113,4 @@ impl ConfigProvider for PostgresProvider {
         })
         .transpose()
     }
-
 }
