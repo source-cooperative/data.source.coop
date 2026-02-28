@@ -48,7 +48,7 @@ rsa = "0.9"
 aes-gcm = "0.10"
 
 # Object store
-object_store = { version = "0.12", default-features = false, features = ["aws"] }
+object_store = { version = "0.13.1", default-features = false, features = ["aws"] }
 futures = "0.3"
 
 # XML
