@@ -76,5 +76,3 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build server
         run: cargo build -p source-coop-server
-      - name: Build CLI
-        run: cargo build -p source-coop-cli

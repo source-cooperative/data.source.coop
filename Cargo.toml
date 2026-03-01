@@ -6,7 +6,6 @@ members = [
     "crates/libs/api",
     "crates/runtimes/server",
     "crates/runtimes/cf-workers",
-    "crates/cli",
 ]
 # Worker crate is excluded from default builds because it contains !Send
 # WASM types that only compile correctly for wasm32 targets. Build it
@@ -17,7 +16,6 @@ default-members = [
     "crates/libs/oidc-provider",
     "crates/libs/api",
     "crates/runtimes/server",
-    "crates/cli",
 ]
 resolver = "2"
 
