@@ -35,6 +35,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
 
+      - uses: actions/configure-pages@v5
+        id: pages
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         working-directory: docs
@@ -42,6 +45,8 @@ jobs:
       - name: Build docs
         run: pnpm docs:build
         working-directory: docs
+        env:
+          VITEPRESS_BASE: ${{ steps.pages.outputs.base_path && format('{0}/', steps.pages.outputs.base_path) || '/' }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

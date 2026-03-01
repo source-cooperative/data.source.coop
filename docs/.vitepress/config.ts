@@ -99,6 +99,7 @@ const adminSidebar = [
 
 export default withMermaid(
   defineConfig({
+    base: (process.env.VITEPRESS_BASE as `/${string}/` | undefined) ?? "/",
     title: "Source Data Proxy",
     description: "Multi-runtime S3 gateway proxy in Rust",
 
