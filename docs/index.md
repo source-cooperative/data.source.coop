@@ -5,6 +5,10 @@ hero:
   name: Source Data Proxy
   text: Multi-runtime S3 gateway proxy
   tagline: A Radiant Earth project. Stream S3-compatible requests to backend object stores with authentication, authorization, and zero-copy passthrough.
+  image:
+    light: /prism-light.svg
+    dark: /prism-dark.svg
+    alt: Prism diagram — diverse inputs converge through the proxy into a unified interface
   actions:
     - theme: brand
       text: User Guide
