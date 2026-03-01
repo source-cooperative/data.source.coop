@@ -9,9 +9,9 @@ The proxy configuration defines three things:
 ```mermaid
 flowchart TD
     Config["Proxy Configuration"]
-    Config --> Buckets["Buckets\n(virtual names → backends)"]
-    Config --> Roles["Roles\n(OIDC trust policies)"]
-    Config --> Creds["Credentials\n(static access keys)"]
+    Config --> Buckets["Buckets<br>(virtual names → backends)"]
+    Config --> Roles["Roles<br>(OIDC trust policies)"]
+    Config --> Creds["Credentials<br>(static access keys)"]
 
     Roles -- "allowed_scopes" --> Buckets
     Creds -- "allowed_scopes" --> Buckets

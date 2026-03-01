@@ -4,8 +4,9 @@ The Source Data Proxy provides S3-compatible access to data stored across multip
 
 ## Getting Started
 
-1. **[Authentication](./authentication)** — How to authenticate and obtain credentials
-2. **[Client Usage](./client-usage)** — Using aws-cli, boto3, curl, and other S3 clients
+1. **[Endpoints](./endpoints)** — Which endpoint to use (global vs. regional)
+2. **[Authentication](./authentication)** — How to authenticate and obtain credentials
+3. **[Client Usage](./client-usage)** — Using aws-cli, boto3, curl, and other S3 clients
 
 ## Quick Example
 

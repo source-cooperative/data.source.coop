@@ -35,15 +35,15 @@ features:
 
 ```mermaid
 flowchart LR
-    Clients["S3 Clients\n(aws-cli, boto3, SDKs)"]
+    Clients["S3 Clients<br>(aws-cli, boto3, SDKs)"]
 
     subgraph Proxy["source-coop-proxy"]
-        Auth["Auth\n(STS, OIDC, SigV4)"]
-        Core["Core\n(Proxy Handler)"]
-        Config["Config\n(Static, HTTP, DynamoDB, Postgres)"]
+        Auth["Auth<br>(STS, OIDC, SigV4)"]
+        Core["Core<br>(Proxy Handler)"]
+        Config["Config<br>(Static, HTTP, DynamoDB, Postgres)"]
     end
 
-    Backend["Backend Stores\n(AWS S3, MinIO, R2, Azure, GCS)"]
+    Backend["Backend Stores<br>(AWS S3, MinIO, R2, Azure, GCS)"]
 
     Clients <--> Proxy
     Proxy <--> Backend

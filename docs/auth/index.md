@@ -9,10 +9,10 @@ The Source Data Proxy has two distinct authentication concerns:
 flowchart LR
     Client["S3 Client"]
     Proxy["Data Proxy"]
-    Backend["Object Store\n(S3, Azure, GCS)"]
+    Backend["Object Store<br>(S3, Azure, GCS)"]
 
     Client -- "SigV4, STS/OIDC" --> Proxy
-    Proxy -- "Presigned URLs,\nOIDC Exchange,\nor Static Credentials" --> Backend
+    Proxy -- "Presigned URLs,<br>OIDC Exchange,<br>or Static Credentials" --> Backend
 ```
 
 ## Client Authentication

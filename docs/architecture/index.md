@@ -6,17 +6,17 @@ The Source Data Proxy is an S3-compliant gateway that sits between clients and b
 
 ```mermaid
 flowchart LR
-    Clients["S3 Clients\n(aws-cli, boto3, SDKs)"]
+    Clients["S3 Clients<br>(aws-cli, boto3, SDKs)"]
 
     subgraph Proxy["source-coop-proxy"]
-        Resolver["Request Resolver\n(parse, auth, authorize)"]
-        Handler["Proxy Handler\n(dispatch operations)"]
-        Backend["Proxy Backend\n(runtime-specific I/O)"]
+        Resolver["Request Resolver<br>(parse, auth, authorize)"]
+        Handler["Proxy Handler<br>(dispatch operations)"]
+        Backend["Proxy Backend<br>(runtime-specific I/O)"]
     end
 
-    Config["Config Provider\n(Static, HTTP, DynamoDB, Postgres)"]
-    OIDC["OIDC Providers\n(Auth0, GitHub, Keycloak)"]
-    Stores["Object Stores\n(S3, MinIO, R2, Azure, GCS)"]
+    Config["Config Provider<br>(Static, HTTP, DynamoDB, Postgres)"]
+    OIDC["OIDC Providers<br>(Auth0, GitHub, Keycloak)"]
+    Stores["Object Stores<br>(S3, MinIO, R2, Azure, GCS)"]
 
     Clients <--> Resolver
     Resolver <--> Config

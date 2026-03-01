@@ -115,6 +115,7 @@ export default withMermaid(
             text: "User Guide",
             items: [
               { text: "Overview", link: "/guide/" },
+              { text: "Endpoints", link: "/guide/endpoints" },
               { text: "Authentication", link: "/guide/authentication" },
               { text: "Client Usage", link: "/guide/client-usage" },
             ],
