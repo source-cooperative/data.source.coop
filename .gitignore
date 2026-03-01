@@ -3,3 +3,6 @@ scripts/task_definition.json
 target
 .wrangler
 .env*
+node_modules
+docs/.vitepress/cache
+docs/.vitepress/dist
