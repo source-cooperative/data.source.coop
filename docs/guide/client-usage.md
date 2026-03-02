@@ -24,7 +24,7 @@ Add a profile to `~/.aws/config` to avoid specifying the endpoint every time:
 
 ```ini
 [profile source-coop]
-credential_process = source-coop credential-process
+credential_process = source-coop creds
 endpoint_url = https://data.source.coop
 ```
 

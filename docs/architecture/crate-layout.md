@@ -83,7 +83,7 @@ Source Cooperative-specific resolver and API client:
 Command-line tool for OIDC authentication:
 - Browser-based OAuth2 Authorization Code + PKCE flow
 - `credential_process` integration with AWS SDKs
-- Credential caching in `~/.source-coop/credentials/`
+- Credential caching in OS keyring (with file fallback)
 
 ## Dependency Flow
 

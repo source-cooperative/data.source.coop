@@ -38,7 +38,12 @@ The `source-coop` CLI handles the OIDC flow for you. It opens your browser, auth
 **Install the CLI:**
 
 ```bash
-cargo install --path crates/cli
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/source-cooperative/source-coop-cli/releases/latest/download/source-coop-cli-installer.sh | sh
+
+# Or from source
+cargo install --git https://github.com/source-cooperative/source-coop-cli
 ```
 
 **Log in:**
@@ -47,7 +52,7 @@ cargo install --path crates/cli
 source-coop login
 ```
 
-This opens your browser to authenticate. Once complete, credentials are cached locally.
+This opens your browser to authenticate. Once complete, credentials are cached in your OS keyring.
 
 ### AWS Profile Integration
 
@@ -55,16 +60,8 @@ Set up an AWS profile to use the proxy seamlessly with standard AWS tools:
 
 ```ini
 [profile source-coop]
-credential_process = source-coop credential-process
+credential_process = source-coop creds
 endpoint_url = https://data.source.coop
-```
-
-For local development, override the proxy URL:
-
-```ini
-[profile sc-local]
-credential_process = source-coop credential-process --proxy-url http://localhost:8787
-endpoint_url = http://localhost:8787
 ```
 
 Then use AWS tools normally — credentials are obtained and refreshed automatically:
@@ -85,33 +82,34 @@ source-coop login --role-arn admin-role
 
 ```ini
 [profile sc-reader]
-credential_process = source-coop credential-process --role-arn reader-role
+credential_process = source-coop creds --role-arn reader-role
 endpoint_url = https://data.source.coop
 
 [profile sc-admin]
-credential_process = source-coop credential-process --role-arn admin-role
+credential_process = source-coop creds --role-arn admin-role
 endpoint_url = https://data.source.coop
 ```
 
 ### CLI Options
 
-| Flag | Env Var | Default | Description |
-|------|---------|---------|-------------|
-| `--issuer` | `SOURCE_OIDC_ISSUER` | `https://auth.source.coop` | OIDC issuer URL |
-| `--client-id` | `SOURCE_OIDC_CLIENT_ID` | (built-in) | OAuth2 client ID |
-| `--proxy-url` | `SOURCE_PROXY_URL` | `https://data.source.coop` | Proxy URL for STS |
-| `--role-arn` | `SOURCE_ROLE_ARN` | `source-coop-user` | Role ARN to assume |
-| `--format` | | `credential-process` | Output: `credential-process` or `env` |
-| `--duration` | | (role default) | Session duration in seconds |
-| `--scope` | | `openid` | OAuth2 scopes |
-| `--port` | | `0` (random) | Local callback server port |
+| Flag          | Env Var                 | Default                    | Description                           |
+| ------------- | ----------------------- | -------------------------- | ------------------------------------- |
+| `--issuer`    | `SOURCE_OIDC_ISSUER`    | `https://auth.source.coop` | OIDC issuer URL                       |
+| `--client-id` | `SOURCE_OIDC_CLIENT_ID` | (built-in)                 | OAuth2 client ID                      |
+| `--proxy-url` | `SOURCE_PROXY_URL`      | `https://data.source.coop` | Proxy URL for STS                     |
+| `--role-arn`  | `SOURCE_ROLE_ARN`       | `source-coop-user`         | Role ARN to assume                    |
+| `--format`    |                         | `credential-process`       | Output: `credential-process` or `env` |
+| `--duration`  |                         | (role default)             | Session duration in seconds           |
+| `--scope`     |                         | `openid`                   | OAuth2 scopes                         |
+| `--port`      |                         | `0` (random)               | Local callback server port            |
+| `--no-cache`  |                         |                            | Skip caching credentials              |
 
 ### Direct STS Exchange
 
-For CI/CD pipelines and scripts, the CLI can output credentials as environment variables using `--format env`:
+After logging in, you can export cached credentials as environment variables:
 
 ```bash
-eval $(source-coop login --format env)
+eval $(source-coop creds --format env)
 
 # Credentials are now exported — use any S3 client
 aws s3 cp ./data.csv s3://deploy-bundles/data.csv \

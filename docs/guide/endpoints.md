@@ -60,12 +60,12 @@ Set up profiles for both global and regional access:
 ```ini
 # For general use (laptop, CI/CD outside AWS)
 [profile source-coop]
-credential_process = source-coop credential-process
+credential_process = source-coop creds
 endpoint_url = https://data.source.coop
 
 # For workloads in us-west-2
 [profile source-coop-usw2]
-credential_process = source-coop credential-process
+credential_process = source-coop creds
 endpoint_url = https://us-west-2.data.source.coop
 ```
 
