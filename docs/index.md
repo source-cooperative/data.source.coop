@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: Source Data Proxy
-  text: Multi-runtime S3 gateway proxy
-  tagline: A Radiant Earth project. Stream S3-compatible requests to backend object stores with authentication, authorization, and zero-copy passthrough.
+  text: A multi-runtime S3 gateway proxy with authentication, authorization, and zero-copy passthrough.
+  tagline: 'Built for reuse. the Source Data Proxy is the backend API powering <a href="https://source.coop">source.coop</a>'
   actions:
     - theme: brand
       text: User Guide
@@ -33,15 +33,15 @@ features:
 
 ## Why a Proxy?
 
-Source Cooperative hosts open data from researchers and organizations around the world. That data lives on object storage — but object storage alone doesn't solve the problems that come with making data truly accessible.
+[Source Cooperative](https://source.coop) hosts open data from researchers and organizations around the world. That data lives on object storage — but object storage alone doesn't solve the problems that come with making data truly accessible.
 
 ### One URL, any backend
 
-A dataset might start on AWS S3, move to Cloudflare R2 to reduce egress costs, or get mirrored across providers for redundancy. The proxy gives every data product a stable URL (`data.source.coop/{account}/{dataset}/...`) regardless of where the bytes actually live. Backend migrations are invisible to consumers — no broken links, no client reconfiguration.
+A dataset might start on AWS S3, move to Cloudflare R2 to reduce egress costs, or get mirrored across providers for redundancy. The proxy gives every data product a stable URL (`data.source.coop/{virtual-bucket}...`) regardless of where the bytes actually live. Backend migrations are invisible to consumers — no broken links, no client reconfiguration.
 
 ### Native S3 compatibility
 
-Rather than inventing a new API, the proxy speaks the S3 protocol. This means the entire ecosystem of existing tools — `aws-cli`, `boto3`, DuckDB, the Rust `object_store` crate, GDAL, and hundreds of others — works out of the box. Users don't install a custom client or learn a new SDK. They just set an endpoint URL.
+Rather than inventing a new API, the proxy speaks the S3 protocol. This means the entire ecosystem of existing tools — `aws-cli`, `boto3`, DuckDB, the Rust `object_store` crate, the Python `obstore` module, GDAL, and hundreds of others — work out of the box. Users don't install a custom client or learn a new SDK. They just set an endpoint URL.
 
 ### Metered access
 
@@ -77,3 +77,13 @@ flowchart LR
 ```
 
 The proxy sits between S3-compatible clients and backend object stores. It authenticates incoming requests, authorizes them against configured scopes, and forwards them to the appropriate backend using presigned URLs for zero-copy streaming.
+
+## Get Started
+
+### Access data on Source Cooperative
+
+The [User Guide](/guide/) covers how to interact with Source Cooperative's hosted data proxy at `data.source.coop` — browsing datasets, authenticating, and using standard S3 clients to read and write data.
+
+### Build your own data proxy
+
+The [Administration](/getting-started/) section covers how to deploy and configure the Source Data Proxy for your own project — setting up backends, defining buckets and roles, configuring authentication, and extending the proxy with custom resolvers and providers.

@@ -157,10 +157,57 @@
 }
 
 /* Hero heading on homepage */
-.VPHero .name,
-.VPHero .text {
+.VPHero .name {
   font-family: var(--vp-font-family-heading) !important;
   letter-spacing: -0.03em;
+}
+
+/* Hero text — subtitle size (matches default tagline sizing) */
+.VPHero .text {
+  font-family: var(--vp-font-family-base) !important;
+  font-size: 18px !important;
+  line-height: 28px !important;
+  font-weight: 500 !important;
+  letter-spacing: normal !important;
+  color: var(--vp-c-text-2);
+}
+
+@media (min-width: 640px) {
+  .VPHero .text {
+    font-size: 20px !important;
+    line-height: 32px !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .text {
+    font-size: 24px !important;
+    line-height: 36px !important;
+  }
+}
+
+/* Hero tagline — uppercase label */
+.VPHero .tagline {
+  text-transform: uppercase;
+  font-size: 13px !important;
+  line-height: 20px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.05em !important;
+  color: var(--vp-c-text-3) !important;
+}
+
+@media (min-width: 640px) {
+  .VPHero .tagline {
+    font-size: 14px !important;
+    line-height: 22px !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .tagline {
+    font-size: 14px !important;
+    line-height: 22px !important;
+  }
 }
 
 /* Feature card titles */

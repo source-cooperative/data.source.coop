@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide is for administrators setting up and running the Source Data Proxy. If you're a user looking to access data through an existing proxy, see the [User Guide](/guide/).
+This guide is for administrators setting up and running their own Source Data Proxy. If you're a user looking to access data through an existing proxy, see the [User Guide](/guide/).
 
 The Source Data Proxy is a multi-runtime S3 gateway that proxies requests to backend object stores. This guide gets you running locally in minutes.
 
