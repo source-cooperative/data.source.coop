@@ -55,9 +55,8 @@ secret_access_key = "..."
 
 ### Azure Blob Storage
 
-::: info
-Requires the `azure` feature flag on `source-coop-core`. Enabled by default in the server runtime, not available in CF Workers.
-:::
+> [!NOTE]
+> Requires the `azure` feature flag on `source-coop-core`. Enabled by default in the server runtime, not available in CF Workers.
 
 ```toml
 [buckets.backend_options]
@@ -75,9 +74,8 @@ access_key = "..."
 
 ### Google Cloud Storage
 
-::: info
-Requires the `gcp` feature flag on `source-coop-core`. Enabled by default in the server runtime, not available in CF Workers.
-:::
+> [!NOTE]
+> Requires the `gcp` feature flag on `source-coop-core`. Enabled by default in the server runtime, not available in CF Workers.
 
 ```toml
 [buckets.backend_options]

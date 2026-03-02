@@ -47,9 +47,8 @@ export SESSION_TOKEN_KEY="<base64-encoded-32-byte-key>"
 
 This key must be the same across all instances of the proxy. If you rotate the key, all existing session tokens become invalid — clients will need to re-authenticate.
 
-::: warning
-`SESSION_TOKEN_KEY` is required for the Cloudflare Workers runtime. Without it, temporary credentials from STS cannot be verified on subsequent requests.
-:::
+> [!WARNING]
+> `SESSION_TOKEN_KEY` is required for the Cloudflare Workers runtime. Without it, temporary credentials from STS cannot be verified on subsequent requests.
 
 ## Scope Behavior
 

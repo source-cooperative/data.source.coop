@@ -69,9 +69,8 @@ The Cloudflare Workers WASM runtime:
 - JS `ReadableStream` passthrough for zero-copy streaming
 - Config loading from env vars (`PROXY_CONFIG`)
 
-::: warning
-This crate is excluded from the workspace `default-members` because WASM types are `!Send` and won't compile on native targets. Always build with `--target wasm32-unknown-unknown`.
-:::
+> [!WARNING]
+> This crate is excluded from the workspace `default-members` because WASM types are `!Send` and won't compile on native targets. Always build with `--target wasm32-unknown-unknown`.
 
 ### `source-coop` (lib)
 

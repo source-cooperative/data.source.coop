@@ -4,9 +4,10 @@ The CF Workers runtime deploys the proxy to Cloudflare's edge network. It compil
 
 ## Limitations
 
-- **S3 backends only** — Azure and GCS are not supported on WASM
-- **Static or API config only** — DynamoDB and Postgres providers require Tokio, which is unavailable
-- **`SESSION_TOKEN_KEY` required** — Workers are stateless, so sealed tokens are the only way to persist temporary credentials
+> [!WARNING]
+> - **S3 backends only** — Azure and GCS are not supported on WASM
+> - **Static or API config only** — DynamoDB and Postgres providers require Tokio, which is unavailable
+> - **`SESSION_TOKEN_KEY` required** — Workers are stateless, so sealed tokens are the only way to persist temporary credentials
 
 ## Configuration
 
@@ -65,9 +66,8 @@ cd crates/runtimes/cf-workers
 npx wrangler build
 ```
 
-::: warning
-Always use `--target wasm32-unknown-unknown` when checking or building the CF Workers crate. It is excluded from the workspace `default-members` because WASM types won't compile on native targets.
-:::
+> [!WARNING]
+> Always use `--target wasm32-unknown-unknown` when checking or building the CF Workers crate. It is excluded from the workspace `default-members` because WASM types won't compile on native targets.
 
 ## Development
 

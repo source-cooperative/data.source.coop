@@ -72,9 +72,8 @@ Used for: **LIST, errors, synthetic responses**
 
 For LIST operations, the handler calls `object_store::list_with_delimiter()` via the backend's store, builds S3 `ListObjectsV2` XML from the results, and returns it as a complete response. If a `ListRewrite` is configured, key prefixes are transformed in the XML.
 
-::: info
-LIST returns all results in a single response. `IsTruncated` is always `false`. The proxy does not support S3-style pagination with continuation tokens.
-:::
+> [!NOTE]
+> LIST returns all results in a single response. `IsTruncated` is always `false`. The proxy does not support S3-style pagination with continuation tokens.
 
 ### `NeedsBody(PendingRequest)`
 
@@ -82,9 +81,8 @@ Used for: **CreateMultipartUpload, UploadPart, CompleteMultipartUpload, AbortMul
 
 Multipart operations need the request body (e.g., the XML body for `CompleteMultipartUpload`). The runtime materializes the body, then calls `handler.handle_with_body()`, which signs the request using `S3RequestSigner` and sends it via `backend.send_raw()`.
 
-::: warning
-Multipart uploads are only supported for `backend_type = "s3"`. Non-S3 backends should use single PUT requests (object_store handles chunking internally).
-:::
+> [!WARNING]
+> Multipart uploads are only supported for `backend_type = "s3"`. Non-S3 backends should use single PUT requests (object_store handles chunking internally).
 
 ## Response Header Forwarding
 

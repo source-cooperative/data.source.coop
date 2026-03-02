@@ -113,9 +113,8 @@ When OIDC provider keys are configured, the proxy serves two well-known endpoint
 }
 ```
 
-::: warning
-These endpoints must be publicly accessible. Cloud providers fetch them at JWT validation time to verify signatures. If they are behind a firewall or VPN, credential exchange will fail.
-:::
+> [!WARNING]
+> These endpoints must be publicly accessible. Cloud providers fetch them at JWT validation time to verify signatures. If they are behind a firewall or VPN, credential exchange will fail.
 
 ### The Exchange Flow in Detail
 
@@ -148,9 +147,8 @@ On subsequent requests, cached credentials are reused until they expire.
      --thumbprint-list <thumbprint>
    ```
 
-   ::: tip
-   To get the thumbprint, fetch the TLS certificate chain from your proxy's domain. AWS uses this to verify the HTTPS connection to the JWKS endpoint.
-   :::
+   > [!TIP]
+   > To get the thumbprint, fetch the TLS certificate chain from your proxy's domain. AWS uses this to verify the HTTPS connection to the JWKS endpoint.
 
 2. **Create an IAM Role** with a trust policy that allows the proxy to assume it:
    ```json
@@ -210,9 +208,8 @@ On subsequent requests, cached credentials are reused until they expire.
 
 ### Azure Blob Storage
 
-::: info Planned
-Azure OIDC backend auth is planned but not yet implemented. The proxy currently supports Azure with static credentials only.
-:::
+> [!NOTE]
+> **Planned** — Azure OIDC backend auth is planned but not yet implemented. The proxy currently supports Azure with static credentials only.
 
 **Planned setup:**
 
@@ -223,9 +220,8 @@ Azure OIDC backend auth is planned but not yet implemented. The proxy currently 
 
 ### Google Cloud Storage
 
-::: info Planned
-GCS OIDC backend auth is planned but not yet implemented. The proxy currently supports GCS with static credentials only.
-:::
+> [!NOTE]
+> **Planned** — GCS OIDC backend auth is planned but not yet implemented. The proxy currently supports GCS with static credentials only.
 
 **Planned setup:**
 

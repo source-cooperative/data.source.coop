@@ -23,7 +23,8 @@ backend_type = "s3"
 anonymous_access = true
 ```
 
-Anonymous access only allows `GetObject`, `HeadObject`, and `ListBucket`. Write operations always require authentication.
+> [!NOTE]
+> Anonymous access only allows `GetObject`, `HeadObject`, and `ListBucket`. Write operations always require authentication.
 
 ## Long-Lived Access Keys
 

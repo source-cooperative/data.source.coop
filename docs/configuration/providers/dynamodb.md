@@ -28,6 +28,5 @@ The provider uses a single-table design with partition key (`PK`) and sort key (
 - Serverless deployments where a database server isn't practical
 - High-availability requirements (DynamoDB's built-in replication)
 
-::: tip
-Wrap the DynamoDB provider with [CachedProvider](./cached) to reduce read costs and latency.
-:::
+> [!TIP]
+> Wrap the DynamoDB provider with [CachedProvider](./cached) to reduce read costs and latency.

@@ -97,6 +97,5 @@ flowchart TD
 | EC2 in us-east-1, data in us-west-2 | `data.source.coop` | Cross-region: Cloudflare backbone is faster than cross-region AWS traffic |
 | SageMaker in us-west-2 | `us-west-2.data.source.coop` | Same-region: zero egress for training data |
 
-::: tip
-All endpoints support the same authentication methods and S3 operations. Your credentials work across any endpoint — only the `endpoint_url` changes.
-:::
+> [!TIP]
+> All endpoints support the same authentication methods and S3 operations. Your credentials work across any endpoint — only the `endpoint_url` changes.

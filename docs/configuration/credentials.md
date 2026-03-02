@@ -48,7 +48,8 @@ Long-lived credentials are appropriate for:
 - **Development and testing** environments
 - **Environments without an OIDC provider**
 
-For CI/CD workflows and user-facing applications, prefer [OIDC/STS temporary credentials](/auth/proxy-auth#oidcsts-temporary-credentials) for better security (automatic expiration, no stored secrets).
+> [!TIP]
+> For CI/CD workflows and user-facing applications, prefer [OIDC/STS temporary credentials](/auth/proxy-auth#oidcsts-temporary-credentials) — they expire automatically and avoid storing secrets in config.
 
 ## Disabling Credentials
 

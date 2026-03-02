@@ -104,7 +104,8 @@ Prefix matching follows these rules:
 - If the prefix ends with `/` or is empty: the key must start with the prefix
 - Otherwise: the key must equal the prefix exactly, or start with the prefix followed by `/`
 
-This prevents a prefix like `data` from accidentally matching `data-private/secret.txt`. The prefix `data/` would only match keys under the `data/` directory.
+> [!IMPORTANT]
+> A prefix without a trailing `/` must match exactly or be followed by `/`. This prevents `data` from matching `data-private/secret.txt`. Use `data/` to restrict to that directory.
 
 ## Template Variables
 

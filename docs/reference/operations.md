@@ -38,6 +38,7 @@ These are served when `OIDC_PROVIDER_KEY` and `OIDC_PROVIDER_ISSUER` are configu
 
 ## Limitations
 
-- **LIST returns all results** — `object_store::list_with_delimiter()` fetches all pages internally. `IsTruncated` is always `false`. Continuation tokens and max-keys are not supported.
-- **Multipart is S3 only** — Multipart operations use raw HTTP with `S3RequestSigner` and are gated to `backend_type = "s3"`. Non-S3 backends should use single PUT requests.
-- **DeleteObject does not return confirmation** — The proxy forwards the DELETE and returns the backend's response status.
+> [!WARNING]
+> - **LIST returns all results** — `object_store::list_with_delimiter()` fetches all pages internally. `IsTruncated` is always `false`. Continuation tokens and max-keys are not supported.
+> - **Multipart is S3 only** — Multipart operations use raw HTTP with `S3RequestSigner` and are gated to `backend_type = "s3"`. Non-S3 backends should use single PUT requests.
+> - **DeleteObject does not return confirmation** — The proxy forwards the DELETE and returns the backend's response status.

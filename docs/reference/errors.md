@@ -53,6 +53,5 @@ STS errors follow the AWS STS error format:
 
 ## Error Message Safety
 
-For 5xx errors, the proxy returns generic messages to avoid leaking internal infrastructure details. The full error message is logged server-side but not exposed to clients.
-
-For 4xx errors, the proxy returns descriptive messages to help clients debug authentication and authorization issues.
+> [!NOTE]
+> For 5xx errors, the proxy returns generic messages to avoid leaking internal infrastructure details. The full error is logged server-side but not exposed to clients. For 4xx errors, descriptive messages are returned to help clients debug authentication and authorization issues.

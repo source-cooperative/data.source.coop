@@ -86,7 +86,8 @@ curl https://data.source.coop/public-data/hello.txt
 curl -I https://data.source.coop/public-data/hello.txt
 ```
 
-For authenticated requests, use aws-cli or an SDK that handles SigV4 signing.
+> [!NOTE]
+> Authenticated requests require SigV4 signing. Use aws-cli or an SDK rather than raw curl.
 
 ## Request Styles
 

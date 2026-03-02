@@ -23,6 +23,5 @@ let provider = PostgresProvider::new(pool);
 - Relational data management preferences
 - Complex queries or joins with other application data
 
-::: tip
-Wrap the PostgreSQL provider with [CachedProvider](./cached) to reduce query load and latency.
-:::
+> [!TIP]
+> Wrap the PostgreSQL provider with [CachedProvider](./cached) to reduce query load and latency.
