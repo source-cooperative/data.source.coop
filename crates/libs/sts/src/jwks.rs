@@ -32,11 +32,21 @@ pub struct JwkKey {
 }
 
 /// Fetch JWKS from an OIDC provider's well-known endpoint.
+///
+/// Requires HTTPS issuer URLs per the OIDC specification. HTTP URLs are
+/// rejected to prevent MITM attacks on JWKS discovery.
 pub async fn fetch_jwks(
     client: &reqwest::Client,
     issuer: &str,
 ) -> Result<JwksResponse, ProxyError> {
     let issuer = issuer.trim_end_matches('/');
+
+    if !issuer.starts_with("https://") {
+        return Err(ProxyError::ConfigError(format!(
+            "OIDC issuer must use HTTPS: {}",
+            issuer
+        )));
+    }
 
     // First, try the .well-known/openid-configuration endpoint
     let config_url = format!("{}/.well-known/openid-configuration", issuer);
@@ -200,12 +210,17 @@ pub fn verify_token(
 /// a network round-trip to the provider on every token validation and prevents
 /// DoS via repeated validation attempts.
 ///
+/// Failed fetches are cached with a shorter TTL (`failure_ttl`) to avoid
+/// hammering broken endpoints while still retrying periodically.
+///
 /// Uses `DateTime<Utc>` instead of `std::time::Instant` for WASM compatibility
 /// (`Instant` panics on `wasm32-unknown-unknown`).
 pub struct JwksCache {
     client: reqwest::Client,
     ttl: Duration,
+    failure_ttl: Duration,
     entries: Mutex<HashMap<String, (DateTime<Utc>, JwksResponse)>>,
+    failures: Mutex<HashMap<String, DateTime<Utc>>>,
 }
 
 impl JwksCache {
@@ -214,7 +229,9 @@ impl JwksCache {
         Self {
             client,
             ttl,
+            failure_ttl: Duration::from_secs(30),
             entries: Mutex::new(HashMap::new()),
+            failures: Mutex::new(HashMap::new()),
         }
     }
 
@@ -225,13 +242,39 @@ impl JwksCache {
             return Ok(cached);
         }
 
+        // Check if we recently failed for this issuer
+        {
+            let failures = self.failures.lock().unwrap();
+            if let Some(failed_at) = failures.get(issuer) {
+                let elapsed = Utc::now().signed_duration_since(*failed_at).num_seconds();
+                if elapsed >= 0 && (elapsed as u64) < self.failure_ttl.as_secs() {
+                    return Err(ProxyError::InvalidOidcToken(format!(
+                        "JWKS fetch for '{}' recently failed, retrying after backoff",
+                        issuer
+                    )));
+                }
+            }
+        }
+
         // Cache miss — fetch from the network
-        let jwks = fetch_jwks(&self.client, issuer).await?;
-
-        let mut entries = self.entries.lock().unwrap();
-        entries.insert(issuer.to_string(), (Utc::now(), jwks.clone()));
-
-        Ok(jwks)
+        match fetch_jwks(&self.client, issuer).await {
+            Ok(jwks) => {
+                let mut entries = self.entries.lock().unwrap();
+                entries.insert(issuer.to_string(), (Utc::now(), jwks.clone()));
+                // Clear any failure state on success
+                drop(entries);
+                self.failures.lock().unwrap().remove(issuer);
+                Ok(jwks)
+            }
+            Err(e) => {
+                tracing::warn!(issuer = %issuer, error = %e, "JWKS fetch failed, backing off");
+                self.failures
+                    .lock()
+                    .unwrap()
+                    .insert(issuer.to_string(), Utc::now());
+                Err(e)
+            }
+        }
     }
 
     fn get_cached(&self, issuer: &str) -> Option<JwksResponse> {
