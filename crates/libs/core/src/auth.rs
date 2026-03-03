@@ -142,11 +142,14 @@ pub fn verify_sigv4_signature(
 
     if !matched {
         tracing::warn!(
+            access_key_id = %auth.access_key_id,
+            region = %auth.region,
+            "SigV4 signature mismatch"
+        );
+        tracing::debug!(
             canonical_request = %canonical_request,
             string_to_sign = %string_to_sign,
-            expected_signature = %expected_signature,
-            provided_signature = %auth.signature,
-            "SigV4 signature mismatch — compare canonical_request with client-side (aws --debug)"
+            "SigV4 signature mismatch details — compare canonical_request with client-side (aws --debug)"
         );
     }
 
@@ -248,7 +251,11 @@ pub async fn resolve_identity<C: ConfigProvider>(
                 return Ok(ResolvedIdentity::Temporary { credentials: creds });
             }
             None => {
-                tracing::warn!("session token could not be unsealed (decryption failed)");
+                tracing::warn!(
+                    access_key_id = %sig.access_key_id,
+                    token_len = session_token.len(),
+                    "session token could not be unsealed — possible key mismatch, token corruption, or expired key rotation"
+                );
                 return Err(ProxyError::AccessDenied);
             }
         }
