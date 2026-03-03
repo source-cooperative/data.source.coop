@@ -673,33 +673,39 @@ fn build_list_xml(
 }
 
 /// Apply strip/add prefix rewriting to a key or prefix value.
+///
+/// Works with `&str` slices to avoid intermediate allocations — only allocates
+/// the final `String` once.
 fn rewrite_key(raw: &str, strip_prefix: &str, list_rewrite: Option<&ListRewrite>) -> String {
-    let mut key = raw.to_string();
-
-    // Strip the backend prefix
-    if !strip_prefix.is_empty() {
-        if let Some(stripped) = key.strip_prefix(strip_prefix) {
-            key = stripped.to_string();
-        }
-    }
+    // Strip the backend prefix (borrow from `raw`, no allocation)
+    let key = if !strip_prefix.is_empty() {
+        raw.strip_prefix(strip_prefix).unwrap_or(raw)
+    } else {
+        raw
+    };
 
     // Apply list_rewrite if present
     if let Some(rewrite) = list_rewrite {
-        if !rewrite.strip_prefix.is_empty() {
-            if let Some(stripped) = key.strip_prefix(&rewrite.strip_prefix) {
-                key = stripped.to_string();
-            }
-        }
+        let key = if !rewrite.strip_prefix.is_empty() {
+            key.strip_prefix(rewrite.strip_prefix.as_str())
+                .unwrap_or(key)
+        } else {
+            key
+        };
+
         if !rewrite.add_prefix.is_empty() {
-            if key.is_empty() || key.starts_with('/') {
-                key = format!("{}{}", rewrite.add_prefix, key);
+            // Must allocate for add_prefix — early return
+            return if key.is_empty() || key.starts_with('/') {
+                format!("{}{}", rewrite.add_prefix, key)
             } else {
-                key = format!("{}/{}", rewrite.add_prefix, key);
-            }
+                format!("{}/{}", rewrite.add_prefix, key)
+            };
         }
+
+        return key.to_string();
     }
 
-    key
+    key.to_string()
 }
 
 /// All query parameters needed for a LIST operation, parsed in a single pass.
