@@ -2568,6 +2568,7 @@ dependencies = [
  "base64",
  "chrono",
  "quick-xml 0.37.5",
+ "rand 0.8.5",
  "reqwest",
  "rsa",
  "serde",
@@ -2577,7 +2578,6 @@ dependencies = [
  "thiserror",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]

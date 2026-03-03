@@ -1,8 +1,8 @@
 //! STS credential minting.
 
 use chrono::{Duration, Utc};
+use rand::RngCore;
 use source_coop_core::types::{AccessScope, RoleConfig, TemporaryCredentials};
-use uuid::Uuid;
 
 /// Resolve `{claim_name}` template variables in access scopes against JWT claims.
 ///
@@ -75,8 +75,9 @@ pub fn mint_temporary_credentials(
 
 fn generate_random_id(len: usize) -> String {
     use base64::Engine;
-    let bytes: Vec<u8> = (0..len).map(|_| rand_byte()).collect();
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
+    let mut bytes = vec![0u8; len];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     // Take only alphanumeric chars to match AWS key format
     encoded
         .chars()
@@ -87,14 +88,9 @@ fn generate_random_id(len: usize) -> String {
 
 fn generate_session_token() -> String {
     use base64::Engine;
-    let bytes: Vec<u8> = (0..32).map(|_| rand_byte()).collect();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
-}
-
-/// Simple random byte using UUID as entropy source (avoids extra deps).
-fn rand_byte() -> u8 {
-    let id = Uuid::new_v4();
-    id.as_bytes()[0]
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 #[cfg(test)]
