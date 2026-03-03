@@ -402,26 +402,13 @@ where
     ) -> Result<ProxyResult, ProxyError> {
         let store = self.backend.create_store(config)?;
 
-        // Extract prefix from query string
-        let client_prefix = raw_query
-            .and_then(|q| {
-                url::form_urlencoded::parse(q.as_bytes())
-                    .find(|(k, _)| k == "prefix")
-                    .map(|(_, v)| v.to_string())
-            })
-            .unwrap_or_default();
-
-        // Extract delimiter from query string (default "/")
-        let delimiter = raw_query
-            .and_then(|q| {
-                url::form_urlencoded::parse(q.as_bytes())
-                    .find(|(k, _)| k == "delimiter")
-                    .map(|(_, v)| v.to_string())
-            })
-            .unwrap_or_else(|| "/".to_string());
+        // Parse all query parameters in a single pass
+        let list_params = parse_list_query_params(raw_query);
+        let client_prefix = &list_params.prefix;
+        let delimiter = &list_params.delimiter;
 
         // Build the full prefix including backend_prefix
-        let full_prefix = build_list_prefix(config, &client_prefix);
+        let full_prefix = build_list_prefix(config, client_prefix);
 
         tracing::debug!(
             full_prefix = %full_prefix,
@@ -444,12 +431,12 @@ where
         let bucket_name = &config.name;
         let xml = build_list_xml(
             bucket_name,
-            &client_prefix,
-            &delimiter,
+            client_prefix,
+            delimiter,
             &list_result,
             config,
             list_rewrite,
-            raw_query,
+            &list_params.pagination,
         )?;
 
         let mut resp_headers = HeaderMap::new();
@@ -624,7 +611,7 @@ fn build_list_xml(
     list_result: &object_store::ListResult,
     config: &BucketConfig,
     list_rewrite: Option<&ListRewrite>,
-    raw_query: Option<&str>,
+    params: &pagination::PaginationParams,
 ) -> Result<String, ProxyError> {
     let backend_prefix = config
         .backend_prefix
@@ -666,8 +653,7 @@ fn build_list_xml(
         })
         .collect();
 
-    let params = pagination::parse_pagination_params(raw_query);
-    let page = paginate(contents, common_prefixes, &params)?;
+    let page = paginate(contents, common_prefixes, params)?;
 
     Ok(ListBucketResult {
         xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
@@ -677,8 +663,8 @@ fn build_list_xml(
         max_keys: params.max_keys,
         is_truncated: page.is_truncated,
         key_count: page.contents.len() + page.common_prefixes.len(),
-        start_after: params.start_after,
-        continuation_token: params.continuation_token,
+        start_after: params.start_after.clone(),
+        continuation_token: params.continuation_token.clone(),
         next_continuation_token: page.next_continuation_token,
         contents: page.contents,
         common_prefixes: page.common_prefixes,
@@ -714,6 +700,48 @@ fn rewrite_key(raw: &str, strip_prefix: &str, list_rewrite: Option<&ListRewrite>
     }
 
     key
+}
+
+/// All query parameters needed for a LIST operation, parsed in a single pass.
+struct ListQueryParams {
+    prefix: String,
+    delimiter: String,
+    pagination: pagination::PaginationParams,
+}
+
+/// Parse prefix, delimiter, and pagination params from a LIST query string in one pass.
+fn parse_list_query_params(raw_query: Option<&str>) -> ListQueryParams {
+    let mut prefix = None;
+    let mut delimiter = None;
+    let mut max_keys = None;
+    let mut continuation_token = None;
+    let mut start_after = None;
+
+    if let Some(q) = raw_query {
+        for (k, v) in url::form_urlencoded::parse(q.as_bytes()) {
+            match k.as_ref() {
+                "prefix" => prefix = Some(v.into_owned()),
+                "delimiter" => delimiter = Some(v.into_owned()),
+                "max-keys" => max_keys = Some(v.into_owned()),
+                "continuation-token" => continuation_token = Some(v.into_owned()),
+                "start-after" => start_after = Some(v.into_owned()),
+                _ => {}
+            }
+        }
+    }
+
+    ListQueryParams {
+        prefix: prefix.unwrap_or_default(),
+        delimiter: delimiter.unwrap_or_else(|| "/".to_string()),
+        pagination: pagination::PaginationParams {
+            max_keys: max_keys
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1000)
+                .min(1000),
+            continuation_token,
+            start_after,
+        },
+    }
 }
 
 /// Build the backend URL for an S3 operation.
