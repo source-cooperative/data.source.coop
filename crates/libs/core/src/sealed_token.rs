@@ -5,6 +5,17 @@
 //! no server-side storage lookup is needed. This is critical for stateless
 //! runtimes like Cloudflare Workers where in-memory state does not persist
 //! across invocations.
+//!
+//! ## Security properties
+//!
+//! - **Encryption**: AES-256-GCM provides authenticated encryption (confidentiality + integrity).
+//! - **Nonce**: 12-byte random nonce per token via `OsRng` (96 bits, per GCM spec).
+//! - **Token format**: `base64url(nonce[12] || ciphertext + GCM tag[16])`.
+//! - **Expiration**: Enforced at unseal time — expired credentials return `Err`.
+//! - **Scope binding**: Allowed scopes are sealed at mint time, so config changes only affect
+//!   newly minted credentials.
+//! - **Key rotation**: Tokens sealed with an old key will fail to decrypt (`Ok(None)`), causing
+//!   the client to re-authenticate. No explicit revocation mechanism is needed.
 
 use crate::error::ProxyError;
 use crate::types::TemporaryCredentials;
