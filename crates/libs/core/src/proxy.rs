@@ -577,30 +577,40 @@ fn sign_s3_request(
 
 /// Build an object_store Path from a bucket config and client-visible key.
 fn build_object_path(config: &BucketConfig, key: &str) -> object_store::path::Path {
-    let mut full_key = String::new();
-    if let Some(prefix) = &config.backend_prefix {
-        let p = prefix.trim_end_matches('/');
-        if !p.is_empty() {
-            full_key.push_str(p);
-            full_key.push('/');
+    match &config.backend_prefix {
+        Some(prefix) => {
+            let p = prefix.trim_end_matches('/');
+            if p.is_empty() {
+                object_store::path::Path::from(key)
+            } else {
+                let mut full_key = String::with_capacity(p.len() + 1 + key.len());
+                full_key.push_str(p);
+                full_key.push('/');
+                full_key.push_str(key);
+                object_store::path::Path::from(full_key)
+            }
         }
+        None => object_store::path::Path::from(key),
     }
-    full_key.push_str(key);
-    object_store::path::Path::from(full_key)
 }
 
 /// Build the full list prefix including backend_prefix.
 fn build_list_prefix(config: &BucketConfig, client_prefix: &str) -> String {
-    let mut full_prefix = String::new();
-    if let Some(bp) = &config.backend_prefix {
-        let bp = bp.trim_end_matches('/');
-        if !bp.is_empty() {
-            full_prefix.push_str(bp);
-            full_prefix.push('/');
+    match &config.backend_prefix {
+        Some(prefix) => {
+            let bp = prefix.trim_end_matches('/');
+            if bp.is_empty() {
+                client_prefix.to_string()
+            } else {
+                let mut full_prefix = String::with_capacity(bp.len() + 1 + client_prefix.len());
+                full_prefix.push_str(bp);
+                full_prefix.push('/');
+                full_prefix.push_str(client_prefix);
+                full_prefix
+            }
         }
+        None => client_prefix.to_string(),
     }
-    full_prefix.push_str(client_prefix);
-    full_prefix
 }
 
 /// Build S3 ListObjectsV2 XML from an object_store ListResult.
