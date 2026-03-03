@@ -20,7 +20,7 @@ features:
   - title: Unified Interface
     details: One stable URL per dataset, regardless of which object storage provider hosts the bytes. Backend migrations are invisible to data consumers.
   - title: Native S3 Compatibility
-    details: Works with aws-cli, boto3, DuckDB, the object_store crate, GDAL, and any S3-compatible client. No custom SDK — just set the endpoint URL.
+    details: Works with aws-cli, boto3, DuckDB, the obstore, GDAL, and any S3-compatible client. No custom SDK — just set the endpoint URL.
   - title: Metered Access
     details: Enforce per-identity rate limits so open data stays free for humans while protecting infrastructure from runaway machine access and egress costs.
   - title: Flexible Auth
