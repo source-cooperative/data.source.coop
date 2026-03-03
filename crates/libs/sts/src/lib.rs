@@ -220,22 +220,97 @@ mod tests {
 
     #[test]
     fn test_subject_matching() {
+        // Trailing wildcard
         assert!(subject_matches(
             "repo:org/repo:ref:refs/heads/main",
             "repo:org/repo:*"
         ));
+
+        // Match-all wildcard
         assert!(subject_matches("repo:org/repo:ref:refs/heads/main", "*"));
+
+        // Exact match (no wildcards)
         assert!(subject_matches(
             "repo:org/repo:ref:refs/heads/main",
             "repo:org/repo:ref:refs/heads/main"
         ));
+
+        // Wrong prefix
         assert!(!subject_matches(
             "repo:org/repo:ref:refs/heads/main",
             "repo:other/*"
         ));
+
+        // Multiple wildcards
         assert!(subject_matches(
             "repo:org/repo:ref:refs/heads/main",
             "repo:org/*:ref:refs/heads/*"
         ));
+    }
+
+    #[test]
+    fn test_subject_matching_exact() {
+        assert!(subject_matches("abc", "abc"));
+        assert!(!subject_matches("abc", "abcd"));
+        assert!(!subject_matches("abcd", "abc"));
+        assert!(!subject_matches("", "abc"));
+        assert!(subject_matches("", ""));
+    }
+
+    #[test]
+    fn test_subject_matching_leading_wildcard() {
+        assert!(subject_matches("anything", "*"));
+        assert!(subject_matches("", "*"));
+        assert!(subject_matches("foo", "*foo"));
+        assert!(subject_matches("xfoo", "*foo"));
+        assert!(!subject_matches("foox", "*foo"));
+    }
+
+    #[test]
+    fn test_subject_matching_trailing_wildcard() {
+        assert!(subject_matches("foo", "foo*"));
+        assert!(subject_matches("foobar", "foo*"));
+        assert!(!subject_matches("xfoo", "foo*"));
+    }
+
+    #[test]
+    fn test_subject_matching_middle_wildcard() {
+        assert!(subject_matches("foobar", "foo*bar"));
+        assert!(subject_matches("fooXbar", "foo*bar"));
+        assert!(subject_matches("fooXYZbar", "foo*bar"));
+        assert!(!subject_matches("fooXbaz", "foo*bar"));
+        assert!(!subject_matches("xfoobar", "foo*bar"));
+    }
+
+    #[test]
+    fn test_subject_matching_multiple_wildcards() {
+        // Two wildcards with repeated literal
+        assert!(subject_matches("axbb", "a*b*b"));
+        assert!(!subject_matches("axb", "a*b*b"));
+
+        // Wildcard must not overlap with suffix
+        assert!(!subject_matches("abc", "a*bc*c"));
+        assert!(subject_matches("abcc", "a*bc*c"));
+
+        // Multiple wildcards requiring non-greedy left-to-right match
+        assert!(subject_matches("aab", "*a*ab"));
+        assert!(!subject_matches("xab", "*a*ab"));
+
+        // Repeated pattern in subject
+        assert!(subject_matches("xababab", "*ab*ab"));
+        assert!(!subject_matches("xab", "*ab*ab"));
+    }
+
+    #[test]
+    fn test_subject_matching_double_wildcard() {
+        assert!(subject_matches("anything", "**"));
+        assert!(subject_matches("", "**"));
+    }
+
+    #[test]
+    fn test_subject_matching_empty_subject() {
+        assert!(subject_matches("", "*"));
+        assert!(!subject_matches("", "a"));
+        assert!(subject_matches("", ""));
     }
 }
