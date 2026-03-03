@@ -19,12 +19,12 @@ use crate::error::ProxyError;
 use crate::oidc_backend::{NoOidcAuth, OidcBackendAuth};
 use crate::resolver::{ListRewrite, RequestResolver, ResolvedAction};
 use crate::response_body::ProxyResponseBody;
-use crate::s3::pagination::{self, paginate};
 use crate::s3::response::{ErrorResponse, ListBucketResult, ListCommonPrefix, ListContents};
 use crate::types::{BucketConfig, S3Operation};
 use bytes::Bytes;
 use http::{HeaderMap, Method};
-use object_store::ObjectStore;
+use object_store::list::PaginatedListOptions;
+use std::borrow::Cow;
 use std::time::Duration;
 use url::Url;
 use uuid::Uuid;
@@ -393,14 +393,17 @@ where
         })
     }
 
-    /// LIST via object_store
+    /// LIST via object_store's `PaginatedListStore`.
+    ///
+    /// Pagination is pushed to the backend — only one page of results is fetched
+    /// per request, avoiding loading all objects into memory.
     async fn handle_list(
         &self,
         config: &BucketConfig,
         raw_query: Option<&str>,
         list_rewrite: Option<&ListRewrite>,
     ) -> Result<ProxyResult, ProxyError> {
-        let store = self.backend.create_store(config)?;
+        let store = self.backend.create_paginated_store(config)?;
 
         // Parse all query parameters in a single pass
         let list_params = parse_list_query_params(raw_query);
@@ -410,33 +413,56 @@ where
         // Build the full prefix including backend_prefix
         let full_prefix = build_list_prefix(config, client_prefix);
 
+        // Map start-after to raw key space by prepending backend_prefix
+        let offset = list_params
+            .start_after
+            .as_ref()
+            .map(|sa| build_list_prefix(config, sa));
+
         tracing::debug!(
             full_prefix = %full_prefix,
             delimiter = %delimiter,
-            "LIST via object_store"
+            max_keys = list_params.max_keys,
+            has_page_token = list_params.continuation_token.is_some(),
+            "LIST via PaginatedListStore"
         );
 
-        let prefix_path = if full_prefix.is_empty() {
+        let prefix = if full_prefix.is_empty() {
             None
         } else {
-            Some(object_store::path::Path::from(full_prefix.as_str()))
+            Some(full_prefix.as_str())
         };
 
-        let list_result = store
-            .list_with_delimiter(prefix_path.as_ref())
+        let opts = PaginatedListOptions {
+            offset,
+            delimiter: Some(Cow::Owned(delimiter.clone())),
+            max_keys: Some(list_params.max_keys),
+            page_token: list_params.continuation_token.clone(),
+            ..Default::default()
+        };
+
+        let paginated = store
+            .list_paginated(prefix, opts)
             .await
             .map_err(ProxyError::from_object_store_error)?;
 
-        // Build S3 XML response from ListResult
-        let bucket_name = &config.name;
+        // Build S3 XML response from paginated result
+        let key_count = paginated.result.objects.len() + paginated.result.common_prefixes.len();
         let xml = build_list_xml(
-            bucket_name,
-            client_prefix,
-            delimiter,
-            &list_result,
+            &ListXmlParams {
+                bucket_name: &config.name,
+                client_prefix,
+                delimiter,
+                max_keys: list_params.max_keys,
+                is_truncated: paginated.page_token.is_some(),
+                key_count,
+                start_after: &list_params.start_after,
+                continuation_token: &list_params.continuation_token,
+                next_continuation_token: paginated.page_token,
+            },
+            &paginated.result,
             config,
             list_rewrite,
-            &list_params.pagination,
         )?;
 
         let mut resp_headers = HeaderMap::new();
@@ -613,15 +639,28 @@ fn build_list_prefix(config: &BucketConfig, client_prefix: &str) -> String {
     }
 }
 
+/// Parameters for building the S3 ListObjectsV2 XML response.
+struct ListXmlParams<'a> {
+    bucket_name: &'a str,
+    client_prefix: &'a str,
+    delimiter: &'a str,
+    max_keys: usize,
+    is_truncated: bool,
+    key_count: usize,
+    start_after: &'a Option<String>,
+    continuation_token: &'a Option<String>,
+    next_continuation_token: Option<String>,
+}
+
 /// Build S3 ListObjectsV2 XML from an object_store ListResult.
+///
+/// Pagination is handled by the backend — `is_truncated` and
+/// `next_continuation_token` are passed through from the backend's response.
 fn build_list_xml(
-    bucket_name: &str,
-    client_prefix: &str,
-    delimiter: &str,
+    params: &ListXmlParams<'_>,
     list_result: &object_store::ListResult,
     config: &BucketConfig,
     list_rewrite: Option<&ListRewrite>,
-    params: &pagination::PaginationParams,
 ) -> Result<String, ProxyError> {
     let backend_prefix = config
         .backend_prefix
@@ -663,21 +702,19 @@ fn build_list_xml(
         })
         .collect();
 
-    let page = paginate(contents, common_prefixes, params)?;
-
     Ok(ListBucketResult {
         xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
-        name: bucket_name.to_string(),
-        prefix: client_prefix.to_string(),
-        delimiter: delimiter.to_string(),
+        name: params.bucket_name.to_string(),
+        prefix: params.client_prefix.to_string(),
+        delimiter: params.delimiter.to_string(),
         max_keys: params.max_keys,
-        is_truncated: page.is_truncated,
-        key_count: page.contents.len() + page.common_prefixes.len(),
+        is_truncated: params.is_truncated,
+        key_count: params.key_count,
         start_after: params.start_after.clone(),
         continuation_token: params.continuation_token.clone(),
-        next_continuation_token: page.next_continuation_token,
-        contents: page.contents,
-        common_prefixes: page.common_prefixes,
+        next_continuation_token: params.next_continuation_token.clone(),
+        contents,
+        common_prefixes,
     }
     .to_xml())
 }
@@ -722,7 +759,9 @@ fn rewrite_key(raw: &str, strip_prefix: &str, list_rewrite: Option<&ListRewrite>
 struct ListQueryParams {
     prefix: String,
     delimiter: String,
-    pagination: pagination::PaginationParams,
+    max_keys: usize,
+    continuation_token: Option<String>,
+    start_after: Option<String>,
 }
 
 /// Parse prefix, delimiter, and pagination params from a LIST query string in one pass.
@@ -749,14 +788,12 @@ fn parse_list_query_params(raw_query: Option<&str>) -> ListQueryParams {
     ListQueryParams {
         prefix: prefix.unwrap_or_default(),
         delimiter: delimiter.unwrap_or_else(|| "/".to_string()),
-        pagination: pagination::PaginationParams {
-            max_keys: max_keys
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(1000)
-                .min(1000),
-            continuation_token,
-            start_after,
-        },
+        max_keys: max_keys
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000)
+            .min(1000),
+        continuation_token,
+        start_after,
     }
 }
 

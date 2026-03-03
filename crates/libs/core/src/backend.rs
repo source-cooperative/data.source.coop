@@ -3,15 +3,15 @@
 //! [`ProxyBackend`] is the main trait runtimes implement. It provides three
 //! capabilities:
 //!
-//! 1. **`create_store()`** — build an `ObjectStore` for high-level operations
-//!    (LIST) routed through `object_store`.
+//! 1. **`create_paginated_store()`** — build a `PaginatedListStore` for LIST
+//!    operations with backend-side pagination.
 //! 2. **`create_signer()`** — build a `Signer` for generating presigned URLs
 //!    for GET, HEAD, PUT, DELETE operations.
 //! 3. **`send_raw()`** — send a pre-signed HTTP request for operations not
 //!    covered by `ObjectStore` (multipart uploads).
 //!
 //! [`S3RequestSigner`] is retained for signing multipart requests.
-//! [`build_object_store`] and [`build_signer`] dispatch on
+//! [`build_paginated_list_store`] and [`build_signer`] dispatch on
 //! `BucketConfig::backend_type` to build the appropriate provider.
 //! [`build_signer`] uses `object_store`'s built-in signer for authenticated
 //! backends, and [`UnsignedUrlSigner`] for anonymous backends (avoiding
@@ -23,6 +23,7 @@ use crate::types::{BackendType, BucketConfig};
 use bytes::Bytes;
 use http::HeaderMap;
 use object_store::aws::AmazonS3Builder;
+use object_store::list::PaginatedListStore;
 use object_store::signer::Signer;
 use object_store::ObjectStore;
 use std::future::Future;
@@ -39,11 +40,15 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 /// - Server runtime: uses `reqwest` for raw HTTP, default `object_store` HTTP connector
 /// - Worker runtime: uses `web_sys::fetch` for raw HTTP, custom `FetchConnector` for `object_store`
 pub trait ProxyBackend: Clone + MaybeSend + MaybeSync + 'static {
-    /// Create an `ObjectStore` for the given bucket configuration.
+    /// Create a [`PaginatedListStore`] for the given bucket configuration.
     ///
-    /// Used for LIST operations where `object_store` handles pagination
-    /// and response parsing internally.
-    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError>;
+    /// Used for LIST operations with backend-side pagination via
+    /// [`PaginatedListStore::list_paginated`], avoiding loading all results
+    /// into memory.
+    fn create_paginated_store(
+        &self,
+        config: &BucketConfig,
+    ) -> Result<Box<dyn PaginatedListStore>, ProxyError>;
 
     /// Create a `Signer` for generating presigned URLs.
     ///
@@ -96,6 +101,23 @@ impl StoreBuilder {
             #[cfg(feature = "gcp")]
             StoreBuilder::Gcs(b) => Ok(Arc::new(b.build().map_err(|e| {
                 ProxyError::ConfigError(format!("failed to build GCS store: {}", e))
+            })?)),
+        }
+    }
+
+    /// Build a `PaginatedListStore` for backend-side paginated listing.
+    pub fn build_paginated(self) -> Result<Box<dyn PaginatedListStore>, ProxyError> {
+        match self {
+            StoreBuilder::S3(b) => Ok(Box::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build S3 paginated store: {}", e))
+            })?)),
+            #[cfg(feature = "azure")]
+            StoreBuilder::Azure(b) => Ok(Box::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build Azure paginated store: {}", e))
+            })?)),
+            #[cfg(feature = "gcp")]
+            StoreBuilder::Gcs(b) => Ok(Box::new(b.build().map_err(|e| {
+                ProxyError::ConfigError(format!("failed to build GCS paginated store: {}", e))
             })?)),
         }
     }
@@ -181,6 +203,19 @@ where
     F: FnOnce(StoreBuilder) -> StoreBuilder,
 {
     configure(create_builder(config)?).build()
+}
+
+/// Build a [`PaginatedListStore`] from a [`BucketConfig`], dispatching on `backend_type`.
+///
+/// Like [`build_object_store`], accepts a configure closure for HTTP connector injection.
+pub fn build_paginated_list_store<F>(
+    config: &BucketConfig,
+    configure: F,
+) -> Result<Box<dyn PaginatedListStore>, ProxyError>
+where
+    F: FnOnce(StoreBuilder) -> StoreBuilder,
+{
+    configure(create_builder(config)?).build_paginated()
 }
 
 /// Build a [`Signer`] from a [`BucketConfig`], dispatching on `backend_type`.

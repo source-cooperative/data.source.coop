@@ -7,12 +7,12 @@
 use crate::fetch_connector::FetchConnector;
 use bytes::Bytes;
 use http::HeaderMap;
+use object_store::list::PaginatedListStore;
 use object_store::signer::Signer;
-use object_store::ObjectStore;
 use serde::de::DeserializeOwned;
 use source_coop_api::api::{CacheOptions, HttpClient};
 use source_coop_core::backend::{
-    build_object_store, build_signer, ProxyBackend, RawResponse, StoreBuilder,
+    build_paginated_list_store, build_signer, ProxyBackend, RawResponse, StoreBuilder,
 };
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::BucketConfig;
@@ -126,8 +126,11 @@ impl HttpClient for WorkerHttpClient {
 pub struct WorkerBackend;
 
 impl ProxyBackend for WorkerBackend {
-    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
-        build_object_store(config, |b| match b {
+    fn create_paginated_store(
+        &self,
+        config: &BucketConfig,
+    ) -> Result<Box<dyn PaginatedListStore>, ProxyError> {
+        build_paginated_list_store(config, |b| match b {
             StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)),
         })
     }

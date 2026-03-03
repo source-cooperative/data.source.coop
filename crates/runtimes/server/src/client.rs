@@ -2,9 +2,11 @@
 
 use bytes::Bytes;
 use http::HeaderMap;
+use object_store::list::PaginatedListStore;
 use object_store::signer::Signer;
-use object_store::ObjectStore;
-use source_coop_core::backend::{build_object_store, build_signer, ProxyBackend, RawResponse};
+use source_coop_core::backend::{
+    build_paginated_list_store, build_signer, ProxyBackend, RawResponse,
+};
 use source_coop_core::error::ProxyError;
 use source_coop_core::types::BucketConfig;
 use source_coop_oidc_provider::{HttpExchange, OidcProviderError};
@@ -42,8 +44,11 @@ impl Default for ServerBackend {
 }
 
 impl ProxyBackend for ServerBackend {
-    fn create_store(&self, config: &BucketConfig) -> Result<Arc<dyn ObjectStore>, ProxyError> {
-        build_object_store(config, |b| b)
+    fn create_paginated_store(
+        &self,
+        config: &BucketConfig,
+    ) -> Result<Box<dyn PaginatedListStore>, ProxyError> {
+        build_paginated_list_store(config, |b| b)
     }
 
     fn create_signer(&self, config: &BucketConfig) -> Result<Arc<dyn Signer>, ProxyError> {
