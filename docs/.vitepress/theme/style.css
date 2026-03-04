@@ -1,0 +1,295 @@
+/**
+ * Source Cooperative theme
+ *
+ * Matches docs.source.coop visual identity:
+ *   - Font: IBM Plex Sans
+ *   - Mono: Berkeley Mono (with fallbacks)
+ *   - Light: warm off-white #efebea background, dark teal-gray #2c3233 text
+ *   - Dark: inverted — #2c3233 background, #efebea text
+ *
+ * Reference: github.com/source-cooperative/docs.source.coop/blob/main/src/css/custom.css
+ */
+
+/* ------------------------------------------------------------------ */
+/* Typography                                                          */
+/* ------------------------------------------------------------------ */
+
+@import url("https://fonts.googleapis.com/css2?family=Cascadia+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
+:root {
+  --vp-font-family-base: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --vp-font-family-mono: "IBM Plex Mono", SFMono-Regular, "SF Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  --vp-font-family-heading: "Cascadia Mono", var(--vp-font-family-mono);
+}
+
+/* ------------------------------------------------------------------ */
+/* Light theme colors                                                  */
+/* Warm off-white background, dark teal-gray primary                   */
+/* ------------------------------------------------------------------ */
+
+:root {
+  /* Primary — dark teal-gray (same as docs.source.coop) */
+  --vp-c-brand-1: #2c3233;
+  --vp-c-brand-2: #303738;
+  --vp-c-brand-3: #394142;
+  --vp-c-brand-soft: rgba(44, 50, 51, 0.08);
+
+  /* Page background — warm off-white */
+  --vp-c-bg: #efebea;
+  --vp-c-bg-alt: #e6e1df;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-bg-soft: #e6e1df;
+
+  /* Text */
+  --vp-c-text-1: #2c3233;
+  --vp-c-text-2: rgba(44, 50, 51, 0.78);
+  --vp-c-text-3: rgba(44, 50, 51, 0.56);
+
+  /* Borders & dividers */
+  --vp-c-divider: rgba(44, 50, 51, 0.12);
+  --vp-c-gutter: rgba(44, 50, 51, 0.06);
+  --vp-c-border: rgba(44, 50, 51, 0.15);
+
+  /* Note callout — blue */
+  --vp-c-note-1: #3b82f6;
+  --vp-c-note-2: #2563eb;
+  --vp-c-note-3: #1d4ed8;
+  --vp-custom-block-note-border: rgba(59, 130, 246, 0.3);
+  --vp-custom-block-note-bg: rgba(59, 130, 246, 0.08);
+  --vp-custom-block-note-code-bg: rgba(59, 130, 246, 0.12);
+
+  /* Tip callout — green */
+  --vp-c-tip-1: #16a34a;
+  --vp-c-tip-2: #15803d;
+  --vp-c-tip-3: #166534;
+  --vp-c-tip-soft: rgba(22, 163, 74, 0.08);
+  --vp-custom-block-tip-border: rgba(22, 163, 74, 0.3);
+  --vp-custom-block-tip-bg: rgba(22, 163, 74, 0.08);
+  --vp-custom-block-tip-code-bg: rgba(22, 163, 74, 0.12);
+
+  /* Navbar / sidebar */
+  --vp-nav-bg-color: #ffffff;
+  --vp-sidebar-bg-color: #f7f4f3;
+
+  /* Code blocks */
+  --vp-code-block-bg: #f6f7f8;
+  --vp-code-bg: rgba(44, 50, 51, 0.06);
+}
+
+/* ------------------------------------------------------------------ */
+/* Dark theme colors                                                   */
+/* Inverted: teal-gray background, warm off-white primary              */
+/* ------------------------------------------------------------------ */
+
+.dark {
+  --vp-c-brand-1: #efebea;
+  --vp-c-brand-2: #dbd1cf;
+  --vp-c-brand-3: #b29e99;
+  --vp-c-brand-soft: rgba(239, 235, 234, 0.1);
+
+  /* Note callout — blue */
+  --vp-c-note-1: #60a5fa;
+  --vp-c-note-2: #93bbfd;
+  --vp-c-note-3: #3b82f6;
+  --vp-custom-block-note-border: rgba(96, 165, 250, 0.3);
+  --vp-custom-block-note-bg: rgba(96, 165, 250, 0.1);
+  --vp-custom-block-note-code-bg: rgba(96, 165, 250, 0.14);
+
+  /* Tip callout — green */
+  --vp-c-tip-1: #4ade80;
+  --vp-c-tip-2: #86efac;
+  --vp-c-tip-3: #22c55e;
+  --vp-c-tip-soft: rgba(74, 222, 128, 0.1);
+  --vp-custom-block-tip-border: rgba(74, 222, 128, 0.3);
+  --vp-custom-block-tip-bg: rgba(74, 222, 128, 0.1);
+  --vp-custom-block-tip-code-bg: rgba(74, 222, 128, 0.14);
+
+  /* Page background */
+  --vp-c-bg: #2c3233;
+  --vp-c-bg-alt: #242a2b;
+  --vp-c-bg-elv: #343b3c;
+  --vp-c-bg-soft: #343b3c;
+
+  /* Text */
+  --vp-c-text-1: #efebea;
+  --vp-c-text-2: rgba(239, 235, 234, 0.72);
+  --vp-c-text-3: rgba(239, 235, 234, 0.48);
+
+  /* Borders & dividers */
+  --vp-c-divider: rgba(239, 235, 234, 0.12);
+  --vp-c-gutter: rgba(239, 235, 234, 0.06);
+  --vp-c-border: rgba(239, 235, 234, 0.15);
+
+  /* Navbar / sidebar */
+  --vp-nav-bg-color: #242a2b;
+  --vp-sidebar-bg-color: #272e2f;
+
+  /* Code blocks */
+  --vp-code-block-bg: rgba(255, 255, 255, 0.06);
+  --vp-code-bg: rgba(255, 255, 255, 0.1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Buttons                                                             */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: #efebea;
+  --vp-button-brand-bg: #2c3233;
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: #efebea;
+  --vp-button-brand-hover-bg: #394142;
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: #efebea;
+  --vp-button-brand-active-bg: #1f2324;
+}
+
+.dark {
+  --vp-button-brand-text: #2c3233;
+  --vp-button-brand-bg: #efebea;
+  --vp-button-brand-hover-text: #2c3233;
+  --vp-button-brand-hover-bg: #ffffff;
+  --vp-button-brand-active-text: #2c3233;
+  --vp-button-brand-active-bg: #dbd1cf;
+}
+
+/* ------------------------------------------------------------------ */
+/* Home hero                                                           */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --vp-home-hero-name-color: #2c3233;
+  --vp-home-hero-name-background: none;
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
+}
+
+.dark {
+  --vp-home-hero-name-color: #efebea;
+}
+
+/* ------------------------------------------------------------------ */
+/* Headings — Cascadia Mono for a distinctive technical feel           */
+/* ------------------------------------------------------------------ */
+
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4,
+.vp-doc h5,
+.vp-doc h6 {
+  font-family: var(--vp-font-family-heading);
+  letter-spacing: -0.02em;
+}
+
+/* Hero heading on homepage */
+.VPHero .name {
+  font-family: var(--vp-font-family-heading) !important;
+  letter-spacing: -0.03em;
+}
+
+/* Hero text — subtitle size (matches default tagline sizing) */
+.VPHero .text {
+  font-family: var(--vp-font-family-base) !important;
+  font-size: 18px !important;
+  line-height: 28px !important;
+  font-weight: 500 !important;
+  letter-spacing: normal !important;
+  color: var(--vp-c-text-2);
+}
+
+@media (min-width: 640px) {
+  .VPHero .text {
+    font-size: 20px !important;
+    line-height: 32px !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .text {
+    font-size: 24px !important;
+    line-height: 36px !important;
+  }
+}
+
+/* Hero tagline — uppercase label */
+.VPHero .tagline {
+  text-transform: uppercase;
+  font-size: 13px !important;
+  line-height: 20px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.05em !important;
+  color: var(--vp-c-text-3) !important;
+}
+
+@media (min-width: 640px) {
+  .VPHero .tagline {
+    font-size: 14px !important;
+    line-height: 22px !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .tagline {
+    font-size: 14px !important;
+    line-height: 22px !important;
+  }
+}
+
+/* Feature card titles */
+.VPFeature .title {
+  font-family: var(--vp-font-family-heading);
+}
+
+/* Sidebar group headings */
+.VPSidebarItem.level-0 > .item > .text {
+  font-family: var(--vp-font-family-heading);
+}
+
+/* ------------------------------------------------------------------ */
+/* Content links — underlined, matching docs.source.coop               */
+/* ------------------------------------------------------------------ */
+
+.vp-doc a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.vp-doc a:hover {
+  text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Navbar — clean white surface (light) / dark surface (dark)          */
+/* ------------------------------------------------------------------ */
+
+.VPNav {
+  background-color: var(--vp-nav-bg-color) !important;
+}
+
+.VPNavBar {
+  background-color: var(--vp-nav-bg-color) !important;
+  border-bottom: 1px solid var(--vp-c-divider) !important;
+}
+
+.VPNavBar .divider {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar — subtle background                                         */
+/* ------------------------------------------------------------------ */
+
+.VPSidebar {
+  background-color: var(--vp-sidebar-bg-color) !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Code font size — match docs.source.coop 95%                         */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --vp-code-font-size: 95%;
+}

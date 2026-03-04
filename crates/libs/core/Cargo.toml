@@ -1,0 +1,45 @@
+[package]
+name = "source-coop-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runtime-agnostic core library for the S3 proxy gateway"
+
+[features]
+default = []
+axum = ["dep:axum"]
+config-dynamodb = ["aws-sdk-dynamodb", "tokio"]
+config-postgres = ["sqlx"]
+config-http = ["reqwest"]
+azure = ["object_store/azure"]
+gcp = ["object_store/gcp"]
+
+[dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+bytes.workspace = true
+http.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+base64.workspace = true
+hex.workspace = true
+url.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+aes-gcm.workspace = true
+quick-xml.workspace = true
+tracing.workspace = true
+object_store.workspace = true
+futures.workspace = true
+
+# Optional framework deps
+axum = { workspace = true, features = ["json"], optional = true }
+
+# Optional config backend deps
+aws-sdk-dynamodb = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }

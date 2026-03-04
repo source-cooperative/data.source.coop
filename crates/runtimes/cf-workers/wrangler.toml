@@ -1,0 +1,112 @@
+compatibility_date = "2024-09-23"
+main = "build/worker/shim.mjs"
+name = "source-coop-proxy"
+
+[build]
+command = "cargo install worker-build && worker-build --release"
+
+[vars]
+# SOURCE_API_URL = "https://staging.source.coop"
+VIRTUAL_HOST_DOMAIN = "s3.local"
+
+# For production, consider storing this in Workers KV or a Secrets binding.
+[vars.PROXY_CONFIG]
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_type = "s3"
+name = "public-data"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+access_key_id = "minioadmin"
+bucket_name = "public-data"
+endpoint = "http://localhost:9000"
+region = "us-east-1"
+secret_access_key = "minioadmin"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = false
+backend_type = "s3"
+name = "private-uploads"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+access_key_id = "minioadmin"
+bucket_name = "private-uploads"
+endpoint = "http://localhost:9000"
+region = "us-east-1"
+secret_access_key = "minioadmin"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_prefix = "cholmes/"
+backend_type = "s3"
+name = "cholmes"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+bucket_name = "us-west-2.opendata.source.coop"
+endpoint = "https://s3.us-west-2.amazonaws.com"
+region = "us-west-2"
+skip_signature = "true"
+
+[[vars.PROXY_CONFIG.buckets]]
+allowed_roles = []
+anonymous_access = true
+backend_prefix = "harvard-lil/"
+backend_type = "s3"
+name = "harvard-lil"
+
+[vars.PROXY_CONFIG.buckets.backend_options]
+bucket_name = "us-west-2.opendata.source.coop"
+endpoint = "https://s3.us-west-2.amazonaws.com"
+region = "us-west-2"
+skip_signature = "true"
+
+[[vars.PROXY_CONFIG.credentials]]
+access_key_id = "AKLOCAL0000000000001"
+created_at = "2024-01-01T00:00:00Z"
+enabled = true
+principal_name = "dev-user"
+secret_access_key = "localdev/secret/key/00000000000000000000"
+
+[[vars.PROXY_CONFIG.credentials.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"]
+bucket = "public-data"
+prefixes = []
+
+[[vars.PROXY_CONFIG.credentials.allowed_scopes]]
+actions = [
+  "get_object",
+  "head_object",
+  "put_object",
+  "list_bucket",
+  "create_multipart_upload",
+  "upload_part",
+  "complete_multipart_upload",
+]
+bucket = "private-uploads"
+prefixes = []
+
+[vars.STS_CONFIG]
+[[vars.STS_CONFIG.roles]]
+max_session_duration_secs = 3600
+name = "Source Cooperative User"
+role_id = "source-coop-user"
+subject_conditions = ["*"]
+trusted_oidc_issuers = [
+  "https://auth.source.coop",
+  "https://auth.staging.source.coop",
+  "https://optimistic-jackson-tvx6h5ig8s.projects.oryapis.com",
+]
+
+[[vars.STS_CONFIG.roles.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"] 
+bucket = "{sub}" # this user
+prefixes = [] 
+
+[[vars.STS_CONFIG.roles.allowed_scopes]]
+actions = ["get_object", "head_object", "put_object", "list_bucket"]
+bucket = "private-uploads"
+prefixes = []
