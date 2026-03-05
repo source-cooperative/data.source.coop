@@ -5,7 +5,7 @@ use actix_web::{
 use futures::Stream;
 use pin_project_lite::pin_project;
 use std::task::{Context, Poll};
-use std::{fmt, pin::Pin, str::FromStr};
+use std::{pin::Pin, str::FromStr};
 
 pin_project! {
     pub struct StreamingResponse<S> {
