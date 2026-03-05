@@ -1,8 +1,7 @@
 use actix_web::{
     body::{BodySize, MessageBody},
     http::header::RANGE,
-    web, Error as ActixError,
-    HttpRequest,
+    web, Error as ActixError, HttpRequest,
 };
 use futures::Stream;
 use pin_project_lite::pin_project;
@@ -266,10 +265,7 @@ mod tests {
     #[test]
     fn test_parse_range_content_range_format() {
         let result = parse_range_str("bytes=0-1023", Some(3515053862)).unwrap();
-        let content_range = format!(
-            "bytes {}-{}/{}",
-            result.start, result.end, 3515053862u64
-        );
+        let content_range = format!("bytes {}-{}/{}", result.start, result.end, 3515053862u64);
         assert_eq!(content_range, "bytes 0-1023/3515053862");
     }
 }

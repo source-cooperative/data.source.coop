@@ -6,8 +6,8 @@ use actix_cors::Cors;
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
-    delete, get, head, http::header::CONTENT_TYPE, middleware, post, put, web,
-    App, HttpRequest, HttpResponse, HttpServer, Responder,
+    delete, get, head, http::header::CONTENT_TYPE, middleware, post, put, web, App, HttpRequest,
+    HttpResponse, HttpServer, Responder,
 };
 
 use apis::source::{RepositoryPermission, SourceApi};
@@ -73,7 +73,10 @@ async fn get_object(
 
     // Found the repository, now try to get the object
     let res = client
-        .get_object(key.clone(), range_info.as_ref().map(|r| r.header_value.clone()))
+        .get_object(
+            key.clone(),
+            range_info.as_ref().map(|r| r.header_value.clone()),
+        )
         .await?;
 
     let mut total_content_length = String::from("*");
