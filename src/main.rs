@@ -1,12 +1,12 @@
 mod apis;
 mod backends;
 mod utils;
-use crate::utils::core::{split_at_first_slash, StreamingResponse};
+use crate::utils::core::{parse_range_header, split_at_first_slash, StreamingResponse};
 use actix_cors::Cors;
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
-    delete, get, head, http::header::CONTENT_TYPE, http::header::RANGE, middleware, post, put, web,
+    delete, get, head, http::header::CONTENT_TYPE, middleware, post, put, web,
     App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 
@@ -56,27 +56,7 @@ async fn get_object(
     user_identity: web::ReqData<UserIdentity>,
 ) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
-    let headers = req.headers();
-    let mut range_start = 0;
-    let mut is_range_request = false;
-
-    let range = headers
-        .get(RANGE)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|r| r.strip_prefix("bytes="))
-        .and_then(|bytes_range| bytes_range.split_once('-'))
-        .and_then(|(start, end)| {
-            start.parse::<u64>().ok().map(|s| {
-                range_start = s;
-                if end.is_empty() || end.parse::<u64>().is_ok() {
-                    is_range_request = true;
-                    Some(format!("bytes={start}-{end}"))
-                } else {
-                    None
-                }
-            })
-        })
-        .flatten();
+    let range_info = parse_range_header(&req, None);
 
     let client = api_client
         .get_backend_client(&account_id, &repository_id)
@@ -92,13 +72,13 @@ async fn get_object(
         .await?;
 
     // Found the repository, now try to get the object
-    let res = client.get_object(key.clone(), range).await?;
+    let res = client
+        .get_object(key.clone(), range_info.as_ref().map(|r| r.header_value.clone()))
+        .await?;
 
-    let mut content_length = String::from("*");
-    // Remove this if statement to increase performance since it's making an extra request just to get the total content-length
-    // This is only needed for range requests and in theory, you can return a * in the Content-Range header to indicate that the content length is unknown
-    if is_range_request {
-        content_length = client
+    let mut total_content_length = String::from("*");
+    if range_info.is_some() {
+        total_content_length = client
             .head_object(key.clone())
             .await?
             .content_length
@@ -110,7 +90,7 @@ async fn get_object(
         .map(|result| result.map_err(|e| ErrorInternalServerError(e.to_string())));
 
     let streaming_response = StreamingResponse::new(stream, res.content_length);
-    let mut response = if is_range_request {
+    let mut response = if range_info.is_some() {
         HttpResponse::PartialContent()
     } else {
         HttpResponse::Ok()
@@ -124,15 +104,15 @@ async fn get_object(
         .insert_header(("Content-Length", res.content_length.to_string()))
         .insert_header(("ETag", res.etag));
 
-    if is_range_request {
+    if let Some(ref range) = range_info {
         response = response
             .insert_header((
                 "Content-Range",
                 format!(
                     "bytes {}-{}/{}",
-                    range_start,
-                    range_start + res.content_length - 1,
-                    content_length
+                    range.start,
+                    range.start + res.content_length - 1,
+                    total_content_length
                 ),
             ))
             .insert_header((
@@ -336,6 +316,7 @@ async fn post_handler(
 #[head("/{account_id}/{repository_id}/{key:.*}")]
 async fn head_object(
     api_client: web::Data<SourceApi>,
+    req: HttpRequest,
     path: web::Path<(String, String, String)>,
     user_identity: web::ReqData<UserIdentity>,
 ) -> Result<impl Responder, BackendError> {
@@ -355,15 +336,40 @@ async fn head_object(
         .await?;
 
     let res = client.head_object(key.clone()).await?;
-    Ok(HttpResponse::Ok()
-        .insert_header(("Accept-Ranges", "bytes"))
-        .insert_header(("Access-Control-Expose-Headers", "Accept-Ranges"))
-        .insert_header(("Content-Type", res.content_type))
-        .insert_header(("Last-Modified", res.last_modified))
-        .insert_header(("ETag", res.etag))
-        .body(BoxBody::new(FakeBody {
-            size: res.content_length as usize,
-        })))
+    let total_size = res.content_length;
+    let range_info = parse_range_header(&req, Some(total_size));
+
+    let response = if let Some(ref range) = range_info {
+        let content_length = range.end - range.start + 1;
+        HttpResponse::PartialContent()
+            .insert_header(("Accept-Ranges", "bytes"))
+            .insert_header((
+                "Content-Range",
+                format!("bytes {}-{}/{}", range.start, range.end, total_size),
+            ))
+            .insert_header((
+                "Access-Control-Expose-Headers",
+                "Accept-Ranges, Content-Range",
+            ))
+            .insert_header(("Content-Type", res.content_type))
+            .insert_header(("Last-Modified", res.last_modified))
+            .insert_header(("ETag", res.etag))
+            .body(BoxBody::new(FakeBody {
+                size: content_length as usize,
+            }))
+    } else {
+        HttpResponse::Ok()
+            .insert_header(("Accept-Ranges", "bytes"))
+            .insert_header(("Access-Control-Expose-Headers", "Accept-Ranges"))
+            .insert_header(("Content-Type", res.content_type))
+            .insert_header(("Last-Modified", res.last_modified))
+            .insert_header(("ETag", res.etag))
+            .body(BoxBody::new(FakeBody {
+                size: total_size as usize,
+            }))
+    };
+
+    Ok(response)
 }
 
 #[derive(Deserialize)]
