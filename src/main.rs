@@ -1,13 +1,14 @@
 mod apis;
 mod backends;
 mod utils;
-use crate::utils::core::{parse_range_header, split_at_first_slash, StreamingResponse};
+use crate::utils::core::{split_at_first_slash, RangeRequest, StreamingResponse};
 use actix_cors::Cors;
 use actix_web::body::{BodySize, BoxBody, MessageBody};
 use actix_web::error::ErrorInternalServerError;
 use actix_web::{
-    delete, get, head, http::header::CONTENT_TYPE, middleware, post, put, web, App, HttpRequest,
-    HttpResponse, HttpServer, Responder,
+    delete, get, head,
+    http::header::{CONTENT_TYPE, RANGE},
+    middleware, post, put, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 
 use apis::source::{RepositoryPermission, SourceApi};
@@ -56,7 +57,11 @@ async fn get_object(
     user_identity: web::ReqData<UserIdentity>,
 ) -> Result<impl Responder, BackendError> {
     let (account_id, repository_id, key) = path.into_inner();
-    let range_info = parse_range_header(&req, None);
+    let range_info: Option<RangeRequest> = req
+        .headers()
+        .get(RANGE)
+        .and_then(|v| String::from_utf8(v.as_ref().to_vec()).ok())
+        .and_then(|s| s.parse().ok());
 
     let client = api_client
         .get_backend_client(&account_id, &repository_id)
@@ -73,10 +78,7 @@ async fn get_object(
 
     // Found the repository, now try to get the object
     let res = client
-        .get_object(
-            key.clone(),
-            range_info.as_ref().map(|r| r.header_value.clone()),
-        )
+        .get_object(key.clone(), range_info.map(Into::into))
         .await?;
 
     let mut total_content_length = String::from("*");
@@ -340,15 +342,20 @@ async fn head_object(
 
     let res = client.head_object(key.clone()).await?;
     let total_size = res.content_length;
-    let range_info = parse_range_header(&req, Some(total_size));
+    let range_info: Option<RangeRequest> = req
+        .headers()
+        .get(RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
 
     let response = if let Some(ref range) = range_info {
-        let content_length = range.end - range.start + 1;
+        let end = range.end.unwrap();
+        let content_length = end - range.start + 1;
         HttpResponse::PartialContent()
             .insert_header(("Accept-Ranges", "bytes"))
             .insert_header((
                 "Content-Range",
-                format!("bytes {}-{}/{}", range.start, range.end, total_size),
+                format!("bytes {}-{}/{}", range.start, end, total_size),
             ))
             .insert_header((
                 "Access-Control-Expose-Headers",
