@@ -254,8 +254,7 @@ impl Api for SourceApi {
     ) -> Result<Account, BackendError> {
         // Create headers
         let mut headers = self.build_source_headers();
-        if user_identity.api_key.is_some() {
-            let api_key = user_identity.api_key.unwrap();
+        if let Some(api_key) = user_identity.api_key {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
                 reqwest::header::HeaderValue::from_str(
@@ -578,8 +577,7 @@ impl SourceApi {
     ) -> Result<Vec<RepositoryPermission>, BackendError> {
         // Create headers
         let mut headers = self.build_source_headers();
-        if user_identity.api_key.is_some() {
-            let api_key = user_identity.api_key.unwrap();
+        if let Some(api_key) = user_identity.api_key {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
                 reqwest::header::HeaderValue::from_str(

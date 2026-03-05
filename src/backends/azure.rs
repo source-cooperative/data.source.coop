@@ -246,18 +246,13 @@ impl Repository for AzureRepository {
             .into_stream();
 
         if let Some(Ok(blob)) = stream.next().await {
-            if blob.max_results.is_some() {
-                result.max_keys = blob.max_results.unwrap() as i64;
+            if let Some(max_results) = blob.max_results {
+                result.max_keys = max_results as i64;
             }
 
-            if blob.next_marker.is_some() {
+            if let Some(next_marker) = blob.next_marker {
                 result.is_truncated = true;
-                result.next_continuation_token = Some(
-                    blob.next_marker
-                        .unwrap_or(NextMarker::new("".to_string()))
-                        .as_str()
-                        .to_string(),
-                );
+                result.next_continuation_token = Some(next_marker.as_str().to_string());
             }
 
             for blob_item in blob.blobs.items {
