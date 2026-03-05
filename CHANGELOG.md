@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/source-cooperative/data.source.coop/compare/v1.0.4...v1.1.0) (2026-03-05)
+
+
+### Features
+
+* Indicate range request support with Accept-Ranges header ([#104](https://github.com/source-cooperative/data.source.coop/issues/104)) ([4c6737a](https://github.com/source-cooperative/data.source.coop/commit/4c6737a8c58883e1f88262b77b53e24edd967d6f))
+
+
+### Bug Fixes
+
+* handle Range header in HEAD requests ([#114](https://github.com/source-cooperative/data.source.coop/issues/114)) ([24323a0](https://github.com/source-cooperative/data.source.coop/commit/24323a009409e1d769bccc9072329708da675db9))
+
 ## [1.0.4](https://github.com/source-cooperative/data.source.coop/compare/v1.0.3...v1.0.4) (2025-10-29)
 
 
