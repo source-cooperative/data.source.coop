@@ -134,10 +134,7 @@ impl FromStr for RangeRequest {
             Some(end)
         };
 
-        Ok(RangeRequest {
-            start,
-            end,
-        })
+        Ok(RangeRequest { start, end })
     }
 }
 
@@ -159,9 +156,7 @@ mod tests {
 
     #[test]
     fn test_parse_range_open_ended() {
-        let result = "bytes=100-"
-            .parse::<RangeRequest>()
-            .unwrap();
+        let result = "bytes=100-".parse::<RangeRequest>().unwrap();
         assert_eq!(
             result,
             RangeRequest {
