@@ -1,6 +1,15 @@
-name = "source-data-proxy"
-main = "build/worker/shim.mjs"
 compatibility_date = "2026-03-17"
+main = "build/worker/shim.mjs"
+name = "source-data-proxy"
+
+routes = [
+  {pattern = "alpha.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data-1.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data-2.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data-3.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data-4.source.coop/*", zone_name = "coolnewgeo.com"},
+]
 
 [build]
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
