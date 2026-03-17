@@ -1,3 +1,5 @@
 /target
+/build
 .DS_Store
-scripts/task_definition.json
+.wrangler
+node_modules

@@ -1,0 +1,9 @@
+name = "source-data-proxy"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-03-17"
+
+[build]
+command = "cargo install -q worker-build@0.7.5 && worker-build --release"
+
+[vars]
+SOURCE_API_URL = "https://source.coop"

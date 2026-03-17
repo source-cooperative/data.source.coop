@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-unknown-unknown
+
+  build:
+    name: Build Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install worker-build
+        run: cargo install worker-build@0.7.5
+      - name: Build WASM worker
+        run: worker-build --release
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install wrangler
+        run: npm install -g wrangler@3
+      - name: Install worker-build
+        run: cargo install worker-build@0.7.5
+      - name: Start wrangler dev
+        run: |
+          wrangler dev --port 8787 &
+          # Wait for the server to be ready
+          for i in $(seq 1 60); do
+            if curl -s --max-time 2 http://localhost:8787/ > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+      - name: Test index endpoint
+        run: |
+          response=$(curl -s http://localhost:8787/)
+          echo "Response: $response"
+          echo "$response" | grep -q "Source Cooperative Data Proxy"
+      - name: Test write rejection
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" -X PUT http://localhost:8787/test/test/file.txt)
+          echo "Status: $status"
+          [ "$status" = "405" ]
+      - name: Test CORS preflight
+        run: |
+          curl -s -D - -X OPTIONS http://localhost:8787/ | grep -i "access-control-allow-origin"
+      - name: Test product listing
+        run: |
+          response=$(curl -s "http://localhost:8787/cholmes?list-type=2&delimiter=/")
+          echo "Response: $response"
+          echo "$response" | grep -q "CommonPrefixes"
+      - name: Test file listing
+        run: |
+          response=$(curl -s "http://localhost:8787/cholmes?list-type=2&prefix=admin-boundaries/&max-keys=5")
+          echo "Response: $response"
+          echo "$response" | grep -q "countries.parquet"
+      - name: Test HEAD object
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" -I "http://localhost:8787/cholmes/admin-boundaries/countries.parquet")
+          echo "Status: $status"
+          [ "$status" = "200" ]
+      - name: Test range request
+        run: |
+          curl -s -r 0-1023 -o /tmp/range_test.bin "http://localhost:8787/cholmes/admin-boundaries/countries.parquet"
+          size=$(wc -c < /tmp/range_test.bin)
+          echo "Size: $size"
+          [ "$size" -eq 1024 ]
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - run: cargo audit

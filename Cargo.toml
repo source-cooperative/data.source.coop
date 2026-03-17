@@ -1,54 +1,53 @@
 [package]
-name = "source-data-proxy"
-
-version = "1.1.0"
+authors = ["Anthony Lukach <anthonylukach@gmail.com>"]
 edition = "2021"
+name = "source-data-proxy"
+version = "0.1.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["cdylib"]
 
 [dependencies]
+# Multistore - Currently in alpha and not published to crates.io, so we pull directly from GitHub
+multistore = {git = "https://github.com/developmentseed/multistore", branch = "main"}
 
-quick-xml = { version = "=0.36.1", features = ["serialize"] }
-actix-web = { version = "^4", features = [
-    "rustls",
-    "macros",
-], default-features = false }
-rusoto_core = { version = "0.47", default-features = false, features = [
-    "rustls",
-] }
-rusoto_s3 = { version = "0.47", default-features = false, features = [
-    "rustls",
-] }
-rusoto_credential = { version = "0.47" }
-tokio-util = { version = "0.7", features = ["codec"] }
-tokio = { version = "1", features = ["full"] }
-futures-util = "0.3"
-xml-rs = "0.8"
-serde = { version = "1.0", features = ["derive"] }
-serde-xml-rs = "0.6"
-bytes = "1.0"
-pin-project-lite = "0.2"
+# Serialization
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
+
+# HTTP / networking
+async-trait = "0.1"
+bytes = "1"
 futures = "0.3"
-futures-core = "0.3"
-log = "0.4"
-env_logger = "0.9"
-chrono = { version = "0.4", features = ["serde"] }
-async-trait = "0.1.81"
-azure_storage_blobs = "0.20.0"
-azure_storage = "0.20.0"
-azure_core = "0.20.0"
-time = { version = "0.3", features = ["formatting"] }
-url = "2.2.2"
-reqwest = { version = "0.11.0", features = ["stream", "json"] }
-actix-cors = "0.7.0"
-moka = { version = "0.12.8", features = ["future"] }
-percent-encoding = "2.1.0"
-sha2 = "0.10.6"
-hex = "0.4.3"
-hmac = "0.12"
-actix-http = "^3"
-thiserror = "2.0.12"
-serde_json = "1.0.141"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+url = "2"
 
-[dev-dependencies]
-common-s3-headers = "1.0.0"
+# Object store
+object_store = {version = "0.13.1", default-features = false, features = ["aws"]}
+
+# Tracing
+tracing = "0.1"
+
+# Cloudflare Workers
+# Pinned to 0.7.4: worker 0.7.5 bumped wasm-streams 0.4→0.5, conflicting with reqwest
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = {version = "0.3", features = [
+  "Headers",
+  "ReadableStream",
+  "Request",
+  "RequestCache",
+  "RequestInit",
+  "Response",
+  "ResponseInit",
+]}
+worker = {version = "=0.7.4", features = ["http"]}
+worker-macros = {version = "=0.7.4", features = ["http"]}
+
+# WASM getrandom support
+getrandom_v02 = {package = "getrandom", version = "0.2", features = ["js"]}
+getrandom_v03 = {package = "getrandom", version = "0.3", features = ["wasm_js"]}
