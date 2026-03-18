@@ -45,11 +45,7 @@ impl ProxyBackend for WorkerBackend {
         headers: HeaderMap,
         body: Bytes,
     ) -> Result<RawResponse, ProxyError> {
-        tracing::debug!(
-            "send_raw: {} {}",
-            method,
-            url,
-        );
+        tracing::debug!("send_raw: {} {}", method, url,);
 
         // Build web_sys::Headers
         let ws_headers = web_sys::Headers::new()

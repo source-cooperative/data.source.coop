@@ -77,8 +77,11 @@ fn url_encoded_prefix_decoded() {
 
 #[test]
 fn object_request_basic() {
-    let result =
-        parse_request(&Method::GET, "/cholmes/admin-boundaries/countries.parquet", None);
+    let result = parse_request(
+        &Method::GET,
+        "/cholmes/admin-boundaries/countries.parquet",
+        None,
+    );
     match result {
         ParsedRequest::ObjectRequest {
             rewritten_path,
