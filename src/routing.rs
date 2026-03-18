@@ -3,6 +3,16 @@
 //! Translates `/{account}/{product}/{key}` paths into multistore's virtual
 //! bucket model where bucket = `{account}--{product}`.
 
+/// Info for rewriting list responses when the request was routed via prefix.
+pub struct PrefixRouteInfo {
+    /// The account name (used for `<Name>` rewriting).
+    pub account: String,
+    /// The product name (used for prepending to keys).
+    pub product: String,
+    /// The original prefix as seen by the client (used for `<Prefix>` rewriting).
+    pub original_prefix: String,
+}
+
 /// The result of parsing an incoming request URL.
 pub enum ParsedRequest {
     /// Root index: `GET /`
@@ -16,6 +26,10 @@ pub enum ParsedRequest {
     ProductList {
         rewritten_path: String,
         query: String,
+        /// When the request was routed via prefix (e.g. `?prefix=product/...`),
+        /// this contains the product name so we can rewrite keys in the response.
+        /// `None` for segment-routed requests (`/{account}/{product}?list-type=2`).
+        prefix_route: Option<PrefixRouteInfo>,
     },
     /// List products for an account: `GET /{account}?list-type=2` (no product in prefix)
     AccountList {
@@ -80,6 +94,7 @@ pub fn parse_request(method: &http::Method, path: &str, query: Option<&str>) -> 
                 return ParsedRequest::ProductList {
                     rewritten_path: format!("/{}", bucket),
                     query: query.unwrap_or("").to_string(),
+                    prefix_route: None,
                 };
             }
 
@@ -107,6 +122,11 @@ fn route_list_with_prefix(account: &str, prefix: &str, query_str: &str) -> Parse
         ParsedRequest::ProductList {
             rewritten_path: format!("/{}", bucket),
             query: new_query,
+            prefix_route: Some(PrefixRouteInfo {
+                account: account.to_string(),
+                product: product.to_string(),
+                original_prefix: prefix.to_string(),
+            }),
         }
     } else {
         // prefix is just "product" without trailing slash — list all objects in product
@@ -115,6 +135,11 @@ fn route_list_with_prefix(account: &str, prefix: &str, query_str: &str) -> Parse
         ParsedRequest::ProductList {
             rewritten_path: format!("/{}", bucket),
             query: new_query,
+            prefix_route: Some(PrefixRouteInfo {
+                account: account.to_string(),
+                product: prefix.to_string(),
+                original_prefix: prefix.to_string(),
+            }),
         }
     }
 }

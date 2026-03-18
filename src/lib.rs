@@ -105,19 +105,98 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         ParsedRequest::ProductList {
             rewritten_path,
             query: q,
+            prefix_route,
         } => {
             let req_info = RequestInfo::new(&method, &rewritten_path, Some(&q), &headers, None);
             match gateway
                 .handle_request(&req_info, js_body, collect_js_body)
                 .await
             {
-                GatewayResponse::Response(result) => proxy_result_to_ws_response(result),
+                GatewayResponse::Response(mut result) => {
+                    if let Some(ref info) = prefix_route {
+                        // Rewrite the XML to match the client's view:
+                        // - <Name> → account (not account--product)
+                        // - <Prefix> → original prefix (not rewritten one)
+                        // - <Key> values → prepend product/
+                        // - <CommonPrefixes><Prefix> → prepend product/
+                        let bucket_name = rewritten_path.trim_start_matches('/');
+                        result.body = rewrite_list_xml(
+                            result.body,
+                            bucket_name,
+                            info,
+                        );
+                    }
+                    proxy_result_to_ws_response(result)
+                }
                 GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
             }
         }
     };
 
     Ok(add_cors(response))
+}
+
+/// Rewrite list XML response so clients see the original account/prefix view
+/// rather than multistore's internal `account--product` bucket structure.
+///
+/// Rewrites:
+/// - `<Name>` → account name
+/// - Top-level `<Prefix>` → original prefix
+/// - `<Key>` values → prepend `product/`
+/// - `<CommonPrefixes><Prefix>` values → prepend `product/`
+fn rewrite_list_xml(
+    body: multistore::route_handler::ProxyResponseBody,
+    internal_bucket: &str,
+    info: &routing::PrefixRouteInfo,
+) -> multistore::route_handler::ProxyResponseBody {
+    use bytes::Bytes;
+    use multistore::route_handler::ProxyResponseBody;
+
+    let ProxyResponseBody::Bytes(bytes) = body else {
+        return body;
+    };
+    let Ok(xml) = std::str::from_utf8(&bytes) else {
+        return ProxyResponseBody::Bytes(bytes);
+    };
+
+    // Replace <Name>account--product</Name> → <Name>account</Name>
+    let xml = xml.replace(
+        &format!("<Name>{}</Name>", internal_bucket),
+        &format!("<Name>{}</Name>", info.account),
+    );
+
+    // Replace the top-level <Prefix>...</Prefix> with the original prefix.
+    // The first <Prefix> after <Name> is the top-level one.
+    let xml = if let Some(name_end) = xml.find("</Name>") {
+        if let Some(rel_pos) = xml[name_end..].find("<Prefix>") {
+            let prefix_start = name_end + rel_pos;
+            let prefix_end = prefix_start
+                + xml[prefix_start..].find("</Prefix>").unwrap_or(0)
+                + "</Prefix>".len();
+            format!(
+                "{}<Prefix>{}</Prefix>{}",
+                &xml[..prefix_start],
+                info.original_prefix,
+                &xml[prefix_end..]
+            )
+        } else {
+            xml
+        }
+    } else {
+        xml
+    };
+
+    // Prepend product/ to all <Key>...</Key> values
+    let product_prefix = format!("{}/", info.product);
+    let xml = xml.replace("<Key>", &format!("<Key>{}", product_prefix));
+
+    // Prepend product/ to <Prefix> values inside <CommonPrefixes>
+    let xml = xml.replace(
+        "<CommonPrefixes><Prefix>",
+        &format!("<CommonPrefixes><Prefix>{}", product_prefix),
+    );
+
+    ProxyResponseBody::from_bytes(Bytes::from(xml))
 }
 
 /// Add CORS headers to a response.
