@@ -168,14 +168,26 @@ async fn resolve_product_inner(
         Some(full_prefix)
     };
 
-    Ok(BucketConfig {
+    let config = BucketConfig {
         name: format!("{}--{}", account, product),
         backend_type,
         backend_prefix,
         anonymous_access: true,
         allowed_roles: vec![],
         backend_options,
-    })
+    };
+
+    worker::console_log!(
+        "Resolved {}/{}: backend={}, bucket={}, prefix={:?}, endpoint={}",
+        account,
+        product,
+        config.backend_type,
+        config.backend_options.get("bucket_name").map(|s| s.as_str()).unwrap_or("?"),
+        config.backend_prefix,
+        config.backend_options.get("endpoint").map(|s| s.as_str()).unwrap_or("?"),
+    );
+
+    Ok(config)
 }
 
 /// HTTP fetch helper using the Workers Fetch API.

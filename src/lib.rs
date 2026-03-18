@@ -61,7 +61,30 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         return Ok(add_cors(ws_error_response(204, "")));
     }
 
-    let response = match parse_request(&method, &path, query.as_deref()) {
+    let parsed = parse_request(&method, &path, query.as_deref());
+    worker::console_log!(
+        "{} {} -> {:?}",
+        method,
+        path,
+        match &parsed {
+            ParsedRequest::Index => "Index".to_string(),
+            ParsedRequest::WriteNotAllowed => "WriteNotAllowed".to_string(),
+            ParsedRequest::BadRequest(msg) => format!("BadRequest({})", msg),
+            ParsedRequest::AccountList { account, .. } => format!("AccountList({})", account),
+            ParsedRequest::ObjectRequest { rewritten_path, .. } =>
+                format!("ObjectRequest({})", rewritten_path),
+            ParsedRequest::ProductList { rewritten_path, prefix_route, .. } =>
+                format!(
+                    "ProductList({}, prefix_route={})",
+                    rewritten_path,
+                    prefix_route.as_ref().map_or("none".to_string(), |r| {
+                        format!("{}/{}", r.account, r.product)
+                    })
+                ),
+        }
+    );
+
+    let response = match parsed {
         ParsedRequest::Index => {
             ws_error_response(200, &format!("Source Cooperative Data Proxy v{}", VERSION))
         }
@@ -85,13 +108,16 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                     );
                     ws_xml_response(200, &xml)
                 }
-                Err(_) => ws_xml_response(
-                    200,
-                    &format!(
-                        r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><IsTruncated>false</IsTruncated></ListBucketResult>"#,
-                        account
-                    ),
-                ),
+                Err(e) => {
+                    worker::console_error!("AccountList({}) error: {:?}", account, e);
+                    ws_xml_response(
+                        200,
+                        &format!(
+                            r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><IsTruncated>false</IsTruncated></ListBucketResult>"#,
+                            account
+                        ),
+                    )
+                }
             }
         }
 
@@ -100,10 +126,37 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             query: q,
         } => {
             let req_info = RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
-            match gateway
+            let result = gateway
                 .handle_request(&req_info, js_body, collect_js_body)
-                .await
-            {
+                .await;
+            match result {
+                GatewayResponse::Response(ref r) => {
+                    if r.status >= 400 {
+                        let body_str = match &r.body {
+                            multistore::route_handler::ProxyResponseBody::Bytes(b) =>
+                                std::str::from_utf8(b).unwrap_or("<binary>").to_string(),
+                            multistore::route_handler::ProxyResponseBody::Empty =>
+                                "<empty>".to_string(),
+                        };
+                        worker::console_error!(
+                            "ObjectRequest({}) returned {}: {}",
+                            rewritten_path,
+                            r.status,
+                            body_str
+                        );
+                    }
+                }
+                GatewayResponse::Forward(ref r) => {
+                    if r.status >= 400 {
+                        worker::console_error!(
+                            "ObjectRequest({}) forwarded {}",
+                            rewritten_path,
+                            r.status
+                        );
+                    }
+                }
+            }
+            match result {
                 GatewayResponse::Response(result) => proxy_result_to_ws_response(result),
                 GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
             }
@@ -115,17 +168,39 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             prefix_route,
         } => {
             let req_info = RequestInfo::new(&method, &rewritten_path, Some(&q), &headers, None);
-            match gateway
+            let result = gateway
                 .handle_request(&req_info, js_body, collect_js_body)
-                .await
-            {
+                .await;
+            match result {
+                GatewayResponse::Response(ref r) => {
+                    if r.status >= 400 {
+                        let body_str = match &r.body {
+                            multistore::route_handler::ProxyResponseBody::Bytes(b) =>
+                                std::str::from_utf8(b).unwrap_or("<binary>").to_string(),
+                            multistore::route_handler::ProxyResponseBody::Empty =>
+                                "<empty>".to_string(),
+                        };
+                        worker::console_error!(
+                            "ProductList({}) returned {}: {}",
+                            rewritten_path,
+                            r.status,
+                            body_str
+                        );
+                    }
+                }
+                GatewayResponse::Forward(ref r) => {
+                    if r.status >= 400 {
+                        worker::console_error!(
+                            "ProductList({}) forwarded {}",
+                            rewritten_path,
+                            r.status
+                        );
+                    }
+                }
+            }
+            match result {
                 GatewayResponse::Response(mut result) => {
                     if let Some(ref info) = prefix_route {
-                        // Rewrite the XML to match the client's view:
-                        // - <Name> → account (not account--product)
-                        // - <Prefix> → original prefix (not rewritten one)
-                        // - <Key> values → prepend product/
-                        // - <CommonPrefixes><Prefix> → prepend product/
                         let bucket_name = rewritten_path.trim_start_matches('/');
                         result.body = rewrite_list_xml(
                             result.body,
