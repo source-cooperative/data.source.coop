@@ -66,7 +66,9 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let uri: http::Uri = url_str
         .parse()
         .unwrap_or_else(|_| http::Uri::from_static("/"));
-    let path = uri.path().to_string();
+    let path = percent_encoding::percent_decode_str(uri.path())
+        .decode_utf8_lossy()
+        .to_string();
     let query = uri.query().map(|q| q.to_string());
     let mut headers = convert_ws_headers(&req.headers());
 
