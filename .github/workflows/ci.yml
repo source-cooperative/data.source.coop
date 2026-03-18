@@ -32,6 +32,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
 
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -70,6 +79,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: astral-sh/setup-uv@v5
       - name: Install wrangler
         run: npm install -g wrangler@3
       - name: Install worker-build
@@ -77,7 +87,6 @@ jobs:
       - name: Start wrangler dev
         run: |
           wrangler dev --port 8787 &
-          # Wait for the server to be ready
           for i in $(seq 1 60); do
             if curl -s --max-time 2 http://localhost:8787/ > /dev/null 2>&1; then
               echo "Server ready after ${i}s"
@@ -85,40 +94,8 @@ jobs:
             fi
             sleep 1
           done
-      - name: Test index endpoint
-        run: |
-          response=$(curl -s http://localhost:8787/)
-          echo "Response: $response"
-          echo "$response" | grep -q "Source Cooperative Data Proxy"
-      - name: Test write rejection
-        run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" -X PUT http://localhost:8787/test/test/file.txt)
-          echo "Status: $status"
-          [ "$status" = "405" ]
-      - name: Test CORS preflight
-        run: |
-          curl -s -D - -X OPTIONS http://localhost:8787/ | grep -i "access-control-allow-origin"
-      - name: Test product listing
-        run: |
-          response=$(curl -s "http://localhost:8787/cholmes?list-type=2&delimiter=/")
-          echo "Response: $response"
-          echo "$response" | grep -q "CommonPrefixes"
-      - name: Test file listing
-        run: |
-          response=$(curl -s "http://localhost:8787/cholmes?list-type=2&prefix=admin-boundaries/&max-keys=5")
-          echo "Response: $response"
-          echo "$response" | grep -q "countries.parquet"
-      - name: Test HEAD object
-        run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" -I "http://localhost:8787/cholmes/admin-boundaries/countries.parquet")
-          echo "Status: $status"
-          [ "$status" = "200" ]
-      - name: Test range request
-        run: |
-          curl -s -r 0-1023 -o /tmp/range_test.bin "http://localhost:8787/cholmes/admin-boundaries/countries.parquet"
-          size=$(wc -c < /tmp/range_test.bin)
-          echo "Size: $size"
-          [ "$size" -eq 1024 ]
+      - name: Run integration tests
+        run: uvx --with requests pytest tests/ -v
 
   audit:
     name: Security Audit
