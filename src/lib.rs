@@ -12,7 +12,7 @@ use multistore_cf_workers::{
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use registry::SourceCoopRegistry;
 use routing::{classify_request, RequestClass};
-use worker::*;
+use worker::{event, Context, Env, Result};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
