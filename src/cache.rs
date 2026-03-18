@@ -16,7 +16,7 @@ const PRODUCT_CACHE_SECS: u32 = 300; // 5 minutes
 const DATA_CONNECTIONS_CACHE_SECS: u32 = 1800; // 30 minutes
 
 /// Product list for an account (`/api/v1/products/{account}`).
-const PRODUCT_LIST_CACHE_SECS: u32 = 300; // 5 minutes
+const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
 
 // ── Cache key prefix ───────────────────────────────────────────────
 // The Cache API requires URL-shaped keys. We use a synthetic domain
@@ -113,10 +113,9 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     let _ = headers.set("content-type", "application/json");
     let _ = headers.set("cache-control", &format!("max-age={}", ttl_secs));
     if let Ok(cache_resp) = worker::Response::ok(&text) {
-        if let Ok(cache_resp) = cache_resp.with_headers(headers) {
-            if let Err(e) = cache.put(cache_key, cache_resp).await {
-                tracing::warn!("cache put failed: {}", e);
-            }
+        let cache_resp = cache_resp.with_headers(headers);
+        if let Err(e) = cache.put(cache_key, cache_resp).await {
+            tracing::warn!("cache put failed: {}", e);
         }
     }
 
