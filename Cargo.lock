@@ -788,7 +788,6 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.1.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fsource-coop#3af3845c900843e073dca031a8f15bbe692a1089"
 dependencies = [
  "async-trait",
  "base64",
@@ -808,6 +807,36 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "multistore-cf-workers"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "http",
+ "http-body",
+ "http-body-util",
+ "js-sys",
+ "multistore",
+ "object_store",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "worker",
+]
+
+[[package]]
+name = "multistore-path-mapping"
+version = "0.1.0"
+dependencies = [
+ "multistore",
+ "tracing",
 ]
 
 [[package]]
@@ -1373,24 +1402,16 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.0.0"
 dependencies = [
- "async-trait",
- "bytes",
  "console_error_panic_hook",
  "futures",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
  "http",
- "http-body",
- "http-body-util",
- "js-sys",
  "multistore",
- "object_store",
+ "multistore-cf-workers",
+ "multistore-path-mapping",
  "percent-encoding",
  "serde",
  "serde_json",
  "tracing",
- "url",
- "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "worker",

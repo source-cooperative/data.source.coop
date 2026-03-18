@@ -51,6 +51,7 @@ impl BucketRegistry for SourceCoopRegistry {
         Ok(ResolvedBucket {
             config,
             list_rewrite: None,
+            display_name: None,
         })
     }
 

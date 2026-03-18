@@ -7,56 +7,38 @@ version = "2.0.0"
 [lib]
 crate-type = ["cdylib"]
 # The cdylib depends on wasm-only crates (worker, wasm-bindgen-futures, web-sys)
-# that don't compile on native targets, so we disable `cargo test` for the lib
-# and use a standalone [[test]] binary for pure-Rust modules instead.
+# that don't compile on native targets, so we disable `cargo test` for the lib.
 test = false
 
-[[test]]
-name = "routing"
-path = "tests/routing.rs"
-
 [dependencies]
-# Multistore - Currently in alpha and not published to crates.io, so we pull directly from GitHub
-multistore = {git = "https://github.com/developmentseed/multistore", branch = "fix/source-coop", features = ["azure"]}
+# Multistore
+multistore = { path = "../../alukach/multistore/crates/core", features = ["azure"] }
+multistore-cf-workers = { path = "../../alukach/multistore/crates/cf-workers", features = ["azure"] }
+multistore-path-mapping = { path = "../../alukach/multistore/crates/path-mapping" }
 
 # Serialization
-serde = {version = "1", features = ["derive"]}
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# HTTP / networking
-async-trait = "0.1"
-bytes = "1"
-futures = "0.3"
+# HTTP
 http = "1"
 percent-encoding = "2"
-http-body = "1"
-http-body-util = "0.1"
-url = "2"
 
-# Object store
-object_store = {version = "0.13.1", default-features = false, features = ["aws"]}
+# Async
+futures = "0.3"
+wasm-bindgen-futures = "0.4"
 
 # Tracing
 tracing = "0.1"
 
 # Cloudflare Workers
-# Pinned to 0.7.4: worker 0.7.5 bumped wasm-streams 0.4→0.5, conflicting with reqwest
 console_error_panic_hook = "0.1"
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = {version = "0.3", features = [
+web-sys = { version = "0.3", features = [
   "Headers",
   "ReadableStream",
   "Request",
-  "RequestCache",
-  "RequestInit",
   "Response",
   "ResponseInit",
-]}
-worker = {version = "=0.7.4", features = ["http"]}
-worker-macros = {version = "=0.7.4", features = ["http"]}
-
-# WASM getrandom support
-getrandom_v02 = {package = "getrandom", version = "0.2", features = ["js"]}
-getrandom_v03 = {package = "getrandom", version = "0.3", features = ["wasm_js"]}
+] }
+worker = { version = "=0.7.4", features = ["http"] }
+worker-macros = { version = "=0.7.4", features = ["http"] }

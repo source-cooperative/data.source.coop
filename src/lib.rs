@@ -1,27 +1,34 @@
 mod cache;
-mod fetch_connector;
-mod noop_creds;
 mod registry;
-mod routing;
-mod tracing_layer;
-mod worker_backend;
-mod worker_infra;
 
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::RequestInfo;
-use noop_creds::NoopCredentialRegistry;
+use multistore_cf_workers::{
+    collect_js_body, convert_ws_headers, forward_response_to_ws, proxy_result_to_ws_response,
+    ws_error_response, ws_xml_response, JsBody, NoopCredentialRegistry, WorkerBackend,
+    WorkerSubscriber,
+};
+use multistore_path_mapping::{MappedRegistry, PathMapping};
 use registry::SourceCoopRegistry;
-use routing::{parse_request, ParsedRequest};
 use worker::*;
-use worker_backend::WorkerBackend;
-use worker_infra::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Source Cooperative path mapping: `/{account}/{product}/{key}`
+/// → internal bucket `account--product`, display name shows just `account`.
+fn source_coop_mapping() -> PathMapping {
+    PathMapping {
+        bucket_segments: 2,
+        bucket_separator: "--".to_string(),
+        display_bucket_segments: 1,
+    }
+}
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
 
+    // ── Tracing ────────────────────────────────────────────────────
     let log_level = env
         .var("LOG_LEVEL")
         .map(|v| v.to_string())
@@ -33,31 +40,27 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         "ERROR" => tracing::Level::ERROR,
         _ => tracing::Level::WARN,
     };
-    tracing::subscriber::set_global_default(
-        tracing_layer::WorkerSubscriber::new().with_max_level(max_level),
-    )
-    .ok();
+    tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
 
+    // ── Configuration ──────────────────────────────────────────────
     let api_base_url = env
         .var("SOURCE_API_URL")
         .map(|v| v.to_string())
         .unwrap_or_else(|_| "https://source.coop".to_string());
 
+    let mapping = source_coop_mapping();
     let registry = SourceCoopRegistry::new(api_base_url);
-    let creds = NoopCredentialRegistry;
+    let mapped_registry = MappedRegistry::new(registry.clone(), mapping.clone());
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        registry.clone(),
-        creds,
-        WorkerForwarder,
+        mapped_registry,
+        NoopCredentialRegistry,
         None,
     );
 
-    // Extract body stream BEFORE any wrapping — no lock, zero-cost ref.
+    // ── Parse request ──────────────────────────────────────────────
     let js_body = JsBody(req.body());
-
-    // Parse request metadata from the raw web_sys::Request.
     let method: http::Method = req.method().parse().unwrap_or(http::Method::GET);
     let url_str = req.url();
     let uri: http::Uri = url_str
@@ -67,278 +70,256 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let query = uri.query().map(|q| q.to_string());
     let mut headers = convert_ws_headers(&req.headers());
 
-    // Strip AWS auth headers — this proxy is anonymous-only, and forwarding
-    // them causes multistore to reject the request with AccessDenied when
-    // the credential registry has no matching key.
+    // Strip AWS auth headers — this proxy is anonymous-only.
     headers.remove(http::header::AUTHORIZATION);
     headers.remove("x-amz-security-token");
     headers.remove("x-amz-content-sha256");
 
-    // Handle OPTIONS preflight
+    // ── OPTIONS preflight ──────────────────────────────────────────
     if method == http::Method::OPTIONS {
         return Ok(add_cors(ws_error_response(204, "")));
     }
 
-    let parsed = parse_request(&method, &path, query.as_deref());
-    tracing::info!(
-        "{} {} -> {:?}",
+    // ── Reject write methods ───────────────────────────────────────
+    if matches!(
         method,
-        path,
-        match &parsed {
-            ParsedRequest::Index => "Index".to_string(),
-            ParsedRequest::WriteNotAllowed => "WriteNotAllowed".to_string(),
-            ParsedRequest::BadRequest(msg) => format!("BadRequest({})", msg),
-            ParsedRequest::AccountList { account, .. } => format!("AccountList({})", account),
-            ParsedRequest::ObjectRequest { rewritten_path, .. } =>
-                format!("ObjectRequest({})", rewritten_path),
-            ParsedRequest::ProductList {
-                rewritten_path,
-                prefix_route,
-                ..
-            } => format!(
-                "ProductList({}, prefix_route={})",
-                rewritten_path,
-                prefix_route.as_ref().map_or("none".to_string(), |r| {
-                    format!("{}/{}", r.account, r.product)
-                })
-            ),
-        }
-    );
+        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
+    ) {
+        return Ok(add_cors(ws_error_response(405, "Method Not Allowed")));
+    }
 
-    let response = match parsed {
-        ParsedRequest::Index => {
+    let response = match classify_request(&mapping, &method, &path, query.as_deref()) {
+        RequestClass::Index => {
             ws_error_response(200, &format!("Source Cooperative Data Proxy v{}", VERSION))
         }
 
-        ParsedRequest::WriteNotAllowed => ws_error_response(405, "Method Not Allowed"),
+        RequestClass::BadRequest(msg) => ws_error_response(400, &msg),
 
-        ParsedRequest::BadRequest(msg) => ws_error_response(400, &msg),
-
-        ParsedRequest::AccountList { account, .. } => {
-            match registry.list_products(&account).await {
-                Ok(products) => {
-                    let prefixes_xml: String = products
-                        .iter()
-                        .map(|p| {
-                            format!("<CommonPrefixes><Prefix>{}/</Prefix></CommonPrefixes>", p)
-                        })
-                        .collect();
-                    let xml = format!(
-                        r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated>{}</ListBucketResult>"#,
-                        account, prefixes_xml
-                    );
-                    ws_xml_response(200, &xml)
-                }
-                Err(e) => {
-                    tracing::error!("AccountList({}) error: {:?}", account, e);
-                    ws_xml_response(
-                        200,
-                        &format!(
-                            r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><IsTruncated>false</IsTruncated></ListBucketResult>"#,
-                            account
-                        ),
-                    )
-                }
-            }
+        RequestClass::AccountList { account } => {
+            handle_account_list(&registry, &account).await
         }
 
-        ParsedRequest::ObjectRequest {
+        RequestClass::ProxyRequest {
             rewritten_path,
             query: q,
         } => {
-            let req_info = RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
-            let result = gateway
-                .handle_request(&req_info, js_body, collect_js_body)
-                .await;
-            match result {
-                GatewayResponse::Response(ref r) => {
-                    if r.status >= 400 {
-                        let body_str = match &r.body {
-                            multistore::route_handler::ProxyResponseBody::Bytes(b) => {
-                                std::str::from_utf8(b).unwrap_or("<binary>").to_string()
-                            }
-                            multistore::route_handler::ProxyResponseBody::Empty => {
-                                "<empty>".to_string()
-                            }
-                        };
-                        if r.status >= 500 {
-                            tracing::error!(
-                                "ObjectRequest({}) returned {}: {}",
-                                rewritten_path,
-                                r.status,
-                                body_str
-                            );
-                        } else {
-                            tracing::warn!(
-                                "ObjectRequest({}) returned {}: {}",
-                                rewritten_path,
-                                r.status,
-                                body_str
-                            );
-                        }
-                    }
-                }
-                GatewayResponse::Forward(ref r) => {
-                    if r.status >= 500 {
-                        tracing::error!("ObjectRequest({}) forwarded {}", rewritten_path, r.status);
-                    } else if r.status >= 400 {
-                        tracing::warn!("ObjectRequest({}) forwarded {}", rewritten_path, r.status);
-                    }
-                }
-            }
-            match result {
-                GatewayResponse::Response(result) => proxy_result_to_ws_response(result),
-                GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
-            }
-        }
-
-        ParsedRequest::ProductList {
-            rewritten_path,
-            query: q,
-            prefix_route,
-        } => {
-            let req_info = RequestInfo::new(&method, &rewritten_path, Some(&q), &headers, None);
-            let result = gateway
-                .handle_request(&req_info, js_body, collect_js_body)
-                .await;
-            match result {
-                GatewayResponse::Response(ref r) => {
-                    if r.status >= 400 {
-                        let body_str = match &r.body {
-                            multistore::route_handler::ProxyResponseBody::Bytes(b) => {
-                                std::str::from_utf8(b).unwrap_or("<binary>").to_string()
-                            }
-                            multistore::route_handler::ProxyResponseBody::Empty => {
-                                "<empty>".to_string()
-                            }
-                        };
-                        if r.status >= 500 {
-                            tracing::error!(
-                                "ProductList({}) returned {}: {}",
-                                rewritten_path,
-                                r.status,
-                                body_str
-                            );
-                        } else {
-                            tracing::warn!(
-                                "ProductList({}) returned {}: {}",
-                                rewritten_path,
-                                r.status,
-                                body_str
-                            );
-                        }
-                    }
-                }
-                GatewayResponse::Forward(ref r) => {
-                    if r.status >= 500 {
-                        tracing::error!("ProductList({}) forwarded {}", rewritten_path, r.status);
-                    } else if r.status >= 400 {
-                        tracing::warn!("ProductList({}) forwarded {}", rewritten_path, r.status);
-                    }
-                }
-            }
-            match result {
-                GatewayResponse::Response(mut result) => {
-                    if let Some(ref info) = prefix_route {
-                        let bucket_name = rewritten_path.trim_start_matches('/');
-                        result.body = rewrite_list_xml(result.body, bucket_name, info);
-                    }
-                    proxy_result_to_ws_response(result)
-                }
-                GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
-            }
+            let req_info =
+                RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
+            dispatch_to_gateway(&gateway, &req_info, js_body, &rewritten_path).await
         }
     };
 
     Ok(add_cors(response))
 }
 
-/// Rewrite list XML response so clients see the original account/prefix view
-/// rather than multistore's internal `account--product` bucket structure.
-///
-/// Rewrites:
-/// - `<Name>` → account name
-/// - Top-level `<Prefix>` → original prefix
-/// - `<Key>` values → prepend `product/`
-/// - `<CommonPrefixes><Prefix>` values → prepend `product/`
-fn rewrite_list_xml(
-    body: multistore::route_handler::ProxyResponseBody,
-    internal_bucket: &str,
-    info: &routing::PrefixRouteInfo,
-) -> multistore::route_handler::ProxyResponseBody {
-    use bytes::Bytes;
-    use multistore::route_handler::ProxyResponseBody;
+// ── Request classification ─────────────────────────────────────────
 
-    let ProxyResponseBody::Bytes(bytes) = body else {
-        return body;
-    };
-    let Ok(xml) = std::str::from_utf8(&bytes) else {
-        return ProxyResponseBody::Bytes(bytes);
-    };
-
-    // Replace <Name>account--product</Name> → <Name>account</Name>
-    let xml = xml.replace(
-        &format!("<Name>{}</Name>", internal_bucket),
-        &format!("<Name>{}</Name>", info.account),
-    );
-
-    // Replace the top-level <Prefix.../> or <Prefix>...</Prefix> with the
-    // original prefix. quick-xml serializes empty strings as self-closing
-    // tags (<Prefix/>), so we must handle both forms.
-    let xml = if let Some(name_end) = xml.find("</Name>") {
-        let after_name = &xml[name_end..];
-        if let Some(rel_pos) = after_name.find("<Prefix/>") {
-            // Self-closing <Prefix/> (empty prefix from quick-xml)
-            let start = name_end + rel_pos;
-            let end = start + "<Prefix/>".len();
-            format!(
-                "{}<Prefix>{}</Prefix>{}",
-                &xml[..start],
-                info.original_prefix,
-                &xml[end..]
-            )
-        } else if let Some(rel_pos) = after_name.find("<Prefix>") {
-            // Regular <Prefix>...</Prefix>
-            let start = name_end + rel_pos;
-            let end = start + xml[start..].find("</Prefix>").unwrap_or(0) + "</Prefix>".len();
-            format!(
-                "{}<Prefix>{}</Prefix>{}",
-                &xml[..start],
-                info.original_prefix,
-                &xml[end..]
-            )
-        } else {
-            xml
-        }
-    } else {
-        xml
-    };
-
-    let product_prefix = format!("{}/", info.product);
-
-    // Prepend product/ to all <Key>...</Key> values
-    let xml = xml.replace("<Key>", &format!("<Key>{}", product_prefix));
-
-    // Fix backend directory marker: the backend stores a 0-byte key at the
-    // prefix path (e.g. `cholmes/overture`) which doesn't get stripped by
-    // multistore because it lacks the trailing `/`. After our prepend it
-    // becomes `overture/cholmes/overture` — normalize to `overture/`.
-    let xml = xml.replace(
-        &format!(
-            "<Key>{}{}/{}</Key>",
-            product_prefix, info.account, info.product
-        ),
-        &format!("<Key>{}</Key>", product_prefix),
-    );
-
-    // Prepend product/ to <Prefix> values inside <CommonPrefixes>
-    let xml = xml.replace(
-        "<CommonPrefixes><Prefix>",
-        &format!("<CommonPrefixes><Prefix>{}", product_prefix),
-    );
-
-    ProxyResponseBody::from_bytes(Bytes::from(xml))
+enum RequestClass {
+    /// Root index: `GET /`
+    Index,
+    /// Bad request
+    BadRequest(String),
+    /// List products for an account: `GET /{account}?list-type=2` (no product prefix)
+    AccountList { account: String },
+    /// Everything else goes through the gateway with a rewritten path
+    ProxyRequest {
+        rewritten_path: String,
+        query: Option<String>,
+    },
 }
+
+/// Classify an incoming request into one of the handled cases.
+fn classify_request(
+    mapping: &PathMapping,
+    _method: &http::Method,
+    path: &str,
+    query: Option<&str>,
+) -> RequestClass {
+    let trimmed = path.trim_matches('/');
+
+    // Root
+    if trimmed.is_empty() {
+        return RequestClass::Index;
+    }
+
+    // Try mapping the path (works for /{account}/{product}[/{key}])
+    if let Some(mapped) = mapping.parse(path) {
+        let rewritten_path = match mapped.key {
+            Some(ref key) => format!("/{}/{}", mapped.bucket, key),
+            None => format!("/{}", mapped.bucket),
+        };
+        return RequestClass::ProxyRequest {
+            rewritten_path,
+            query: query.map(|q| q.to_string()),
+        };
+    }
+
+    // Single segment: /{account} — must be a list or prefix-routed request
+    let segments: Vec<&str> = trimmed.splitn(2, '/').collect();
+    if segments.len() == 1 {
+        let account = segments[0];
+        let query_str = query.unwrap_or("");
+
+        if is_list_request(query_str) {
+            if let Some(prefix) = extract_query_param(query_str, "prefix") {
+                if !prefix.is_empty() {
+                    return route_list_with_prefix(mapping, account, &prefix, query_str);
+                }
+            }
+            // No prefix — list products for this account
+            return RequestClass::AccountList {
+                account: account.to_string(),
+            };
+        }
+        return RequestClass::BadRequest("Missing product in path".to_string());
+    }
+
+    // Shouldn't reach here, but fall back to bad request
+    RequestClass::BadRequest("Invalid request".to_string())
+}
+
+/// Route a list request where the prefix contains a product name.
+///
+/// `GET /{account}?list-type=2&prefix=product/subdir/` becomes
+/// a proxy request to `/{account--product}?list-type=2&prefix=subdir/`.
+fn route_list_with_prefix(
+    mapping: &PathMapping,
+    account: &str,
+    prefix: &str,
+    query_str: &str,
+) -> RequestClass {
+    let (product, remaining_prefix) = if let Some(slash_pos) = prefix.find('/') {
+        (&prefix[..slash_pos], &prefix[slash_pos + 1..])
+    } else {
+        (prefix, "")
+    };
+
+    let bucket = format!(
+        "{}{}{}",
+        account, mapping.bucket_separator, product
+    );
+    let new_query = rewrite_prefix_in_query(query_str, remaining_prefix);
+
+    RequestClass::ProxyRequest {
+        rewritten_path: format!("/{}", bucket),
+        query: Some(new_query),
+    }
+}
+
+// ── Account listing ────────────────────────────────────────────────
+
+/// Handle `GET /{account}?list-type=2` — list products via the Source Coop API.
+async fn handle_account_list(
+    registry: &SourceCoopRegistry,
+    account: &str,
+) -> web_sys::Response {
+    match registry.list_products(account).await {
+        Ok(products) => {
+            let prefixes_xml: String = products
+                .iter()
+                .map(|p| {
+                    format!("<CommonPrefixes><Prefix>{}/</Prefix></CommonPrefixes>", p)
+                })
+                .collect();
+            let xml = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated>{}</ListBucketResult>"#,
+                account, prefixes_xml
+            );
+            ws_xml_response(200, &xml)
+        }
+        Err(e) => {
+            tracing::error!("AccountList({}) error: {:?}", account, e);
+            ws_xml_response(
+                200,
+                &format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><IsTruncated>false</IsTruncated></ListBucketResult>"#,
+                    account
+                ),
+            )
+        }
+    }
+}
+
+// ── Gateway dispatch ───────────────────────────────────────────────
+
+/// Dispatch a request through the ProxyGateway and convert the result to a web_sys::Response.
+async fn dispatch_to_gateway(
+    gateway: &ProxyGateway<
+        WorkerBackend,
+        MappedRegistry<SourceCoopRegistry>,
+        NoopCredentialRegistry,
+    >,
+    req_info: &RequestInfo<'_>,
+    js_body: JsBody,
+    rewritten_path: &str,
+) -> web_sys::Response {
+    let result = gateway
+        .handle_request(req_info, js_body, collect_js_body)
+        .await;
+
+    match &result {
+        GatewayResponse::Response(ref r) if r.status >= 400 => {
+            let body_str = match &r.body {
+                multistore::route_handler::ProxyResponseBody::Bytes(b) => {
+                    std::str::from_utf8(b).unwrap_or("<binary>").to_string()
+                }
+                multistore::route_handler::ProxyResponseBody::Empty => "<empty>".to_string(),
+            };
+            if r.status >= 500 {
+                tracing::error!("{} returned {}: {}", rewritten_path, r.status, body_str);
+            } else {
+                tracing::warn!("{} returned {}: {}", rewritten_path, r.status, body_str);
+            }
+        }
+        GatewayResponse::Forward(ref r) if r.status >= 400 => {
+            if r.status >= 500 {
+                tracing::error!("{} forwarded {}", rewritten_path, r.status);
+            } else {
+                tracing::warn!("{} forwarded {}", rewritten_path, r.status);
+            }
+        }
+        _ => {}
+    }
+
+    match result {
+        GatewayResponse::Response(result) => proxy_result_to_ws_response(result),
+        GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
+    }
+}
+
+// ── Query helpers ──────────────────────────────────────────────────
+
+fn is_list_request(query: &str) -> bool {
+    query.contains("list-type=")
+}
+
+fn extract_query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        pair.split_once('=')
+            .filter(|(k, _)| *k == key)
+            .map(|(_, v)| {
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
+    })
+}
+
+fn rewrite_prefix_in_query(query: &str, new_prefix: &str) -> String {
+    query
+        .split('&')
+        .map(|pair| {
+            if pair.starts_with("prefix=") {
+                format!("prefix={}", new_prefix)
+            } else {
+                pair.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+// ── CORS ───────────────────────────────────────────────────────────
 
 /// Add CORS headers to a response.
 fn add_cors(resp: web_sys::Response) -> web_sys::Response {
