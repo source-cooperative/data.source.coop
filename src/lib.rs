@@ -90,14 +90,17 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             ParsedRequest::AccountList { account, .. } => format!("AccountList({})", account),
             ParsedRequest::ObjectRequest { rewritten_path, .. } =>
                 format!("ObjectRequest({})", rewritten_path),
-            ParsedRequest::ProductList { rewritten_path, prefix_route, .. } =>
-                format!(
-                    "ProductList({}, prefix_route={})",
-                    rewritten_path,
-                    prefix_route.as_ref().map_or("none".to_string(), |r| {
-                        format!("{}/{}", r.account, r.product)
-                    })
-                ),
+            ParsedRequest::ProductList {
+                rewritten_path,
+                prefix_route,
+                ..
+            } => format!(
+                "ProductList({}, prefix_route={})",
+                rewritten_path,
+                prefix_route.as_ref().map_or("none".to_string(), |r| {
+                    format!("{}/{}", r.account, r.product)
+                })
+            ),
         }
     );
 
@@ -150,26 +153,35 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 GatewayResponse::Response(ref r) => {
                     if r.status >= 400 {
                         let body_str = match &r.body {
-                            multistore::route_handler::ProxyResponseBody::Bytes(b) =>
-                                std::str::from_utf8(b).unwrap_or("<binary>").to_string(),
-                            multistore::route_handler::ProxyResponseBody::Empty =>
-                                "<empty>".to_string(),
+                            multistore::route_handler::ProxyResponseBody::Bytes(b) => {
+                                std::str::from_utf8(b).unwrap_or("<binary>").to_string()
+                            }
+                            multistore::route_handler::ProxyResponseBody::Empty => {
+                                "<empty>".to_string()
+                            }
                         };
-                        tracing::error!(
-                            "ObjectRequest({}) returned {}: {}",
-                            rewritten_path,
-                            r.status,
-                            body_str
-                        );
+                        if r.status >= 500 {
+                            tracing::error!(
+                                "ObjectRequest({}) returned {}: {}",
+                                rewritten_path,
+                                r.status,
+                                body_str
+                            );
+                        } else {
+                            tracing::warn!(
+                                "ObjectRequest({}) returned {}: {}",
+                                rewritten_path,
+                                r.status,
+                                body_str
+                            );
+                        }
                     }
                 }
                 GatewayResponse::Forward(ref r) => {
-                    if r.status >= 400 {
-                        tracing::error!(
-                            "ObjectRequest({}) forwarded {}",
-                            rewritten_path,
-                            r.status
-                        );
+                    if r.status >= 500 {
+                        tracing::error!("ObjectRequest({}) forwarded {}", rewritten_path, r.status);
+                    } else if r.status >= 400 {
+                        tracing::warn!("ObjectRequest({}) forwarded {}", rewritten_path, r.status);
                     }
                 }
             }
@@ -192,26 +204,35 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 GatewayResponse::Response(ref r) => {
                     if r.status >= 400 {
                         let body_str = match &r.body {
-                            multistore::route_handler::ProxyResponseBody::Bytes(b) =>
-                                std::str::from_utf8(b).unwrap_or("<binary>").to_string(),
-                            multistore::route_handler::ProxyResponseBody::Empty =>
-                                "<empty>".to_string(),
+                            multistore::route_handler::ProxyResponseBody::Bytes(b) => {
+                                std::str::from_utf8(b).unwrap_or("<binary>").to_string()
+                            }
+                            multistore::route_handler::ProxyResponseBody::Empty => {
+                                "<empty>".to_string()
+                            }
                         };
-                        tracing::error!(
-                            "ProductList({}) returned {}: {}",
-                            rewritten_path,
-                            r.status,
-                            body_str
-                        );
+                        if r.status >= 500 {
+                            tracing::error!(
+                                "ProductList({}) returned {}: {}",
+                                rewritten_path,
+                                r.status,
+                                body_str
+                            );
+                        } else {
+                            tracing::warn!(
+                                "ProductList({}) returned {}: {}",
+                                rewritten_path,
+                                r.status,
+                                body_str
+                            );
+                        }
                     }
                 }
                 GatewayResponse::Forward(ref r) => {
-                    if r.status >= 400 {
-                        tracing::error!(
-                            "ProductList({}) forwarded {}",
-                            rewritten_path,
-                            r.status
-                        );
+                    if r.status >= 500 {
+                        tracing::error!("ProductList({}) forwarded {}", rewritten_path, r.status);
+                    } else if r.status >= 400 {
+                        tracing::warn!("ProductList({}) forwarded {}", rewritten_path, r.status);
                     }
                 }
             }
@@ -219,11 +240,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 GatewayResponse::Response(mut result) => {
                     if let Some(ref info) = prefix_route {
                         let bucket_name = rewritten_path.trim_start_matches('/');
-                        result.body = rewrite_list_xml(
-                            result.body,
-                            bucket_name,
-                            info,
-                        );
+                        result.body = rewrite_list_xml(result.body, bucket_name, info);
                     }
                     proxy_result_to_ws_response(result)
                 }
@@ -282,9 +299,7 @@ fn rewrite_list_xml(
         } else if let Some(rel_pos) = after_name.find("<Prefix>") {
             // Regular <Prefix>...</Prefix>
             let start = name_end + rel_pos;
-            let end = start
-                + xml[start..].find("</Prefix>").unwrap_or(0)
-                + "</Prefix>".len();
+            let end = start + xml[start..].find("</Prefix>").unwrap_or(0) + "</Prefix>".len();
             format!(
                 "{}<Prefix>{}</Prefix>{}",
                 &xml[..start],
