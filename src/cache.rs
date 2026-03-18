@@ -18,11 +18,6 @@ const DATA_CONNECTIONS_CACHE_SECS: u32 = 1800; // 30 minutes
 /// Product list for an account (`/api/v1/products/{account}`).
 const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
 
-// ── Cache key prefix ───────────────────────────────────────────────
-// The Cache API requires URL-shaped keys. We use a synthetic domain
-// that never hits the network.
-const CACHE_KEY_BASE: &str = "https://cache.internal";
-
 // ── Public cache functions ─────────────────────────────────────────
 
 /// Fetch a single product's metadata, cached for `PRODUCT_CACHE_SECS`.
@@ -32,8 +27,7 @@ pub async fn get_or_fetch_product(
     product: &str,
 ) -> Result<SourceProduct, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
-    let cache_key = format!("{}/product/{}/{}", CACHE_KEY_BASE, account, product);
-    cached_fetch(&cache_key, &api_url, PRODUCT_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, PRODUCT_CACHE_SECS).await
 }
 
 /// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
@@ -41,8 +35,7 @@ pub async fn get_or_fetch_data_connections(
     api_base_url: &str,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
-    let cache_key = format!("{}/data-connections", CACHE_KEY_BASE);
-    cached_fetch(&cache_key, &api_url, DATA_CONNECTIONS_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, DATA_CONNECTIONS_CACHE_SECS).await
 }
 
 /// Fetch an account's product list, cached for `PRODUCT_LIST_CACHE_SECS`.
@@ -51,8 +44,7 @@ pub async fn get_or_fetch_product_list(
     account: &str,
 ) -> Result<SourceProductList, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
-    let cache_key = format!("{}/product-list/{}", CACHE_KEY_BASE, account);
-    cached_fetch(&cache_key, &api_url, PRODUCT_LIST_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, PRODUCT_LIST_CACHE_SECS).await
 }
 
 // ── Internal helper ────────────────────────────────────────────────
