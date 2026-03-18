@@ -1,3 +1,4 @@
+mod cache;
 mod fetch_connector;
 mod noop_creds;
 mod registry;
