@@ -1,5 +1,6 @@
 mod cache;
 mod registry;
+pub mod routing;
 
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::RequestInfo;
@@ -10,6 +11,7 @@ use multistore_cf_workers::{
 };
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use registry::SourceCoopRegistry;
+use routing::{classify_request, RequestClass};
 use worker::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -90,7 +92,9 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         return Ok(add_cors(ws_error_response(405, "Method Not Allowed")));
     }
 
-    let response = match classify_request(&mapping, &method, &path, query.as_deref()) {
+    tracing::debug!("{} {}", method, path);
+
+    let response = match classify_request(&mapping, &path, query.as_deref()) {
         RequestClass::Index => {
             ws_error_response(200, &format!("Source Cooperative Data Proxy v{}", VERSION))
         }
@@ -114,99 +118,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     Ok(add_cors(response))
 }
 
-// ── Request classification ─────────────────────────────────────────
-
-enum RequestClass {
-    /// Root index: `GET /`
-    Index,
-    /// Bad request
-    BadRequest(String),
-    /// List products for an account: `GET /{account}?list-type=2` (no product prefix)
-    AccountList { account: String },
-    /// Everything else goes through the gateway with a rewritten path
-    ProxyRequest {
-        rewritten_path: String,
-        query: Option<String>,
-    },
-}
-
-/// Classify an incoming request into one of the handled cases.
-fn classify_request(
-    mapping: &PathMapping,
-    _method: &http::Method,
-    path: &str,
-    query: Option<&str>,
-) -> RequestClass {
-    let trimmed = path.trim_matches('/');
-
-    // Root
-    if trimmed.is_empty() {
-        return RequestClass::Index;
-    }
-
-    // Try mapping the path (works for /{account}/{product}[/{key}])
-    if let Some(mapped) = mapping.parse(path) {
-        let rewritten_path = match mapped.key {
-            Some(ref key) => format!("/{}/{}", mapped.bucket, key),
-            None => format!("/{}", mapped.bucket),
-        };
-        return RequestClass::ProxyRequest {
-            rewritten_path,
-            query: query.map(|q| q.to_string()),
-        };
-    }
-
-    // Single segment: /{account} — must be a list or prefix-routed request
-    let segments: Vec<&str> = trimmed.splitn(2, '/').collect();
-    if segments.len() == 1 {
-        let account = segments[0];
-        let query_str = query.unwrap_or("");
-
-        if is_list_request(query_str) {
-            if let Some(prefix) = extract_query_param(query_str, "prefix") {
-                if !prefix.is_empty() {
-                    return route_list_with_prefix(mapping, account, &prefix, query_str);
-                }
-            }
-            // No prefix — list products for this account
-            return RequestClass::AccountList {
-                account: account.to_string(),
-            };
-        }
-        return RequestClass::BadRequest("Missing product in path".to_string());
-    }
-
-    // Shouldn't reach here, but fall back to bad request
-    RequestClass::BadRequest("Invalid request".to_string())
-}
-
-/// Route a list request where the prefix contains a product name.
-///
-/// `GET /{account}?list-type=2&prefix=product/subdir/` becomes
-/// a proxy request to `/{account--product}?list-type=2&prefix=subdir/`.
-fn route_list_with_prefix(
-    mapping: &PathMapping,
-    account: &str,
-    prefix: &str,
-    query_str: &str,
-) -> RequestClass {
-    let (product, remaining_prefix) = if let Some(slash_pos) = prefix.find('/') {
-        (&prefix[..slash_pos], &prefix[slash_pos + 1..])
-    } else {
-        (prefix, "")
-    };
-
-    let bucket = format!(
-        "{}{}{}",
-        account, mapping.bucket_separator, product
-    );
-    let new_query = rewrite_prefix_in_query(query_str, remaining_prefix);
-
-    RequestClass::ProxyRequest {
-        rewritten_path: format!("/{}", bucket),
-        query: Some(new_query),
-    }
-}
+// ── Request classification (see routing.rs) ───────────────────────
 
 // ── Account listing ────────────────────────────────────────────────
 
@@ -289,37 +201,6 @@ async fn dispatch_to_gateway(
     }
 }
 
-// ── Query helpers ──────────────────────────────────────────────────
-
-fn is_list_request(query: &str) -> bool {
-    query.contains("list-type=")
-}
-
-fn extract_query_param(query: &str, key: &str) -> Option<String> {
-    query.split('&').find_map(|pair| {
-        pair.split_once('=')
-            .filter(|(k, _)| *k == key)
-            .map(|(_, v)| {
-                percent_encoding::percent_decode_str(v)
-                    .decode_utf8_lossy()
-                    .into_owned()
-            })
-    })
-}
-
-fn rewrite_prefix_in_query(query: &str, new_prefix: &str) -> String {
-    query
-        .split('&')
-        .map(|pair| {
-            if pair.starts_with("prefix=") {
-                format!("prefix={}", new_prefix)
-            } else {
-                pair.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("&")
-}
 
 // ── CORS ───────────────────────────────────────────────────────────
 
