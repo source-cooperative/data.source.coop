@@ -5,15 +5,25 @@ name = "source-data-proxy"
 routes = [
   {pattern = "alpha.data.source.coop/*", zone_name = "coolnewgeo.com"},
   {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "data-1.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "data-2.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "data-3.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "data-4.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "a.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "b.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "c.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "d.data.source.coop/*", zone_name = "coolnewgeo.com"},
 ]
 
 [build]
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
 [vars]
-SOURCE_API_URL = "https://source.coop"
 LOG_LEVEL = "WARN"
+SOURCE_API_URL = "https://source.coop"
+
+[env.staging]
+routes = [
+  {pattern = "data.staging.coolnewgeo.com/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data.staging.source.coop/*", zone_name = "coolnewgeo.com"},
+]
+
+[env.staging.vars]
+LOG_LEVEL = "DEBUG"
+SOURCE_API_URL = "https://staging.source.coop"
