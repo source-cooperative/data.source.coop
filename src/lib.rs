@@ -172,19 +172,32 @@ fn rewrite_list_xml(
         &format!("<Name>{}</Name>", info.account),
     );
 
-    // Replace the top-level <Prefix>...</Prefix> with the original prefix.
-    // The first <Prefix> after <Name> is the top-level one.
+    // Replace the top-level <Prefix.../> or <Prefix>...</Prefix> with the
+    // original prefix. quick-xml serializes empty strings as self-closing
+    // tags (<Prefix/>), so we must handle both forms.
     let xml = if let Some(name_end) = xml.find("</Name>") {
-        if let Some(rel_pos) = xml[name_end..].find("<Prefix>") {
-            let prefix_start = name_end + rel_pos;
-            let prefix_end = prefix_start
-                + xml[prefix_start..].find("</Prefix>").unwrap_or(0)
+        let after_name = &xml[name_end..];
+        if let Some(rel_pos) = after_name.find("<Prefix/>") {
+            // Self-closing <Prefix/> (empty prefix from quick-xml)
+            let start = name_end + rel_pos;
+            let end = start + "<Prefix/>".len();
+            format!(
+                "{}<Prefix>{}</Prefix>{}",
+                &xml[..start],
+                info.original_prefix,
+                &xml[end..]
+            )
+        } else if let Some(rel_pos) = after_name.find("<Prefix>") {
+            // Regular <Prefix>...</Prefix>
+            let start = name_end + rel_pos;
+            let end = start
+                + xml[start..].find("</Prefix>").unwrap_or(0)
                 + "</Prefix>".len();
             format!(
                 "{}<Prefix>{}</Prefix>{}",
-                &xml[..prefix_start],
+                &xml[..start],
                 info.original_prefix,
-                &xml[prefix_end..]
+                &xml[end..]
             )
         } else {
             xml
@@ -193,9 +206,22 @@ fn rewrite_list_xml(
         xml
     };
 
-    // Prepend product/ to all <Key>...</Key> values
     let product_prefix = format!("{}/", info.product);
+
+    // Prepend product/ to all <Key>...</Key> values
     let xml = xml.replace("<Key>", &format!("<Key>{}", product_prefix));
+
+    // Fix backend directory marker: the backend stores a 0-byte key at the
+    // prefix path (e.g. `cholmes/overture`) which doesn't get stripped by
+    // multistore because it lacks the trailing `/`. After our prepend it
+    // becomes `overture/cholmes/overture` — normalize to `overture/`.
+    let xml = xml.replace(
+        &format!(
+            "<Key>{}{}/{}</Key>",
+            product_prefix, info.account, info.product
+        ),
+        &format!("<Key>{}</Key>", product_prefix),
+    );
 
     // Prepend product/ to <Prefix> values inside <CommonPrefixes>
     let xml = xml.replace(

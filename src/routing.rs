@@ -53,7 +53,7 @@ pub fn parse_request(method: &http::Method, path: &str, query: Option<&str>) -> 
         return ParsedRequest::WriteNotAllowed;
     }
 
-    let trimmed = path.trim_start_matches('/');
+    let trimmed = path.trim_matches('/');
 
     // Root
     if trimmed.is_empty() {
@@ -71,7 +71,7 @@ pub fn parse_request(method: &http::Method, path: &str, query: Option<&str>) -> 
             if is_list_request(query_str) {
                 if let Some(prefix) = extract_query_param(query_str, "prefix") {
                     if !prefix.is_empty() {
-                        return route_list_with_prefix(account, prefix, query_str);
+                        return route_list_with_prefix(account, &prefix, query_str);
                     }
                 }
                 // No prefix — list products for this account
@@ -148,11 +148,15 @@ fn is_list_request(query: &str) -> bool {
     query.contains("list-type=")
 }
 
-fn extract_query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+fn extract_query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         pair.split_once('=')
             .filter(|(k, _)| *k == key)
-            .map(|(_, v)| v)
+            .map(|(_, v)| {
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
     })
 }
 
