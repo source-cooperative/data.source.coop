@@ -180,14 +180,13 @@ async fn resolve_product_inner(
         backend_options,
     };
 
-    worker::console_log!(
-        "Resolved {}/{}: backend={}, bucket={}, prefix={:?}, endpoint={}",
+    tracing::debug!(
+        "Resolved {}/{}: backend={}, prefix={:?}, options={:?}",
         account,
         product,
         config.backend_type,
-        config.backend_options.get("bucket_name").map(|s| s.as_str()).unwrap_or("?"),
         config.backend_prefix,
-        config.backend_options.get("endpoint").map(|s| s.as_str()).unwrap_or("?"),
+        config.backend_options,
     );
 
     Ok(config)

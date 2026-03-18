@@ -46,9 +46,9 @@ impl ProxyBackend for WorkerBackend {
         body: Bytes,
     ) -> Result<RawResponse, ProxyError> {
         tracing::debug!(
-            method = %method,
-            url = %url,
-            "worker: sending raw backend request via Fetch API"
+            "send_raw: {} {}",
+            method,
+            url,
         );
 
         // Build web_sys::Headers

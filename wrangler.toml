@@ -16,3 +16,4 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
 [vars]
 SOURCE_API_URL = "https://source.coop"
+LOG_LEVEL = "WARN"

@@ -2,6 +2,7 @@ mod fetch_connector;
 mod noop_creds;
 mod registry;
 mod routing;
+mod tracing_layer;
 mod worker_backend;
 mod worker_infra;
 
@@ -19,6 +20,22 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
+
+    let log_level = env
+        .var("LOG_LEVEL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "WARN".to_string());
+    let max_level = match log_level.to_uppercase().as_str() {
+        "TRACE" => tracing::Level::TRACE,
+        "DEBUG" => tracing::Level::DEBUG,
+        "INFO" => tracing::Level::INFO,
+        "ERROR" => tracing::Level::ERROR,
+        _ => tracing::Level::WARN,
+    };
+    tracing::subscriber::set_global_default(
+        tracing_layer::WorkerSubscriber::new().with_max_level(max_level),
+    )
+    .ok();
 
     let api_base_url = env
         .var("SOURCE_API_URL")
@@ -62,7 +79,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     }
 
     let parsed = parse_request(&method, &path, query.as_deref());
-    worker::console_log!(
+    tracing::info!(
         "{} {} -> {:?}",
         method,
         path,
@@ -109,7 +126,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                     ws_xml_response(200, &xml)
                 }
                 Err(e) => {
-                    worker::console_error!("AccountList({}) error: {:?}", account, e);
+                    tracing::error!("AccountList({}) error: {:?}", account, e);
                     ws_xml_response(
                         200,
                         &format!(
@@ -138,7 +155,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                             multistore::route_handler::ProxyResponseBody::Empty =>
                                 "<empty>".to_string(),
                         };
-                        worker::console_error!(
+                        tracing::error!(
                             "ObjectRequest({}) returned {}: {}",
                             rewritten_path,
                             r.status,
@@ -148,7 +165,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 }
                 GatewayResponse::Forward(ref r) => {
                     if r.status >= 400 {
-                        worker::console_error!(
+                        tracing::error!(
                             "ObjectRequest({}) forwarded {}",
                             rewritten_path,
                             r.status
@@ -180,7 +197,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                             multistore::route_handler::ProxyResponseBody::Empty =>
                                 "<empty>".to_string(),
                         };
-                        worker::console_error!(
+                        tracing::error!(
                             "ProductList({}) returned {}: {}",
                             rewritten_path,
                             r.status,
@@ -190,7 +207,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 }
                 GatewayResponse::Forward(ref r) => {
                     if r.status >= 400 {
-                        worker::console_error!(
+                        tracing::error!(
                             "ProductList({}) forwarded {}",
                             rewritten_path,
                             r.status
