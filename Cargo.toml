@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Multistore - Currently in alpha and not published to crates.io, so we pull directly from GitHub
-multistore = {git = "https://github.com/developmentseed/multistore", branch = "main"}
+multistore = {git = "https://github.com/developmentseed/multistore", branch = "fix/source-coop", features = ["azure"]}
 
 # Serialization
 serde = {version = "1", features = ["derive"]}
@@ -20,6 +20,7 @@ async-trait = "0.1"
 bytes = "1"
 futures = "0.3"
 http = "1"
+percent-encoding = "2"
 http-body = "1"
 http-body-util = "0.1"
 url = "2"

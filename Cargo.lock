@@ -788,7 +788,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.1.0"
-source = "git+https://github.com/developmentseed/multistore?branch=main#0e8b416ad6c315c82aa51846cfcd2842f8955b85"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fsource-coop#ad0acfbe953f1ca9dc57c9f2a5b53844143e969f"
 dependencies = [
  "async-trait",
  "base64",
@@ -833,6 +833,7 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
+ "httparse",
  "humantime",
  "hyper",
  "itertools",
@@ -1384,6 +1385,7 @@ dependencies = [
  "js-sys",
  "multistore",
  "object_store",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tracing",

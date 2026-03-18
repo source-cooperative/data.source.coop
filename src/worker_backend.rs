@@ -29,6 +29,7 @@ impl ProxyBackend for WorkerBackend {
     ) -> Result<Box<dyn PaginatedListStore>, ProxyError> {
         let builder = match create_builder(config)? {
             StoreBuilder::S3(s) => StoreBuilder::S3(s.with_http_connector(FetchConnector)),
+            StoreBuilder::Azure(a) => StoreBuilder::Azure(a.with_http_connector(FetchConnector)),
         };
         builder.build()
     }

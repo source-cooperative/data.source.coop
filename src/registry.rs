@@ -134,25 +134,28 @@ async fn resolve_product_inner(
 
     let mut backend_options = HashMap::new();
 
-    // S3 options
-    if let Some(ref bucket) = connection.details.bucket {
-        backend_options.insert("bucket_name".to_string(), bucket.clone());
-    }
-    if let Some(ref region) = connection.details.region {
-        backend_options.insert("region".to_string(), region.clone());
-        // Construct the S3 endpoint from region
-        backend_options.insert(
-            "endpoint".to_string(),
-            format!("https://s3.{}.amazonaws.com", region),
-        );
-    }
-
-    // Azure options
-    if let Some(ref account_name) = connection.details.account_name {
-        backend_options.insert("account_name".to_string(), account_name.clone());
-    }
-    if let Some(ref container) = connection.details.container_name {
-        backend_options.insert("container_name".to_string(), container.clone());
+    match backend_type.as_str() {
+        "s3" => {
+            if let Some(ref bucket) = connection.details.bucket {
+                backend_options.insert("bucket_name".to_string(), bucket.clone());
+            }
+            if let Some(ref region) = connection.details.region {
+                backend_options.insert("region".to_string(), region.clone());
+                backend_options.insert(
+                    "endpoint".to_string(),
+                    format!("https://s3.{}.amazonaws.com", region),
+                );
+            }
+        }
+        "az" => {
+            if let Some(ref account_name) = connection.details.account_name {
+                backend_options.insert("account_name".to_string(), account_name.clone());
+            }
+            if let Some(ref container) = connection.details.container_name {
+                backend_options.insert("container_name".to_string(), container.clone());
+            }
+        }
+        _ => {}
     }
 
     // Anonymous access — skip signing
