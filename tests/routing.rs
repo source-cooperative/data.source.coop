@@ -1,7 +1,10 @@
 //! Unit tests for the routing module.
 //!
-//! These live in a standalone test binary so they can compile on the native
-//! target without pulling in wasm-only dependencies from the main cdylib crate.
+//! The main crate is a cdylib targeting wasm32-unknown-unknown, and its wasm-only
+//! deps (worker, wasm-bindgen-futures, web-sys) won't compile on native targets.
+//! Since `cargo test` runs natively, we can't test through the lib. Instead we
+//! include `routing.rs` directly via `#[path]` — it's pure Rust with no wasm
+//! deps, so it compiles and runs on the native target without issues.
 
 #[path = "../src/routing.rs"]
 mod routing;

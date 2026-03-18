@@ -6,6 +6,14 @@ version = "0.1.0"
 
 [lib]
 crate-type = ["cdylib"]
+# The cdylib depends on wasm-only crates (worker, wasm-bindgen-futures, web-sys)
+# that don't compile on native targets, so we disable `cargo test` for the lib
+# and use a standalone [[test]] binary for pure-Rust modules instead.
+test = false
+
+[[test]]
+name = "routing"
+path = "tests/routing.rs"
 
 [dependencies]
 # Multistore - Currently in alpha and not published to crates.io, so we pull directly from GitHub
