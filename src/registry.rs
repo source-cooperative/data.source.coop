@@ -26,8 +26,8 @@ impl SourceCoopRegistry {
 
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
-        let url = format!("{}/api/v1/products/{}", self.api_base_url, account);
-        let product_list: SourceProductList = fetch_json(&url).await?;
+        let product_list =
+            crate::cache::get_or_fetch_product_list(&self.api_base_url, account).await?;
         Ok(product_list
             .products
             .into_iter()
@@ -90,8 +90,8 @@ async fn resolve_product_inner(
     product: &str,
 ) -> Result<BucketConfig, ProxyError> {
     // 1. Fetch product metadata
-    let product_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
-    let source_product: SourceProduct = fetch_json(&product_url).await?;
+    let source_product =
+        crate::cache::get_or_fetch_product(api_base_url, account, product).await?;
 
     // 2. Find primary mirror
     let primary_key = &source_product.metadata.primary_mirror;
@@ -105,8 +105,7 @@ async fn resolve_product_inner(
         })?;
 
     // 3. Fetch data connections to resolve the actual bucket
-    let connections_url = format!("{}/api/v1/data-connections", api_base_url);
-    let connections: Vec<DataConnection> = fetch_json(&connections_url).await?;
+    let connections = crate::cache::get_or_fetch_data_connections(api_base_url).await?;
 
     let connection = connections
         .iter()
@@ -190,35 +189,6 @@ async fn resolve_product_inner(
     );
 
     Ok(config)
-}
-
-/// HTTP fetch helper using the Workers Fetch API.
-async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, ProxyError> {
-    let req = web_sys::Request::new_with_str(url)
-        .map_err(|e| ProxyError::Internal(format!("request build failed: {:?}", e)))?;
-    let worker_req: worker::Request = req.into();
-    let mut resp = worker::Fetch::Request(worker_req)
-        .send()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("api fetch failed: {}", e)))?;
-
-    let status = resp.status_code();
-    if status == 404 {
-        return Err(ProxyError::BucketNotFound("not found".into()));
-    }
-    if status != 200 {
-        return Err(ProxyError::Internal(format!(
-            "API returned {} for {}",
-            status, url
-        )));
-    }
-
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("body read failed: {}", e)))?;
-    serde_json::from_str(&text)
-        .map_err(|e| ProxyError::Internal(format!("JSON parse failed: {} for {}", e, url)))
 }
 
 // ── API response types ─────────────────────────────────────────────
