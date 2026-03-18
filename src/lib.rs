@@ -47,7 +47,14 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         .unwrap_or_else(|_| http::Uri::from_static("/"));
     let path = uri.path().to_string();
     let query = uri.query().map(|q| q.to_string());
-    let headers = convert_ws_headers(&req.headers());
+    let mut headers = convert_ws_headers(&req.headers());
+
+    // Strip AWS auth headers — this proxy is anonymous-only, and forwarding
+    // them causes multistore to reject the request with AccessDenied when
+    // the credential registry has no matching key.
+    headers.remove(http::header::AUTHORIZATION);
+    headers.remove("x-amz-security-token");
+    headers.remove("x-amz-content-sha256");
 
     // Handle OPTIONS preflight
     if method == http::Method::OPTIONS {
