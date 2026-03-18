@@ -788,6 +788,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.1.0"
+source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
 dependencies = [
  "async-trait",
  "base64",
@@ -812,6 +813,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.1.0"
+source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
 dependencies = [
  "async-trait",
  "bytes",
@@ -834,6 +836,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.1.0"
+source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
 dependencies = [
  "multistore",
  "tracing",

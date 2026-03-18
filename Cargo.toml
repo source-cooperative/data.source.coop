@@ -16,8 +16,8 @@ path = "tests/routing.rs"
 
 [dependencies]
 # Multistore
-multistore = { path = "../../alukach/multistore/crates/core", features = ["azure"] }
-multistore-path-mapping = { path = "../../alukach/multistore/crates/path-mapping" }
+multistore = { git = "https://github.com/developmentseed/multistore/", rev = "e0796e2", features = ["azure"] }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore/", rev = "e0796e2" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -32,7 +32,7 @@ tracing = "0.1"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-multistore-cf-workers = { path = "../../alukach/multistore/crates/cf-workers", features = ["azure"] }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore/", rev = "e0796e2", features = ["azure"] }
 futures = "0.3"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
