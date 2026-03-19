@@ -18,6 +18,22 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 LOG_LEVEL = "WARN"
 SOURCE_API_URL = "https://source.coop"
 
+# TODO: Set different sampling rates for prod vs staging
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
 [env.staging]
 routes = [
   {pattern = "data.staging.coolnewgeo.com/*", zone_name = "coolnewgeo.com"},
