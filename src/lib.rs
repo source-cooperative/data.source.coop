@@ -3,7 +3,7 @@ pub mod pagination;
 mod registry;
 pub mod routing;
 
-use multistore::api::response::{ListBucketResult, ListCommonPrefix};
+use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefix};
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::RequestInfo;
 use multistore_cf_workers::{
@@ -93,7 +93,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         method,
         http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
     ) {
-        return Ok(add_cors(ws_error_response(405, "Method Not Allowed")));
+        return Ok(add_cors(s3_error_response(405, "MethodNotAllowed", "Method Not Allowed")));
     }
 
     tracing::debug!("{} {}", method, path);
@@ -103,7 +103,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             ws_error_response(200, &format!("Source Cooperative Data Proxy v{}", VERSION))
         }
 
-        RequestClass::BadRequest(msg) => ws_error_response(400, &msg),
+        RequestClass::BadRequest(msg) => s3_error_response(400, "InvalidRequest", &msg),
 
         RequestClass::AccountList { account, query: q } => {
             handle_account_list(&registry, &account, q.as_deref()).await
@@ -214,6 +214,19 @@ async fn dispatch_to_gateway(
     }
 }
 
+
+// ── S3-format errors ────────────────────────────────────────────────
+
+/// Build an S3-compatible XML error response.
+fn s3_error_response(status: u16, code: &str, message: &str) -> web_sys::Response {
+    let err = ErrorResponse {
+        code: code.to_string(),
+        message: message.to_string(),
+        resource: String::new(),
+        request_id: String::new(),
+    };
+    ws_xml_response(status, &err.to_xml())
+}
 
 // ── CORS ───────────────────────────────────────────────────────────
 
