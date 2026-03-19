@@ -2,6 +2,7 @@ mod cache;
 mod registry;
 pub mod routing;
 
+use multistore::api::response::{ListBucketResult, ListCommonPrefix};
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::RequestInfo;
 use multistore_cf_workers::{
@@ -127,31 +128,34 @@ async fn handle_account_list(
     registry: &SourceCoopRegistry,
     account: &str,
 ) -> web_sys::Response {
-    match registry.list_products(account).await {
-        Ok(products) => {
-            let prefixes_xml: String = products
-                .iter()
-                .map(|p| {
-                    format!("<CommonPrefixes><Prefix>{}/</Prefix></CommonPrefixes>", p)
-                })
-                .collect();
-            let xml = format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated>{}</ListBucketResult>"#,
-                account, prefixes_xml
-            );
-            ws_xml_response(200, &xml)
-        }
+    let common_prefixes = match registry.list_products(account).await {
+        Ok(products) => products
+            .into_iter()
+            .map(|p| ListCommonPrefix {
+                prefix: format!("{p}/"),
+            })
+            .collect(),
         Err(e) => {
             tracing::error!("AccountList({}) error: {:?}", account, e);
-            ws_xml_response(
-                200,
-                &format!(
-                    r#"<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>{}</Name><Prefix></Prefix><IsTruncated>false</IsTruncated></ListBucketResult>"#,
-                    account
-                ),
-            )
+            vec![]
         }
-    }
+    };
+
+    let result = ListBucketResult {
+        xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+        name: account.to_string(),
+        prefix: String::new(),
+        delimiter: "/".to_string(),
+        max_keys: 1000,
+        is_truncated: false,
+        key_count: common_prefixes.len(),
+        start_after: None,
+        continuation_token: None,
+        next_continuation_token: None,
+        contents: vec![],
+        common_prefixes,
+    };
+    ws_xml_response(200, &result.to_xml())
 }
 
 // ── Gateway dispatch ───────────────────────────────────────────────
