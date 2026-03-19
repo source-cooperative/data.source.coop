@@ -75,6 +75,7 @@ fn account_list_no_prefix() {
         classify_request(&mapping(), "/cholmes", Some("list-type=2")),
         RequestClass::AccountList {
             account: "cholmes".to_string(),
+            query: Some("list-type=2".to_string()),
         }
     );
 }
@@ -85,6 +86,7 @@ fn account_list_trailing_slash() {
         classify_request(&mapping(), "/cholmes/", Some("list-type=2")),
         RequestClass::AccountList {
             account: "cholmes".to_string(),
+            query: Some("list-type=2".to_string()),
         }
     );
 }

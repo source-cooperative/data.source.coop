@@ -787,8 +787,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.1.0"
-source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2649298bb5300d7c0fa38d6f0b677bf13341e45bde4b96981c4f4aedf6e8e38a"
 dependencies = [
  "async-trait",
  "base64",
@@ -812,8 +813,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.1.0"
-source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03d43b732676a223e4e1618f4dd87ddc41bda241ef6da6be07d22a54f90fd33a"
 dependencies = [
  "async-trait",
  "bytes",
@@ -835,8 +837,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.1.0"
-source = "git+https://github.com/developmentseed/multistore/?rev=e0796e2#e0796e2e0b0a0d466bb6c910083cc34cce764845"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cbbd681465661764806f85b6f2a76a6867e77c4ed8230b1de7f552beef24f57"
 dependencies = [
  "multistore",
  "tracing",

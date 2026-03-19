@@ -7,7 +7,7 @@ pub enum RequestClass {
     /// Bad request
     BadRequest(String),
     /// List products for an account: `GET /{account}?list-type=2` (no product prefix)
-    AccountList { account: String },
+    AccountList { account: String, query: Option<String> },
     /// Everything else goes through the gateway with a rewritten path
     ProxyRequest {
         rewritten_path: String,
@@ -55,6 +55,7 @@ pub fn classify_request(
             // No prefix — list products for this account
             return RequestClass::AccountList {
                 account: account.to_string(),
+                query: if query_str.is_empty() { None } else { Some(query_str.to_string()) },
             };
         }
         return RequestClass::BadRequest("Missing product in path".to_string());
@@ -189,6 +190,7 @@ mod tests {
             result,
             RequestClass::AccountList {
                 account: "cholmes".to_string(),
+                query: Some("list-type=2".to_string()),
             }
         );
     }
@@ -200,6 +202,7 @@ mod tests {
             result,
             RequestClass::AccountList {
                 account: "cholmes".to_string(),
+                query: Some("list-type=2".to_string()),
             }
         );
     }

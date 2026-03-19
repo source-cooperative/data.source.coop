@@ -1,4 +1,5 @@
 mod cache;
+pub mod pagination;
 mod registry;
 pub mod routing;
 
@@ -11,6 +12,8 @@ use multistore_cf_workers::{
     WorkerSubscriber,
 };
 use multistore_path_mapping::{MappedRegistry, PathMapping};
+use multistore::api::list::parse_list_query_params;
+use pagination::paginate_prefixes;
 use registry::SourceCoopRegistry;
 use routing::{classify_request, RequestClass};
 use worker::{event, Context, Env, Result};
@@ -102,8 +105,8 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
 
         RequestClass::BadRequest(msg) => ws_error_response(400, &msg),
 
-        RequestClass::AccountList { account } => {
-            handle_account_list(&registry, &account).await
+        RequestClass::AccountList { account, query: q } => {
+            handle_account_list(&registry, &account, q.as_deref()).await
         }
 
         RequestClass::ProxyRequest {
@@ -127,31 +130,37 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
 async fn handle_account_list(
     registry: &SourceCoopRegistry,
     account: &str,
+    query: Option<&str>,
 ) -> web_sys::Response {
-    let common_prefixes = match registry.list_products(account).await {
-        Ok(products) => products
-            .into_iter()
-            .map(|p| ListCommonPrefix {
-                prefix: format!("{p}/"),
-            })
-            .collect(),
+    let params = parse_list_query_params(query);
+
+    let all_prefixes: Vec<String> = match registry.list_products(account).await {
+        Ok(products) => products.into_iter().map(|p| format!("{p}/")).collect(),
         Err(e) => {
             tracing::error!("AccountList({}) error: {:?}", account, e);
             vec![]
         }
     };
 
+    let paginated = paginate_prefixes(all_prefixes, &params);
+
+    let common_prefixes: Vec<ListCommonPrefix> = paginated
+        .prefixes
+        .into_iter()
+        .map(|prefix| ListCommonPrefix { prefix })
+        .collect();
+
     let result = ListBucketResult {
         xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
         name: account.to_string(),
         prefix: String::new(),
         delimiter: "/".to_string(),
-        max_keys: 1000,
-        is_truncated: false,
+        max_keys: params.max_keys,
+        is_truncated: paginated.is_truncated,
         key_count: common_prefixes.len(),
-        start_after: None,
-        continuation_token: None,
-        next_continuation_token: None,
+        start_after: params.start_after,
+        continuation_token: params.continuation_token,
+        next_continuation_token: paginated.next_continuation_token,
         contents: vec![],
         common_prefixes,
     };
