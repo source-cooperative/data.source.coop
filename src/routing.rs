@@ -106,12 +106,23 @@ pub fn extract_query_param(query: &str, key: &str) -> Option<String> {
     })
 }
 
+/// Characters that must be percent-encoded when placed in a query parameter value.
+/// Only encodes characters that would break query-string parsing or URL structure.
+const QUERY_VALUE_ENCODE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'#')
+    .add(b'&')
+    .add(b'=')
+    .add(b'+');
+
 pub fn rewrite_prefix_in_query(query: &str, new_prefix: &str) -> String {
+    let encoded: String =
+        percent_encoding::utf8_percent_encode(new_prefix, QUERY_VALUE_ENCODE).to_string();
     query
         .split('&')
         .map(|pair| {
             if pair.starts_with("prefix=") {
-                format!("prefix={}", new_prefix)
+                format!("prefix={}", encoded)
             } else {
                 pair.to_string()
             }
@@ -299,6 +310,11 @@ mod tests {
         assert_eq!(
             rewrite_prefix_in_query("prefix=old/&max-keys=100", ""),
             "prefix=&max-keys=100"
+        );
+        // Only query-breaking characters are percent-encoded (spaces, &, =, #, +)
+        assert_eq!(
+            rewrite_prefix_in_query("list-type=2&prefix=old/", "sub dir/"),
+            "list-type=2&prefix=sub%20dir/"
         );
     }
 }
