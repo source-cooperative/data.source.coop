@@ -25,26 +25,29 @@ pub async fn get_or_fetch_product(
     api_base_url: &str,
     account: &str,
     product: &str,
+    api_secret: Option<&str>,
 ) -> Result<SourceProduct, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
-    cached_fetch(&api_url, &api_url, PRODUCT_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, PRODUCT_CACHE_SECS, api_secret).await
 }
 
 /// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
 pub async fn get_or_fetch_data_connections(
     api_base_url: &str,
+    api_secret: Option<&str>,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
-    cached_fetch(&api_url, &api_url, DATA_CONNECTIONS_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, DATA_CONNECTIONS_CACHE_SECS, api_secret).await
 }
 
 /// Fetch an account's product list, cached for `PRODUCT_LIST_CACHE_SECS`.
 pub async fn get_or_fetch_product_list(
     api_base_url: &str,
     account: &str,
+    api_secret: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
-    cached_fetch(&api_url, &api_url, PRODUCT_LIST_CACHE_SECS).await
+    cached_fetch(&api_url, &api_url, PRODUCT_LIST_CACHE_SECS, api_secret).await
 }
 
 // ── Internal helper ────────────────────────────────────────────────
@@ -56,6 +59,7 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     cache_key: &str,
     api_url: &str,
     ttl_secs: u32,
+    api_secret: Option<&str>,
 ) -> Result<T, ProxyError> {
     let cache = worker::Cache::default();
 
@@ -76,7 +80,17 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
 
     // ── Cache miss — fetch from API ────────────────────────────
     tracing::debug!("cache miss: {} -> {}", cache_key, api_url);
-    let req = web_sys::Request::new_with_str(api_url)
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    if let Some(secret) = api_secret {
+        let headers = web_sys::Headers::new()
+            .map_err(|e| ProxyError::Internal(format!("headers build failed: {:?}", e)))?;
+        headers
+            .set("Authorization", secret)
+            .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+        init.set_headers(&headers);
+    }
+    let req = web_sys::Request::new_with_str_and_init(api_url, &init)
         .map_err(|e| ProxyError::Internal(format!("request build failed: {:?}", e)))?;
     let worker_req: worker::Request = req.into();
     let mut resp = worker::Fetch::Request(worker_req)

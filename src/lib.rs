@@ -3,6 +3,7 @@ pub mod pagination;
 mod registry;
 pub mod routing;
 
+use multistore::api::list::parse_list_query_params;
 use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefix};
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::RequestInfo;
@@ -12,7 +13,6 @@ use multistore_cf_workers::{
     WorkerSubscriber,
 };
 use multistore_path_mapping::{MappedRegistry, PathMapping};
-use multistore::api::list::parse_list_query_params;
 use pagination::paginate_prefixes;
 use registry::SourceCoopRegistry;
 use routing::{classify_request, RequestClass};
@@ -53,17 +53,13 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         .var("SOURCE_API_URL")
         .map(|v| v.to_string())
         .unwrap_or_else(|_| "https://source.coop".to_string());
+    let api_secret = env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok();
 
     let mapping = source_coop_mapping();
-    let registry = SourceCoopRegistry::new(api_base_url);
+    let registry = SourceCoopRegistry::new(api_base_url, api_secret);
     let mapped_registry = MappedRegistry::new(registry.clone(), mapping.clone());
 
-    let gateway = ProxyGateway::new(
-        WorkerBackend,
-        mapped_registry,
-        NoopCredentialRegistry,
-        None,
-    );
+    let gateway = ProxyGateway::new(WorkerBackend, mapped_registry, NoopCredentialRegistry, None);
 
     // ── Parse request ──────────────────────────────────────────────
     let js_body = JsBody(req.body());
@@ -93,7 +89,11 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         method,
         http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
     ) {
-        return Ok(add_cors(s3_error_response(405, "MethodNotAllowed", "Method Not Allowed")));
+        return Ok(add_cors(s3_error_response(
+            405,
+            "MethodNotAllowed",
+            "Method Not Allowed",
+        )));
     }
 
     tracing::debug!("{} {}", method, path);
@@ -113,8 +113,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             rewritten_path,
             query: q,
         } => {
-            let req_info =
-                RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
+            let req_info = RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
             dispatch_to_gateway(&gateway, &req_info, js_body, &rewritten_path).await
         }
     };
@@ -214,7 +213,6 @@ async fn dispatch_to_gateway(
         GatewayResponse::Forward(resp) => forward_response_to_ws(resp),
     }
 }
-
 
 // ── S3-format errors ────────────────────────────────────────────────
 

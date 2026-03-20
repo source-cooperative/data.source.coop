@@ -12,11 +12,15 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct SourceCoopRegistry {
     api_base_url: String,
+    api_secret: Option<String>,
 }
 
 impl SourceCoopRegistry {
-    pub fn new(api_base_url: String) -> Self {
-        Self { api_base_url }
+    pub fn new(api_base_url: String, api_secret: Option<String>) -> Self {
+        Self {
+            api_base_url,
+            api_secret,
+        }
     }
 
     /// Parse "account--product" bucket name into (account, product).
@@ -26,8 +30,12 @@ impl SourceCoopRegistry {
 
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
-        let product_list =
-            crate::cache::get_or_fetch_product_list(&self.api_base_url, account).await?;
+        let product_list = crate::cache::get_or_fetch_product_list(
+            &self.api_base_url,
+            account,
+            self.api_secret.as_deref(),
+        )
+        .await?;
         Ok(product_list
             .products
             .into_iter()
@@ -46,7 +54,13 @@ impl BucketRegistry for SourceCoopRegistry {
         let (account, product) = Self::parse_bucket_name(name)
             .ok_or_else(|| ProxyError::BucketNotFound(name.to_string()))?;
 
-        let config = resolve_product_send(&self.api_base_url, account, product).await?;
+        let config = resolve_product_send(
+            &self.api_base_url,
+            account,
+            product,
+            self.api_secret.as_deref(),
+        )
+        .await?;
 
         Ok(ResolvedBucket {
             config,
@@ -69,14 +83,17 @@ async fn resolve_product_send(
     api_base_url: &str,
     account: &str,
     product: &str,
+    api_secret: Option<&str>,
 ) -> Result<BucketConfig, ProxyError> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let api_base_url = api_base_url.to_string();
     let account = account.to_string();
     let product = product.to_string();
+    let api_secret = api_secret.map(|s| s.to_string());
 
     wasm_bindgen_futures::spawn_local(async move {
-        let result = resolve_product_inner(&api_base_url, &account, &product).await;
+        let result =
+            resolve_product_inner(&api_base_url, &account, &product, api_secret.as_deref()).await;
         let _ = tx.send(result);
     });
 
@@ -89,10 +106,11 @@ async fn resolve_product_inner(
     api_base_url: &str,
     account: &str,
     product: &str,
+    api_secret: Option<&str>,
 ) -> Result<BucketConfig, ProxyError> {
     // 1. Fetch product metadata
     let source_product =
-        crate::cache::get_or_fetch_product(api_base_url, account, product).await?;
+        crate::cache::get_or_fetch_product(api_base_url, account, product, api_secret).await?;
 
     // 2. Find primary mirror
     let primary_key = &source_product.metadata.primary_mirror;
@@ -106,7 +124,7 @@ async fn resolve_product_inner(
         })?;
 
     // 3. Fetch data connections to resolve the actual bucket
-    let connections = crate::cache::get_or_fetch_data_connections(api_base_url).await?;
+    let connections = crate::cache::get_or_fetch_data_connections(api_base_url, api_secret).await?;
 
     let connection = connections
         .iter()
