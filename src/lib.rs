@@ -55,12 +55,6 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         .unwrap_or_else(|_| "https://source.coop".to_string());
     let api_secret = env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok();
 
-    let mapping = source_coop_mapping();
-    let registry = SourceCoopRegistry::new(api_base_url, api_secret);
-    let mapped_registry = MappedRegistry::new(registry.clone(), mapping.clone());
-
-    let gateway = ProxyGateway::new(WorkerBackend, mapped_registry, NoopCredentialRegistry, None);
-
     // ── Parse request ──────────────────────────────────────────────
     let js_body = JsBody(req.body());
     let method: http::Method = req.method().parse().unwrap_or(http::Method::GET);
@@ -79,6 +73,18 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     headers.remove("x-amz-security-token");
     headers.remove("x-amz-content-sha256");
 
+    // ── Request ID ─────────────────────────────────────────────────
+    let request_id = headers
+        .get("cf-ray")
+        .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        .unwrap_or_default();
+
+    let mapping = source_coop_mapping();
+    let registry = SourceCoopRegistry::new(api_base_url, api_secret, request_id.clone());
+    let mapped_registry = MappedRegistry::new(registry.clone(), mapping.clone());
+
+    let gateway = ProxyGateway::new(WorkerBackend, mapped_registry, NoopCredentialRegistry, None);
+
     // ── OPTIONS preflight ──────────────────────────────────────────
     if method == http::Method::OPTIONS {
         return Ok(add_cors(ws_error_response(204, "")));
@@ -93,19 +99,33 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             405,
             "MethodNotAllowed",
             "Method Not Allowed",
+            &request_id,
         )));
     }
 
-    tracing::debug!("{} {}", method, path);
+    let request_span = tracing::info_span!(
+        "request",
+        request_id = %request_id,
+        method = %method,
+        path = %path,
+        status = tracing::field::Empty,
+        request_class = tracing::field::Empty,
+    );
+    let _request_guard = request_span.enter();
 
     let response = match classify_request(&mapping, &path, query.as_deref()) {
         RequestClass::Index => {
+            request_span.record("request_class", "index");
             ws_error_response(200, &format!("Source Cooperative Data Proxy v{}", VERSION))
         }
 
-        RequestClass::BadRequest(msg) => s3_error_response(400, "InvalidRequest", &msg),
+        RequestClass::BadRequest(msg) => {
+            request_span.record("request_class", "bad_request");
+            s3_error_response(400, "InvalidRequest", &msg, &request_id)
+        }
 
         RequestClass::AccountList { account, query: q } => {
+            request_span.record("request_class", "account_list");
             handle_account_list(&registry, &account, q.as_deref()).await
         }
 
@@ -113,12 +133,19 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
             rewritten_path,
             query: q,
         } => {
+            request_span.record("request_class", "proxy");
             let req_info = RequestInfo::new(&method, &rewritten_path, q.as_deref(), &headers, None);
             dispatch_to_gateway(&gateway, &req_info, js_body, &rewritten_path).await
         }
     };
 
-    Ok(add_cors(response))
+    request_span.record("status", response.status());
+
+    let response = add_cors(response);
+    if !request_id.is_empty() {
+        let _ = response.headers().set("x-request-id", &request_id);
+    }
+    Ok(response)
 }
 
 // ── Request classification (see routing.rs) ───────────────────────
@@ -217,12 +244,17 @@ async fn dispatch_to_gateway(
 // ── S3-format errors ────────────────────────────────────────────────
 
 /// Build an S3-compatible XML error response.
-fn s3_error_response(status: u16, code: &str, message: &str) -> web_sys::Response {
+fn s3_error_response(
+    status: u16,
+    code: &str,
+    message: &str,
+    request_id: &str,
+) -> web_sys::Response {
     let err = ErrorResponse {
         code: code.to_string(),
         message: message.to_string(),
         resource: String::new(),
-        request_id: String::new(),
+        request_id: request_id.to_string(),
     };
     ws_xml_response(status, &err.to_xml())
 }

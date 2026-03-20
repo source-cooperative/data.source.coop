@@ -13,13 +13,15 @@ use std::collections::HashMap;
 pub struct SourceCoopRegistry {
     api_base_url: String,
     api_secret: Option<String>,
+    request_id: String,
 }
 
 impl SourceCoopRegistry {
-    pub fn new(api_base_url: String, api_secret: Option<String>) -> Self {
+    pub fn new(api_base_url: String, api_secret: Option<String>, request_id: String) -> Self {
         Self {
             api_base_url,
             api_secret,
+            request_id,
         }
     }
 
@@ -34,6 +36,7 @@ impl SourceCoopRegistry {
             &self.api_base_url,
             account,
             self.api_secret.as_deref(),
+            &self.request_id,
         )
         .await?;
         Ok(product_list
@@ -59,6 +62,7 @@ impl BucketRegistry for SourceCoopRegistry {
             account,
             product,
             self.api_secret.as_deref(),
+            &self.request_id,
         )
         .await?;
 
@@ -84,16 +88,24 @@ async fn resolve_product_send(
     account: &str,
     product: &str,
     api_secret: Option<&str>,
+    request_id: &str,
 ) -> Result<BucketConfig, ProxyError> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let api_base_url = api_base_url.to_string();
     let account = account.to_string();
     let product = product.to_string();
     let api_secret = api_secret.map(|s| s.to_string());
+    let request_id = request_id.to_string();
 
     wasm_bindgen_futures::spawn_local(async move {
-        let result =
-            resolve_product_inner(&api_base_url, &account, &product, api_secret.as_deref()).await;
+        let result = resolve_product_inner(
+            &api_base_url,
+            &account,
+            &product,
+            api_secret.as_deref(),
+            &request_id,
+        )
+        .await;
         let _ = tx.send(result);
     });
 
@@ -107,10 +119,20 @@ async fn resolve_product_inner(
     account: &str,
     product: &str,
     api_secret: Option<&str>,
+    request_id: &str,
 ) -> Result<BucketConfig, ProxyError> {
+    let span = tracing::info_span!(
+        "resolve_product",
+        account = %account,
+        product = %product,
+        backend_type = tracing::field::Empty,
+    );
+    let _guard = span.enter();
+
     // 1. Fetch product metadata
     let source_product =
-        crate::cache::get_or_fetch_product(api_base_url, account, product, api_secret).await?;
+        crate::cache::get_or_fetch_product(api_base_url, account, product, api_secret, request_id)
+            .await?;
 
     // 2. Find primary mirror
     let primary_key = &source_product.metadata.primary_mirror;
@@ -124,7 +146,8 @@ async fn resolve_product_inner(
         })?;
 
     // 3. Fetch data connections to resolve the actual bucket
-    let connections = crate::cache::get_or_fetch_data_connections(api_base_url, api_secret).await?;
+    let connections =
+        crate::cache::get_or_fetch_data_connections(api_base_url, api_secret, request_id).await?;
 
     let connection = connections
         .iter()
@@ -198,13 +221,11 @@ async fn resolve_product_inner(
         backend_options,
     };
 
+    span.record("backend_type", config.backend_type.as_str());
     tracing::debug!(
-        "Resolved {}/{}: backend={}, prefix={:?}, options={:?}",
-        account,
-        product,
-        config.backend_type,
-        config.backend_prefix,
-        config.backend_options,
+        prefix = ?config.backend_prefix,
+        options = ?config.backend_options,
+        "product resolved",
     );
 
     Ok(config)
