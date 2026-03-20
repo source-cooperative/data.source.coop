@@ -20,8 +20,9 @@ path = "tests/pagination.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.1.1", features = ["azure"] }
-multistore-path-mapping = "0.1.1"
+# TODO: update to published version once encoding-type support is released
+multistore = { path = "../../developmentseed/multistore/crates/core", features = ["azure"] }
+multistore-path-mapping = { path = "../../developmentseed/multistore/crates/path-mapping" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -36,7 +37,7 @@ tracing = "0.1"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-multistore-cf-workers = { version = "0.1.1", features = ["azure"] }
+multistore-cf-workers = { path = "../../developmentseed/multistore/crates/cf-workers", features = ["azure"] }
 futures = "0.3"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"

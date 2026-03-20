@@ -155,6 +155,7 @@ async fn handle_account_list(
         name: account.to_string(),
         prefix: String::new(),
         delimiter: "/".to_string(),
+        encoding_type: params.encoding_type,
         max_keys: params.max_keys,
         is_truncated: paginated.is_truncated,
         key_count: common_prefixes.len(),
