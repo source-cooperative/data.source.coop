@@ -57,11 +57,7 @@ fn object_request_nested_key() {
 #[test]
 fn product_list_via_path_segment() {
     assert_eq!(
-        classify_request(
-            &mapping(),
-            "/cholmes/admin-boundaries",
-            Some("list-type=2"),
-        ),
+        classify_request(&mapping(), "/cholmes/admin-boundaries", Some("list-type=2"),),
         RequestClass::ProxyRequest {
             rewritten_path: "/cholmes--admin-boundaries".to_string(),
             query: Some("list-type=2".to_string()),

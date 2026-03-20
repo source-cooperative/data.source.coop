@@ -13,10 +13,7 @@ pub struct PaginatedPrefixes {
 /// `continuation_token`, and sliced to `max_keys`.
 // TODO: Replace client-side pagination with real server-side pagination
 // when the upstream Source Coop API supports paginated product listing.
-pub fn paginate_prefixes(
-    mut prefixes: Vec<String>,
-    params: &ListQueryParams,
-) -> PaginatedPrefixes {
+pub fn paginate_prefixes(mut prefixes: Vec<String>, params: &ListQueryParams) -> PaginatedPrefixes {
     prefixes.sort();
 
     // continuation-token takes precedence over start-after (per S3 spec)

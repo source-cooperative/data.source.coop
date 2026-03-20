@@ -7,7 +7,10 @@ pub enum RequestClass {
     /// Bad request
     BadRequest(String),
     /// List products for an account: `GET /{account}?list-type=2` (no product prefix)
-    AccountList { account: String, query: Option<String> },
+    AccountList {
+        account: String,
+        query: Option<String>,
+    },
     /// Everything else goes through the gateway with a rewritten path
     ProxyRequest {
         rewritten_path: String,
@@ -16,11 +19,7 @@ pub enum RequestClass {
 }
 
 /// Classify an incoming request into one of the handled cases.
-pub fn classify_request(
-    mapping: &PathMapping,
-    path: &str,
-    query: Option<&str>,
-) -> RequestClass {
+pub fn classify_request(mapping: &PathMapping, path: &str, query: Option<&str>) -> RequestClass {
     let trimmed = path.trim_matches('/');
 
     // Root
@@ -55,7 +54,11 @@ pub fn classify_request(
             // No prefix — list products for this account
             return RequestClass::AccountList {
                 account: account.to_string(),
-                query: if query_str.is_empty() { None } else { Some(query_str.to_string()) },
+                query: if query_str.is_empty() {
+                    None
+                } else {
+                    Some(query_str.to_string())
+                },
             };
         }
         return RequestClass::BadRequest("Missing product in path".to_string());
@@ -167,8 +170,11 @@ mod tests {
 
     #[test]
     fn test_object_request_nested_key() {
-        let result =
-            classify_request(&mapping(), "/cholmes/admin-boundaries/dir/subdir/file.parquet", None);
+        let result = classify_request(
+            &mapping(),
+            "/cholmes/admin-boundaries/dir/subdir/file.parquet",
+            None,
+        );
         assert_eq!(
             result,
             RequestClass::ProxyRequest {
@@ -180,11 +186,7 @@ mod tests {
 
     #[test]
     fn test_product_list_via_segment() {
-        let result = classify_request(
-            &mapping(),
-            "/cholmes/admin-boundaries",
-            Some("list-type=2"),
-        );
+        let result = classify_request(&mapping(), "/cholmes/admin-boundaries", Some("list-type=2"));
         assert_eq!(
             result,
             RequestClass::ProxyRequest {
@@ -291,10 +293,7 @@ mod tests {
             extract_query_param("list-type=2&prefix=foo/", "prefix"),
             Some("foo/".to_string())
         );
-        assert_eq!(
-            extract_query_param("list-type=2", "prefix"),
-            None
-        );
+        assert_eq!(extract_query_param("list-type=2", "prefix"), None);
         assert_eq!(
             extract_query_param("prefix=hello%20world", "prefix"),
             Some("hello world".to_string())
