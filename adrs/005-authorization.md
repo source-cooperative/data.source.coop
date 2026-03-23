@@ -1,7 +1,8 @@
-# ADR-005: Authorization Model — Dynamic Per-Request Policy Resolution
+# ADR-005: Authorization Model — Role Ceiling with Dynamic Account Permission Resolution
 
-**Status:** Pending
+**Status:** Draft
 **Date:** 2026-03-14
+**Updated:** 2026-03-22
 **RFC:** RFC-001 §8
 **Depends on:** ADR-001, ADR-004
 
@@ -9,15 +10,15 @@
 
 ## Context
 
-ADR-001 establishes that session tokens are stateless JWTs encoding identity and role, but **not** permissions. This ADR defines how permissions are resolved at request time.
+ADR-001 establishes that session tokens are stateless JWTs. ADR-004 introduces account-owned Roles with embedded permission statements that define a ceiling on what the Role's credentials can access. This ADR defines how permissions are resolved at request time.
 
 Two properties drive the design:
 
-1. **Permissions are dynamic.** A user who creates a new organisation or dataset should be able to access it immediately. Encoding permissions in the session token would freeze them at exchange time, requiring re-exchange to reflect changes.
+1. **The Role is a ceiling; account permissions are the grants.** The Role's permission statements (embedded in the SessionToken at exchange time) answer "what is the maximum scope of access for these credentials?" The per-account permission lookup answers "what can this account actually access?" The proxy enforces the intersection. A Role can narrow access but never widen it beyond what the account has.
 
-2. **The role is a ceiling; user permissions are the grants.** The role answers "what classes of action are permitted for this identity type?" The per-user permission lookup answers "which specific resources can this identity access?" The proxy enforces the intersection.
+2. **Account permissions are dynamic.** A user who joins an organisation or receives a grant on a new dataset should see that change reflected immediately. Because account permissions are resolved per-request from the policy store (not frozen in the token), changes propagate within the cache TTL.
 
-This mirrors AWS IAM: a session token asserts role membership, and the role's current policies are evaluated live on each API call.
+This mirrors AWS IAM: the session token asserts role membership with embedded permission boundaries, and the role's current policies are evaluated live on each API call.
 
 ---
 
@@ -25,76 +26,137 @@ This mirrors AWS IAM: a session token asserts role membership, and the role's cu
 
 ### Identity Model
 
-The session token carries three fields relevant to authorization:
+The SessionToken (see ADR-001) carries these fields relevant to authorization:
 
-- `user_id` — stable identifier for the authenticated principal
-- `role_id` — one of: `anonymous`, `authenticated_user`, `admin`
+- `account_id` — the account whose permissions form the base grants
+- `role_name` — identifies the Role (for logging and ceiling lookup)
+- `permissions` — the Role's permission statements, embedded at exchange time (the ceiling)
+- `assumed_by` — the original IdP subject (for audit, not authorization)
 - `exp` — token expiry; checked before any policy evaluation
 
-### Role Definitions
+### How Roles Replace the Fixed Role Set
 
-**`anonymous`**
-- Permitted action classes: read-only (`GetObject`, `HeadObject`, `ListObjects`, `ListBuckets`)
-- Role-level filter: only buckets flagged `public = true` are visible and accessible
-- No user permission lookup — role filter is the only guard
+The previous design used three fixed roles: `anonymous`, `authenticated_user`, and `admin`. These are replaced by user-defined Roles (see ADR-004). The equivalent behaviour is achieved through Role configuration:
 
-**`authenticated_user`**
-- Permitted action classes: read and write (`GetObject`, `PutObject`, `HeadObject`, `DeleteObject`, `ListObjects`, `ListBuckets`, `CreateBucket`)
-- Role-level filter: none — user permission lookup determines which resources are accessible
-- User permission lookup is always performed for non-public resources
+**Anonymous access** does not use a Role at all. Requests without credentials are treated as anonymous. Anonymous callers can only read public products — no Role lookup, no account permission lookup.
 
-**`admin`**
-- Permitted action classes: all
-- Role-level filter: none
-- User permission lookup: **skipped** — admin role has unconditional access to all resources
-- Admin role assumption is gated on strong identity claims (e.g. Ory group membership) to prevent accidental privilege escalation
+**Authenticated user access** uses the built-in `_default` Role, which has an unlimited ceiling (`"resources": ["*"]`). The account's actual permissions are the sole constraint. This is equivalent to the previous `authenticated_user` role.
 
-### Per-Request Resolution Strategy
+**Admin access** is determined by account permissions in the policy store, not by a special role type. An account with admin-level grants simply has broader permissions that the Role ceiling does not restrict (when using the `_default` Role with `*` resources).
 
-Authorization proceeds in at most three steps, with early exits to minimise unnecessary lookups:
+**Scoped access** is the new capability. A Role with specific permission statements (e.g., read-only on one product) creates a narrow ceiling. Even if the account has broad permissions, the credentials can only access what the Role allows.
 
-**Step 1 — Role action check**
-Does this role permit the requested action class? If the role is `anonymous` and the request is a `PutObject`, deny immediately. This is pure in-memory logic against the role definition — no lookup required.
+### Per-Request Authorization
 
-**Step 2 — Public resource early exit**
-For read operations only: is the requested bucket flagged `public = true` in the policy store? If yes, and the role permits reads, permit immediately without a user permission lookup. This covers the majority of Source Cooperative traffic (public dataset access) and avoids a per-user lookup for every read of public data.
+Authorization proceeds in steps, with early exits to minimise lookups:
 
-**Step 3 — User permission lookup**
-For non-public resources or write operations: fetch the user's permissions from the policy store and evaluate them against the requested resource. This reflects current organisation membership, dataset ownership, and explicit grants.
+**Step 1 — Identify the caller**
+
+- **No credentials** → anonymous. Only read actions on public products are permitted.
+- **Permanent API key** (non-`SCSTS` prefix) → legacy path. Look up account via Source API.
+- **STS credentials** (`SCSTS` prefix) → derive SecretAccessKey via HMAC, verify SigV4, decode SessionToken JWT.
+
+**Step 2 — Role action check (in-memory, no lookup)**
+
+For anonymous callers, only read actions are permitted (`GetObject`, `HeadObject`, `ListObjects`, `ListBuckets`). Deny writes immediately.
+
+For STS callers, check the SessionToken's embedded `permissions` array. If the requested action (read or write) on the requested resource does not match any permission statement, deny immediately. This is a local check against data already in the token — no network call.
+
+**Step 3 — Resource resolution**
+
+Map the S3 request to a Source Cooperative resource:
+- Bucket name → `account_id/product_name`
+- Object key → path within the product
+
+**Step 4 — Public resource early exit (cached, 60–300s TTL)**
+
+For read requests: if the product is public (`data_mode: open`), permit immediately. No further lookups. This is the fast path for the majority of traffic — public open data reads.
+
+**Step 5 — Account permission lookup (cached, 30–60s TTL)**
+
+For non-public resources or write operations:
+1. Fetch the account's permissions from the policy store (the account referenced in the SessionToken's `account_id`)
+2. Compute: `(Role ceiling permissions from token) ∩ (account's actual permissions from policy store)`
+3. If the intersection includes the requested action on the requested resource → permit
+4. Otherwise → deny
+
+**Step 6 — Prefix enforcement**
+
+If the Role's permission statement includes a prefix constraint (e.g., `source::my-org::product/my-dataset/uploads/*`), verify the object key falls within that prefix. This enforcement is part of Step 2 and Step 5 — the prefix is evaluated when matching the resource pattern.
+
+### Authorization Truth Table
+
+| Caller | Resource | Account has access? | Role permits? | Result |
+|--------|----------|-------------------|--------------|--------|
+| Anonymous | Public product | N/A | N/A | **Allow** (read only) |
+| Anonymous | Private product | N/A | N/A | **Deny** |
+| STS | Public product, read | N/A | Yes | **Allow** |
+| STS | Public product, write | Yes | Yes | **Allow** |
+| STS | Private product | Yes | Yes | **Allow** |
+| STS | Private product | Yes | No (ceiling) | **Deny** |
+| STS | Private product | No | Yes | **Deny** |
 
 ### Operation-Specific Behaviour
 
 **Single-resource operations (`GetObject`, `PutObject`, `HeadObject`, `DeleteObject`)**
-After the role check and public early exit, a point lookup: does `(user_id, bucket_id)` resolve to an access grant? If the grant includes prefix restrictions, those are enforced against the requested object key.
+After the Role ceiling check and public early exit, a point lookup: does the account have an access grant for this product? If the grant includes prefix restrictions, those are enforced against the requested object key.
 
 **`ListBuckets`**
-The proxy constructs this response entirely from the policy store — the upstream is never called. Anonymous users see `public = true` buckets; authenticated users see all buckets they have grants for; admins see all buckets.
+The proxy constructs this response entirely from the policy store — the upstream is never called:
+1. Anonymous: return products with `public = true`
+2. STS with `_default` Role (unlimited ceiling): return all products the account has grants for
+3. STS with scoped Role: return only products that appear in both the Role's permission statements and the account's grants
 
-**`ListObjects` (within a bucket)**
-After the role check, public early exit, and user permission lookup: if the grant includes a key prefix restriction, it is passed as a filter to the upstream `ListObjects` call so the upstream enforces the boundary.
+**`ListObjects` (within a product)**
+After the Role ceiling check, public early exit, and account permission lookup: if the Role's permission statement includes a key prefix restriction, pass it as a filter to the upstream `ListObjects` call.
+
+### Permission Statement Matching
+
+When evaluating whether a request matches a Role's permission statements, the proxy checks:
+
+1. **Action match:** Does the statement's `actions` array include the requested action class (`read` or `write`)?
+2. **Resource match:** Does the statement's `resources` array contain a pattern that matches the requested resource?
+   - `*` matches everything
+   - `source::{account}::product/{name}` or `source::{account}::product/{name}/*` matches the entire product
+   - `source::{account}::product/{name}/{prefix}/*` matches objects under the prefix
+   - `source::{account}::product/{name}/{key}` matches a single object
+
+If any statement matches both action and resource, the Role permits the request. The account permission lookup then determines whether the account actually has the underlying access.
 
 ### Cache Strategy
 
-All policy store lookups are cached in-process (Workers: per-isolate; ECS: per-container).
+All policy store lookups are cached in-process (Workers: per-isolate; ECS: per-container):
 
 | Lookup | Cache Key | TTL |
 |---|---|---|
-| Role definition | `role_id` | In-memory constant |
-| Bucket public flag | `bucket_id` | 60–300s |
-| Single-resource user grant | `(user_id, bucket_id)` | 30–60s |
-| User's full bucket list (`ListBuckets`) | `(user_id, role_id)` | 5–10s |
+| Product public flag | `product_id` | 60–300s |
+| Account permission for product | `(account_id, product_id)` | 30–60s |
+| Account's full product list (`ListBuckets`) | `account_id` | 5–10s |
 
-The short TTL on the full bucket list ensures that a user who creates a new dataset sees the change within seconds. For Workers, cache is per-isolate and not shared across edge nodes; Workers KV is available as a shared tier if needed.
+The short TTL on the full product list ensures that account permission changes (new grants, org membership) are reflected within seconds.
 
-### Unresolved: Grant Schema
+For Workers, cache is per-isolate and not shared across edge nodes. Workers KV is available as a shared tier if needed.
 
-The exact schema of user access grants is unresolved. Open questions include:
+### Access Logging
 
-- Whether grants are bucket-level only or support sub-bucket prefix granularity
-- Whether grants are additive (allow-only) or support explicit denies
-- How organisation membership is modelled — derived grants from membership, or explicit per-bucket grants per member
+Every S3 request with STS credentials emits a structured log entry:
 
-These questions are tracked in RFC-001 Open Question 7.
+```json
+{
+  "event": "s3_request",
+  "timestamp": "...",
+  "account_id": "my-org",
+  "role_name": "github-publisher",
+  "session_name": "my-ci-job-42",
+  "assumed_by": "repo:my-org/my-repo:ref:refs/heads/main",
+  "action": "PutObject",
+  "resource": "source::my-org::product/climate-data/2025/data.parquet",
+  "result": "allow",
+  "client_ip": "..."
+}
+```
+
+This provides full auditability: which account, which Role, which original identity, and what they accessed.
 
 ---
 
@@ -102,25 +164,32 @@ These questions are tracked in RFC-001 Open Question 7.
 
 **Benefits**
 
-- Permissions reflect current state — no re-exchange required after creating a new dataset or joining an organisation
-- The majority of traffic (public dataset reads) resolves with no user-specific lookup
-- Admin bypass eliminates unnecessary lookups for administrative operations
-- Cache TTLs are tuned per-operation to balance freshness and performance
-- The model is familiar to anyone who knows AWS IAM
+- The Role ceiling is evaluated locally from the SessionToken — no network call required for the first authorization check.
+- Account permissions reflect current state — no re-exchange required after creating a new dataset or joining an organisation.
+- The majority of traffic (public dataset reads) resolves with no account-specific lookup.
+- The permission statement format is concrete and resolved: actions are `read`/`write`, resources use a URN pattern with optional prefix scoping.
+- The model supports delegation: a Role can reference products owned by other accounts that the Role's account has access to.
+- Audit logs capture both the account identity and the original IdP subject, enabling attribution even though credentials act as the account.
+- Anonymous access remains frictionless — no STS exchange, no credentials, just `--no-sign-request`.
 
 **Costs / Risks**
 
-- Every non-public authenticated request requires a policy store lookup (mitigated by caching)
-- The policy store is on the hot path — its availability affects request latency for cache misses
-- Per-isolate caching in Workers means cache is not shared across edge nodes (cold isolate = cache miss)
-- Grant schema is unresolved — the implementation cannot begin until the schema is defined
+- Every non-public authenticated request requires an account permission lookup from the policy store (mitigated by caching).
+- The policy store is on the hot path — its availability affects request latency for cache misses.
+- Per-isolate caching in Workers means cache is not shared across edge nodes (cold isolate = cache miss).
+- The permission model is additive (allow-only). Explicit denies are not supported in this iteration. If the access control model requires "grant access to everything except X," it must be expressed as individual grants for everything except X.
+- The `ListBuckets` response for scoped Roles requires intersecting the Role's resource patterns with the account's grants, which is more complex than simply returning the account's full product list.
 
 ---
 
 ## Alternatives Considered
 
-**Encode permissions in the session token** — rejected. Freezes permissions at exchange time. Users would need to re-exchange tokens to see permission changes. Unacceptable for a platform where users create datasets and join organisations dynamically.
+**Encode full permissions in the session token** — rejected. Freezes permissions at exchange time. Users would need to re-exchange tokens to see permission changes. Unacceptable for a platform where users create datasets and join organisations dynamically. The hybrid approach (Role ceiling in token, account permissions dynamic) provides the best of both: the ceiling check is local, and permission changes propagate in near real-time.
+
+**Fixed role set (`anonymous`, `authenticated_user`, `admin`)** — superseded by user-defined Roles. The `_default` Role with unlimited ceiling achieves the same effect as `authenticated_user`. Admin access is determined by account grants, not a special role type. Scoped Roles provide new capability that the fixed set could not express.
 
 **Centralised permission cache (Redis / Workers KV as primary)** — considered. Would share cache across isolates and containers. Rejected as the primary tier: adds a network hop to every cache read. Per-isolate caching with optional Workers KV as a secondary tier is preferred.
 
-**Explicit deny support in grants** — deferred. Additive (allow-only) grants are simpler to reason about and sufficient for the initial use cases. Explicit denies can be added later if the access control model requires it.
+**Explicit deny support in grants** — deferred. Additive grants are simpler to reason about and sufficient for the initial use cases. Explicit denies can be added later if the access control model requires it.
+
+**Separate principal identity for delegated access** — considered. STS credentials would represent a distinct principal (e.g., "github-actions via account/role") rather than acting as the account. Rejected: adds complexity to the permission model (need grants for delegated principals) without clear benefit. The Role ceiling already constrains what the credentials can do. The `assumed_by` field in the SessionToken provides audit trail separation without requiring a separate authorization path.
