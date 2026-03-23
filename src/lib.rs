@@ -83,7 +83,8 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let registry = SourceCoopRegistry::new(api_base_url, api_secret, request_id.clone());
     let mapped_registry = MappedRegistry::new(registry.clone(), mapping.clone());
 
-    let gateway = ProxyGateway::new(WorkerBackend, mapped_registry, NoopCredentialRegistry, None);
+    let gateway = ProxyGateway::new(WorkerBackend, mapped_registry, NoopCredentialRegistry, None)
+        .with_debug_errors(max_level >= tracing::Level::DEBUG);
 
     // ── OPTIONS preflight ──────────────────────────────────────────
     if method == http::Method::OPTIONS {
