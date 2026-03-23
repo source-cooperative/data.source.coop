@@ -1,6 +1,5 @@
 # ADR-002: Runtime — Cloudflare Workers
 
-**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §5
 

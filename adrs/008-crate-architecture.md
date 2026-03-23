@@ -1,6 +1,5 @@
 # ADR-008: Modular Crate Architecture and Community Reuse Model
 
-**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §11
 **Depends on:** ADR-003, ADR-004, ADR-005

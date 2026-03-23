@@ -1,6 +1,5 @@
 # ADR-007: Middleware Architecture
 
-**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §10
 **Depends on:** ADR-005, ADR-008

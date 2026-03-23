@@ -1,6 +1,5 @@
 # ADR-005: Authorization Model — Role Ceiling with Dynamic Account Permission Resolution
 
-**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §8
 **Depends on:** ADR-001, ADR-004

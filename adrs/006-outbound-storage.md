@@ -1,6 +1,5 @@
 # ADR-006: Outbound Connectivity — OIDC Issuer Model and `object_store` Adoption
 
-**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §9
 **Depends on:** ADR-002
