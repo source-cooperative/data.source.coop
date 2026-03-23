@@ -1,80 +1,107 @@
 # ADR-009: Configuration Layer — Policy Store Implementation and Caching Strategy
 
-**Status:** Pending
+**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §12
-**Depends on:** ADR-005
+**Depends on:** ADR-004, ADR-005
 
 ---
 
 ## Context
 
-The authorization model (ADR-005) requires per-request lookups against a policy store for every non-public authenticated request. This is not optional — it is what enables dynamic permissions to reflect changes (new organisations, new dataset grants) in near real-time. Unlike a design that encodes permissions in the session token, this design explicitly trades token self-sufficiency for permission freshness.
-
-This constraint means the policy store is on the **hot path** of every authenticated request to a non-public resource. The question is not *whether* the proxy needs a policy store at request time, but *how* that access is implemented with acceptable latency and availability.
+The authorization model (ADR-005) requires per-request lookups against a policy store for every non-public authenticated request. The STS exchange (ADR-004) requires lookups for Role definitions and IdP records during token issuance. Together, these create two distinct hot paths: per-S3-request authorization and per-session STS exchange. The policy store must serve both with acceptable latency and availability.
 
 ---
 
 ## Decision
 
+### Managed Entities
+
+The policy store manages the following entities:
+
+| Entity | Owner | Written by | Read by |
+|--------|-------|-----------|---------|
+| **Product metadata** (public flag, backend config) | Platform | Next.js app or proxy (TBD) | Proxy (per-request) |
+| **Account permission grants** | Platform | Next.js app or proxy (TBD) | Proxy (per-request) |
+| **Role definitions** (identity constraints, permission statements) | Account owner | Management API (TBD) | Proxy (STS exchange) |
+| **Platform IdP records** (issuer URL, well-known claims) | Platform operator | Configuration / deployment | Proxy (STS exchange) |
+
+The management API for Roles (`/api/accounts/{account_id}/roles`) is defined in ADR-004. Which component serves this API — the proxy, the Next.js application, or a dedicated service — is unresolved and tied to the implementation choice below.
+
 ### Access Patterns
 
-The proxy's configuration access has two distinct profiles:
+The proxy's configuration access has three distinct profiles:
 
-**High-frequency, latency-sensitive (per-request)**
-- Bucket public flag lookup — `bucket_id -> {public, backend_config}`
-- User grant lookup — `(user_id, bucket_id) -> {granted, prefix_restrictions}`
-- User bucket list — `user_id -> [bucket_ids]`
+**High-frequency, latency-sensitive (per S3 request)**
+- Product public flag lookup — `product_id → {public, backend_config}`
+- Account permission lookup — `(account_id, product_id) → {granted, prefix_restrictions}`
+- Account's full product list — `account_id → [product_ids]`
 
 These must complete in single-digit milliseconds. In-process caching absorbs most of the load; the underlying lookup must be fast for cache misses.
 
+**Medium-frequency, latency-sensitive (per STS exchange)**
+- Role definition lookup — `(account_id, role_name) → Role`
+- Platform IdP record lookup — `idp_id → IdP`
+
+STS exchanges happen once per session (not per request), but they are on the critical path for session establishment. Role and IdP lookups should complete in single-digit milliseconds with caching (30–60s TTL).
+
 **Low-frequency, management (background)**
-- Issuer JWKS refresh
-- Role definition updates
+- Issuer JWKS fetch and cache refresh (1hr TTL, stale-while-revalidate)
 - Provider credential rotation
+- Role CRUD operations
 
-These are not on the request hot path and can tolerate higher latency.
+These tolerate higher latency and are not on any request hot path.
 
-### Implementation Options (Unresolved)
+### `backend_config`
 
-The implementation choice between the following options is unresolved and is the primary focus of RFC review:
+The product metadata record includes a `backend_config` that bridges authorization (ADR-005) and outbound storage (ADR-006):
 
-**Option A — REST API intermediary with aggressive caching**
+```json
+{
+  "public": true,
+  "backend_config": {
+    "storage_url": "s3://provider-bucket/prefix/",
+    "credential_ref": "oidc-trust-provider-x",
+    "region": "us-west-2"
+  }
+}
+```
 
-The proxy calls the existing Source Cooperative API for configuration lookups, wrapped in multi-layer caching: in-process (per-isolate or per-container) with short TTL, backed by Workers KV or ElastiCache as a shared distributed cache tier.
+The `credential_ref` identifies either an OIDC trust relationship or a stored credential secret (see ADR-006). The exact schema is defined by the `proxy-storage` crate's backend resolver trait (ADR-008).
 
-*Advantages:* The Next.js application remains the schema owner; the proxy does not need direct database credentials; the API can enforce schema constraints.
-*Risks:* The REST API is an availability dependency on the hot path. A cache miss on a cold Workers isolate hitting a degraded API directly impacts request latency.
+### Implementation Approach
 
-**Option B — Direct DynamoDB access**
+The proxy calls the existing Source Cooperative API for all lookups, wrapped in multi-layer caching: in-process (per-isolate) with short TTL, backed by Workers KV as a shared distributed cache tier.
 
-The proxy connects directly to DynamoDB tables for configuration lookups. In-process caching still applies.
+The Next.js application remains the sole schema owner. The proxy does not need direct database credentials. The API enforces schema constraints before data reaches the proxy. Management APIs for Roles and IdPs are served by the Next.js app.
 
-*Advantages:* DynamoDB read latency (single-digit milliseconds) is appropriate for the hot path; eliminates availability coupling to the Next.js application.
-*Risks:* Two systems (proxy and Next.js) accessing the same DynamoDB tables creates a schema governance problem. DynamoDB's schemaless nature means there is no DDL to enforce consistency — schema drift between consumers is possible and difficult to detect until runtime failure.
+The REST API is an availability dependency on the hot path for cache misses. In-process caching absorbs the majority of lookups. If profiling reveals the API as a latency bottleneck, direct DynamoDB access can be introduced for the highest-frequency lookups (product flags, account grants) while keeping management operations on the API.
 
-**Option C — Proxy as data model authority**
+### Cache Strategy
 
-The proxy owns and is the sole writer of the policy store schema. The Next.js application reads policy data through the proxy's API.
+All lookups are cached in-process (per-isolate):
 
-*Advantages:* Single schema owner eliminates drift risk.
-*Risks:* Expands the proxy's scope; requires refactoring the Next.js application; tightly couples front-end and proxy deployment cycles.
-
-**Hybrid option** — Direct DynamoDB for high-frequency per-request lookups (bucket flags, user grants); REST API for management operations (issuer registration, role updates).
+| Lookup | Cache Key | TTL | Notes |
+|--------|-----------|-----|-------|
+| Product public flag | `product_id` | 60–300s | Rarely changes |
+| Account permission for product | `(account_id, product_id)` | 30–60s | Reflects grants, org membership |
+| Account's full product list | `account_id` | 5–10s | Freshness-sensitive for UI |
+| Role definition | `(account_id, role_name)` | 30–60s | Changes infrequently |
+| JWKS | `issuer_url` | 1 hour | Stale-while-revalidate on failure |
 
 ### Workers Caching Stack
 
 For the Workers deployment:
 
-- **In-process cache** — per-isolate, not shared across edge nodes, with TTLs from ADR-005
-- **Workers KV** — eventually consistent, globally distributed key-value store; serves as a shared cache tier that survives isolate recycling
+- **In-process cache** — per-isolate, not shared across edge nodes, with TTLs above
+- **Workers KV** — eventually consistent, globally distributed; available as a shared cache tier for policy data that survives isolate recycling
 
 For access control decisions, eventual consistency is generally acceptable — a grant created seconds ago but not yet visible in KV is a minor inconvenience, not a security failure.
 
 ### Unresolved
 
-- The implementation choice between Options A, B, C, and the hybrid is the primary open question. See RFC-001 Open Question 2.
-- The full caching stack for Workers (which lookups use Workers KV vs. in-process only, cache warming strategy for cold isolates) requires further design.
+- The full caching stack for Workers (which lookups use Workers KV vs. in-process only, cache warming strategy for cold isolates).
+- How the `_default` Role is provisioned — synthesized at runtime (recommended) or materialized in storage when accounts are created.
 
 ---
 
@@ -86,20 +113,24 @@ For access control decisions, eventual consistency is generally acceptable — a
 - In-process caching absorbs the majority of lookup load
 - Workers KV provides a shared cache tier for the edge deployment
 - The configuration layer is behind a trait interface, allowing different implementations per deployment
+- All managed entities are explicitly cataloged with ownership and access patterns
 
 **Costs / Risks**
 
-- The policy store is a single point of failure for authenticated requests to non-public resources
+- The REST API is an availability dependency for cache misses on the hot path
 - Cache misses on cold Workers isolates add latency to the first request
-- Schema governance between the proxy and Next.js application is a risk regardless of implementation choice
-- The implementation decision is blocked pending team discussion
+- If the API proves to be a bottleneck, migrating high-frequency lookups to direct DynamoDB access will require schema governance discipline
 
 ---
 
 ## Alternatives Considered
 
-**Encode permissions in the session token (no policy store on hot path)** — rejected. Freezes permissions at exchange time. Users would need to re-exchange tokens after any permission change. See ADR-005.
+**Encode permissions in the session token (no policy store on hot path)** — rejected. Freezes permissions at exchange time. Users would need to re-exchange tokens after any permission change. The current design embeds the Role ceiling in the token (avoiding one lookup) while keeping account permissions dynamic. See ADR-005.
 
 **Global strongly-consistent cache (e.g. Durable Objects)** — considered. Would eliminate eventual-consistency concerns. Rejected: Durable Objects are single-region, adding latency for global edge requests. Eventual consistency is acceptable for the access control use case.
+
+**Direct DynamoDB access** — considered. Eliminates the REST API availability dependency and provides single-digit millisecond reads. Rejected as the initial approach: two systems (proxy and Next.js) accessing the same DynamoDB tables creates a schema governance problem that is difficult to detect until runtime failure. Can be introduced later for specific high-frequency lookups if profiling indicates the API is a bottleneck.
+
+**Proxy as data model authority** — considered. The proxy owns the policy store schema and the Next.js application reads through the proxy's API. Rejected: significantly expands the proxy's scope and tightly couples front-end and proxy deployment cycles.
 
 **Push-based cache invalidation** — considered. The policy store pushes updates to Workers KV when grants change, rather than relying on TTL-based expiry. Worth exploring as an optimisation but adds operational complexity. Deferred.

@@ -1,67 +1,47 @@
 # ADR-008: Modular Crate Architecture and Community Reuse Model
 
-**Status:** Pending
+**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §11
+**Depends on:** ADR-003, ADR-004, ADR-005
 
 ---
 
 ## Context
 
-The current proxy is tightly coupled to Source Cooperative's specific data model, backend configuration, and operational context. It is difficult for external operators to deploy a version of the proxy for their own datasets, and equally difficult for contributors to improve the proxy in ways that are reusable outside Source Cooperative's deployment.
+The current proxy is tightly coupled to Source Cooperative's specific data model, backend configuration, and operational context. The re-architecture treats Source Cooperative's deployment as *one instance* of a general-purpose S3-compatible data proxy framework. The framework is the primary artefact; Source Cooperative's configuration is a thin layer on top.
 
-The re-architecture treats Source Cooperative's deployment as *one instance* of a general-purpose S3-compatible data proxy framework. The framework is the primary artefact; Source Cooperative's configuration is a thin layer on top.
-
-This requires a clean separation between the general-purpose proxy framework and Source Cooperative-specific concerns. All Source Cooperative-specific behaviour must be expressed through the same trait interfaces that any other operator would use.
+This work builds on [`multistore`](https://github.com/developmentseed/multistore), an existing effort to create a composable S3-compatible proxy in Rust.
 
 ---
 
 ## Decision
 
-### Crate Structure
+### Separation of Concerns via Crates
 
-The proxy is structured as a set of Rust crates with well-defined trait boundaries between layers:
+The proxy is structured as separate Rust crates to promote composability. Concerns like auth, authorization, storage backend resolution, and middleware are separated behind trait boundaries so that they can be developed, tested, and reused independently.
 
-| Crate | Responsibility | SC-specific? |
-|---|---|---|
-| `proxy-core` | Request routing, SigV4 verification, session credential management, middleware stack execution | No |
-| `proxy-auth` | STS exchange logic, OIDC issuer registry, JWT validation, SC Credential Token minting | No — issuer list is configuration |
-| `proxy-authz` | Role resolution, per-request policy evaluation, policy store interface trait | No — store backend is pluggable |
-| `proxy-storage` | `object_store`-based backend abstraction | No |
-| `proxy-middleware` | Middleware trait definition and standard implementations (rate limiter, quota enforcer, usage recorder, etc.) | No |
-| `proxy-workers` | Cloudflare Workers runtime adapter, WASM build target | No |
-| `proxy-ecs` | Traditional server runtime adapter, Hyper/Tokio based | No |
+The exact crate boundaries will emerge during implementation. The principle is separation of concerns, not a fixed crate map. Key areas of separation:
 
-**Nothing Source Cooperative-specific lives in the core crates.** An operator building their own proxy instantiates the core with their own implementations of the configuration traits — providing their own backend resolver, role mapping, middleware stack — without forking any crate.
+- **Request routing and SigV4 verification** — the core proxy mechanics
+- **STS exchange and JWT validation** — inbound authentication (ADR-004)
+- **Authorization and policy evaluation** — Role ceiling, account permissions (ADR-005)
+- **Storage backend resolution** — mapping products to `object_store` configurations
+- **Middleware** — request logging and future cross-cutting concerns (ADR-007)
+- **Runtime adapters** — Cloudflare Workers (WASM) and traditional server (Hyper/Tokio)
 
-Source Cooperative's own deployment is the reference implementation of this pattern.
+**Nothing Source Cooperative-specific lives in the core crates.** All Source Cooperative-specific behaviour is expressed through the same trait interfaces that any other operator would use.
 
 ### Trait-Based Extension Points
 
-Each layer defines traits that downstream operators implement:
-
-- **Auth:** issuer registry, claim condition evaluator, role mapper
-- **Authz:** policy store, grant resolver
-- **Storage:** backend resolver (maps bucket ID to `object_store` configuration)
-- **Middleware:** middleware trait for custom cross-cutting concerns
-- **Configuration:** configuration source trait for deployment-specific settings
+Each area of concern defines traits that downstream operators implement. This allows operators to provide their own IdP configurations, policy store backends, storage resolvers, and middleware without forking the core.
 
 ### Publication and Licensing
 
 Core crates are intended for publication to `crates.io` under a permissive licence.
 
-### Unresolved: Governance
-
-The following governance questions are unresolved:
-
-- Crate naming conventions
-- Licence choice (MIT, Apache-2.0, or dual)
-- API stability guarantees (semver policy, MSRV policy)
-- Whether community-contributed crates live in the same repository, a separate organisation, or are fully external
-- What "supported" means for community-contributed middleware or backends
-- Contribution model and review process
-
-These are tracked in RFC-001 Open Question 8.
+> [!NOTE]
+> **TODO:** Finalise crate boundaries, naming, and licensing as the implementation progresses.
 
 ---
 
@@ -70,17 +50,15 @@ These are tracked in RFC-001 Open Question 8.
 **Benefits**
 
 - Community members can build their own data proxies on the same foundation
-- Contributions to the core (new middleware, new storage backends, auth improvements) benefit all deployments
-- Source Cooperative's infrastructure demonstrates the framework's capabilities, aiding adoption
+- Contributions to the core benefit all deployments
 - Clean trait boundaries prevent Source Cooperative-specific concerns from leaking into the framework
 - No forking required for custom deployments
 
 **Costs / Risks**
 
 - Maintaining trait stability across crate versions requires discipline and a clear semver policy
-- Multiple crates increase the build and release coordination overhead
-- Trait boundaries must be designed carefully upfront — changing a public trait is a breaking change
-- Community governance and contribution model are unresolved
+- Multiple crates increase build and release coordination overhead
+- Trait boundaries must be designed carefully — changing a public trait is a breaking change
 
 ---
 

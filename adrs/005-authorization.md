@@ -1,8 +1,7 @@
 # ADR-005: Authorization Model — Role Ceiling with Dynamic Account Permission Resolution
 
-**Status:** Draft
+**Status:** Proposed
 **Date:** 2026-03-14
-**Updated:** 2026-03-22
 **RFC:** RFC-001 §8
 **Depends on:** ADR-001, ADR-004
 
@@ -53,8 +52,10 @@ Authorization proceeds in steps, with early exits to minimise lookups:
 **Step 1 — Identify the caller**
 
 - **No credentials** → anonymous. Only read actions on public products are permitted.
-- **Permanent API key** (non-`SCSTS` prefix) → legacy path. Look up account via Source API.
 - **STS credentials** (`SCSTS` prefix) → derive SecretAccessKey via HMAC, verify SigV4, decode SessionToken JWT.
+
+> [!NOTE]
+> **Future extension: Permanent API keys.** The initial implementation supports only STS credentials and anonymous access. Long-lived API keys may be needed in the future for workflows where neither workload identity federation nor interactive authentication via `auth.source.coop` is feasible — for example, on-premises instruments, legacy ETL systems, or environments without OIDC support. Rather than adding a second authorization path to the proxy, API keys would be exchanged for temporary STS credentials at the `/.sts` endpoint — the same way OIDC tokens are. The proxy's request-time authorization remains uniform: only short-lived STS credentials are accepted on S3 API calls.
 
 **Step 2 — Role action check (in-memory, no lookup)**
 
@@ -75,14 +76,16 @@ For read requests: if the product is public (`data_mode: open`), permit immediat
 **Step 5 — Account permission lookup (cached, 30–60s TTL)**
 
 For non-public resources or write operations:
-1. Fetch the account's permissions from the policy store (the account referenced in the SessionToken's `account_id`)
-2. Compute: `(Role ceiling permissions from token) ∩ (account's actual permissions from policy store)`
+1. Fetch the account's permissions from the Source Cooperative API (the account referenced in the SessionToken's `account_id`)
+2. Compute: `(Role ceiling permissions from token) ∩ (account's actual permissions from API)`
 3. If the intersection includes the requested action on the requested resource → permit
 4. Otherwise → deny
 
+The proxy does not evaluate org membership or permission inheritance logic — the API resolves these internally. When a user belongs to an organisation, the API includes permissions inherited through that membership in the account's resolved grants. The proxy treats the API response as the authoritative set of permissions for the account.
+
 **Step 6 — Prefix enforcement**
 
-If the Role's permission statement includes a prefix constraint (e.g., `source::my-org::product/my-dataset/uploads/*`), verify the object key falls within that prefix. This enforcement is part of Step 2 and Step 5 — the prefix is evaluated when matching the resource pattern.
+If the Role's permission statement includes a prefix constraint (e.g., `sc::my-org::product/my-dataset/uploads/*`), verify the object key falls within that prefix. This enforcement is part of Step 2 and Step 5 — the prefix is evaluated when matching the resource pattern.
 
 ### Authorization Truth Table
 
@@ -114,18 +117,18 @@ After the Role ceiling check, public early exit, and account permission lookup: 
 
 When evaluating whether a request matches a Role's permission statements, the proxy checks:
 
-1. **Action match:** Does the statement's `actions` array include the requested action class (`read` or `write`)?
+1. **Action match:** Does the statement's `actions` array include the requested action class (`read` or `write`)? See ADR-004 for the definition of action classes.
 2. **Resource match:** Does the statement's `resources` array contain a pattern that matches the requested resource?
    - `*` matches everything
-   - `source::{account}::product/{name}` or `source::{account}::product/{name}/*` matches the entire product
-   - `source::{account}::product/{name}/{prefix}/*` matches objects under the prefix
-   - `source::{account}::product/{name}/{key}` matches a single object
+   - `sc::{account}::product/{name}` or `sc::{account}::product/{name}/*` matches the entire product
+   - `sc::{account}::product/{name}/{prefix}/*` matches objects under the prefix
+   - `sc::{account}::product/{name}/{key}` matches a single object
 
 If any statement matches both action and resource, the Role permits the request. The account permission lookup then determines whether the account actually has the underlying access.
 
 ### Cache Strategy
 
-All policy store lookups are cached in-process (Workers: per-isolate; ECS: per-container):
+All policy store lookups are cached in-process (per-isolate):
 
 | Lookup | Cache Key | TTL |
 |---|---|---|
@@ -150,13 +153,29 @@ Every S3 request with STS credentials emits a structured log entry:
   "session_name": "my-ci-job-42",
   "assumed_by": "repo:my-org/my-repo:ref:refs/heads/main",
   "action": "PutObject",
-  "resource": "source::my-org::product/climate-data/2025/data.parquet",
+  "resource": "sc::my-org::product/climate-data/2025/data.parquet",
   "result": "allow",
   "client_ip": "..."
 }
 ```
 
 This provides full auditability: which account, which Role, which original identity, and what they accessed.
+
+### S3 Error Responses
+
+When authorization denies a request, the proxy returns a standard S3 error response:
+
+```xml
+<Error>
+  <Code>AccessDenied</Code>
+  <Message>Access Denied</Message>
+  <RequestId>...</RequestId>
+</Error>
+```
+
+HTTP status is `403 Forbidden`. The error body does not reveal whether the denial was due to the Role ceiling, missing account permissions, or a non-existent product — this prevents information leakage about resource existence.
+
+For `ListBuckets` and `ListObjects`, the proxy filters results silently rather than returning errors. The caller sees only the resources they have access to.
 
 ---
 

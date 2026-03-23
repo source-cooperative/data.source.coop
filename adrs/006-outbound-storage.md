@@ -1,6 +1,6 @@
 # ADR-006: Outbound Connectivity — OIDC Issuer Model and `object_store` Adoption
 
-**Status:** Pending
+**Status:** Proposed
 **Date:** 2026-03-14
 **RFC:** RFC-001 §9
 **Depends on:** ADR-002
@@ -39,11 +39,11 @@ This model means:
 - The trust relationship is declarative and auditable
 - Key rotation at the proxy level propagates automatically without reconfiguring upstream providers
 
-### Outbound Authentication — Stored Secrets (Fallback)
+### Outbound Authentication — Stored Credentials (Fallback)
 
-For upstream providers or storage systems that do not support OIDC workload identity federation, credentials may be stored as encrypted secrets and injected into the proxy's configuration at startup.
+The current proxy fetches static cloud credentials (access key ID and secret access key) from the Source Cooperative API for each data connection. The API stores these credentials and serves them to the proxy on demand, cached with a short TTL.
 
-This is a fallback, not the preferred path.
+For upstream providers or storage systems that do not support OIDC workload identity federation, this model continues: the proxy fetches stored credentials from the API and uses them to authenticate to the upstream backend. This is not a preferred path — stored credentials must be rotated manually, create a larger blast radius if compromised, and require the platform to hold long-lived secrets on behalf of providers. Data providers should be encouraged to configure OIDC trust relationships where their cloud supports it.
 
 ### Data Provider Hosting
 
@@ -54,10 +54,6 @@ Data providers get:
 - **Access control** — fine-grained role and policy configuration
 - **Exposure** — data is discoverable via the Source Cooperative platform and UI
 - **Outbound auth flexibility** — the provider's own cloud credentials (or OIDC trust relationship) are used for the proxy's outbound connection
-
-### Unresolved: Provider Credential Operations
-
-For provider-hosted datasets where the provider's cloud does not support OIDC federation, the operational model for storing and rotating credentials securely is unresolved. Open questions include per-provider isolation and the trust boundary (what can Source Cooperative access in a provider's backend). See RFC-001 Open Question 5.
 
 ---
 
