@@ -25,9 +25,9 @@ impl SourceCoopRegistry {
         }
     }
 
-    /// Parse "account--product" bucket name into (account, product).
+    /// Parse "account:product" bucket name into (account, product).
     fn parse_bucket_name(name: &str) -> Option<(&str, &str)> {
-        name.split_once("--")
+        name.split_once(crate::BUCKET_SEPARATOR)
     }
 
     /// List products for an account via the Source API.
@@ -77,7 +77,7 @@ impl BucketRegistry for SourceCoopRegistry {
         &self,
         _identity: &ResolvedIdentity,
     ) -> Result<Vec<BucketEntry>, ProxyError> {
-        Ok(vec![])
+        unimplemented!("Bucket listing is not supported")
     }
 }
 
@@ -213,7 +213,7 @@ async fn resolve_product_inner(
     };
 
     let config = BucketConfig {
-        name: format!("{}--{}", account, product),
+        name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
         backend_type,
         backend_prefix,
         anonymous_access: true,
