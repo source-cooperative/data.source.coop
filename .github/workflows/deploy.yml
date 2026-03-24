@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+      wrangler_config:
+        description: "Wrangler config file (default: wrangler.toml)"
+        required: false
+        type: string
+        default: "wrangler.toml"
       var_overrides:
         description: "Additional --var flags (e.g. 'LOG_LEVEL:DEBUG SOURCE_API_URL:https://staging.source.coop')"
         required: false
@@ -64,7 +69,7 @@ jobs:
           for var in ${{ inputs.var_overrides }}; do
             EXTRA_ARGS="$EXTRA_ARGS --var $var"
           done
-          npx wrangler@3 deploy $EXTRA_ARGS
+          npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS
 
       - name: Get deploy URL
         id: url
