@@ -20,30 +20,21 @@ fn root_path_passes_through() {
 
 #[test]
 fn empty_path_passes_through() {
-    assert_eq!(
-        mapping().rewrite_request("", None),
-        ("".to_string(), None)
-    );
+    assert_eq!(mapping().rewrite_request("", None), ("".to_string(), None));
 }
 
 #[test]
 fn object_request_two_segments_plus_key() {
     assert_eq!(
         mapping().rewrite_request("/cholmes/admin-boundaries/file.parquet", None),
-        (
-            "/cholmes:admin-boundaries/file.parquet".to_string(),
-            None
-        )
+        ("/cholmes:admin-boundaries/file.parquet".to_string(), None)
     );
 }
 
 #[test]
 fn object_request_nested_key() {
     assert_eq!(
-        mapping().rewrite_request(
-            "/cholmes/admin-boundaries/dir/sub/file.parquet",
-            None
-        ),
+        mapping().rewrite_request("/cholmes/admin-boundaries/dir/sub/file.parquet", None),
         (
             "/cholmes:admin-boundaries/dir/sub/file.parquet".to_string(),
             None
@@ -54,10 +45,7 @@ fn object_request_nested_key() {
 #[test]
 fn product_list_via_path_segment() {
     assert_eq!(
-        mapping().rewrite_request(
-            "/cholmes/admin-boundaries",
-            Some("list-type=2"),
-        ),
+        mapping().rewrite_request("/cholmes/admin-boundaries", Some("list-type=2"),),
         (
             "/cholmes:admin-boundaries".to_string(),
             Some("list-type=2".to_string())
@@ -84,10 +72,7 @@ fn account_list_trailing_slash_passes_through() {
 #[test]
 fn prefix_routed_list() {
     assert_eq!(
-        mapping().rewrite_request(
-            "/cholmes",
-            Some("list-type=2&prefix=admin-boundaries/"),
-        ),
+        mapping().rewrite_request("/cholmes", Some("list-type=2&prefix=admin-boundaries/"),),
         (
             "/cholmes:admin-boundaries".to_string(),
             Some("list-type=2&prefix=".to_string())
@@ -121,10 +106,7 @@ fn single_segment_no_list_passes_through() {
 fn single_segment_with_non_list_query_passes_through() {
     assert_eq!(
         mapping().rewrite_request("/cholmes", Some("not-list-type=2")),
-        (
-            "/cholmes".to_string(),
-            Some("not-list-type=2".to_string())
-        )
+        ("/cholmes".to_string(), Some("not-list-type=2".to_string()))
     );
 }
 

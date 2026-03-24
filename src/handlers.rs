@@ -45,7 +45,10 @@ pub struct AccountListHandler {
 }
 
 impl AccountListHandler {
-    pub fn new(registry: SourceCoopRegistry, mapping: &multistore_path_mapping::PathMapping) -> Self {
+    pub fn new(
+        registry: SourceCoopRegistry,
+        mapping: &multistore_path_mapping::PathMapping,
+    ) -> Self {
         Self {
             registry,
             bucket_separator: mapping.bucket_separator.clone(),
