@@ -1,0 +1,20 @@
+name: Production
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy & Test
+    uses: ./.github/workflows/deploy.yml
+    with:
+      worker_name: source-data-proxy
+      environment: production
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
