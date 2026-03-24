@@ -165,7 +165,12 @@ async fn handle_account_list(
         Ok(products) => products.into_iter().map(|p| format!("{p}/")).collect(),
         Err(e) => {
             tracing::error!("AccountList({}) error: {:?}", account, e);
-            vec![]
+            return s3_error_response(
+                502,
+                "BadGateway",
+                "Failed to list products from upstream API",
+                &registry.request_id,
+            );
         }
     };
 

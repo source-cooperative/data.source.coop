@@ -13,7 +13,7 @@ use std::collections::HashMap;
 pub struct SourceCoopRegistry {
     api_base_url: String,
     api_secret: Option<String>,
-    request_id: String,
+    pub(crate) request_id: String,
 }
 
 impl SourceCoopRegistry {
