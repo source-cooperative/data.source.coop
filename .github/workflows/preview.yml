@@ -15,7 +15,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       worker_name: source-data-proxy-pr-${{ github.event.pull_request.number }}
-      wrangler_env: staging
+      var_overrides: "LOG_LEVEL:DEBUG SOURCE_API_URL:https://staging.source.coop"
       environment: preview
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

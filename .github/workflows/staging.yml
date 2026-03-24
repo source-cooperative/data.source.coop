@@ -13,7 +13,6 @@ jobs:
     name: Deploy & Test
     uses: ./.github/workflows/deploy.yml
     with:
-      worker_name: source-data-proxy
       wrangler_env: staging
       environment: staging
     secrets:

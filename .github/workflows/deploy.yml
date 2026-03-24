@@ -4,11 +4,17 @@ on:
   workflow_call:
     inputs:
       worker_name:
-        description: "Cloudflare Worker name"
-        required: true
+        description: "Cloudflare Worker name override (cannot be used with wrangler_env)"
+        required: false
         type: string
+        default: ""
       wrangler_env:
-        description: "Wrangler environment (e.g. staging). Leave empty for production."
+        description: "Wrangler environment (e.g. staging). Cannot be used with worker_name."
+        required: false
+        type: string
+        default: ""
+      var_overrides:
+        description: "Additional --var flags (e.g. 'LOG_LEVEL:DEBUG SOURCE_API_URL:https://staging.source.coop')"
         required: false
         type: string
         default: ""
@@ -52,12 +58,17 @@ jobs:
           if [ -n "${{ inputs.wrangler_env }}" ]; then
             EXTRA_ARGS="--env ${{ inputs.wrangler_env }}"
           fi
-          npx wrangler@3 deploy \
-            --name "${{ inputs.worker_name }}" \
-            $EXTRA_ARGS
+          if [ -n "${{ inputs.worker_name }}" ]; then
+            EXTRA_ARGS="--name ${{ inputs.worker_name }}"
+          fi
+          for var in ${{ inputs.var_overrides }}; do
+            EXTRA_ARGS="$EXTRA_ARGS --var $var"
+          done
+          npx wrangler@3 deploy $EXTRA_ARGS
 
       - name: Get deploy URL
         id: url
         run: |
-          URL="https://${{ inputs.worker_name }}.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev"
+          WORKER="${{ inputs.worker_name || 'source-data-proxy' }}"
+          URL="https://${WORKER}.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev"
           echo "deploy_url=$URL" >> "$GITHUB_OUTPUT"
