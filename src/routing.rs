@@ -94,7 +94,7 @@ fn route_list_with_prefix(
 }
 
 pub fn is_list_request(query: &str) -> bool {
-    query.contains("list-type=")
+    query.split('&').any(|p| p.starts_with("list-type="))
 }
 
 pub fn extract_query_param(query: &str, key: &str) -> Option<String> {
@@ -285,6 +285,13 @@ mod tests {
         assert!(is_list_request("foo=bar&list-type=2&baz=qux"));
         assert!(!is_list_request("foo=bar"));
         assert!(!is_list_request(""));
+    }
+
+    #[test]
+    fn test_is_list_request_rejects_substring_match() {
+        // "not-list-type=2" should NOT be treated as a list request
+        assert!(!is_list_request("not-list-type=2"));
+        assert!(!is_list_request("foo=bar&not-list-type=2"));
     }
 
     #[test]

@@ -151,6 +151,23 @@ fn is_list_request_detects_list_type() {
 }
 
 #[test]
+fn is_list_request_rejects_substring_match() {
+    // Must match as a distinct query parameter, not a substring
+    assert!(!is_list_request("not-list-type=2"));
+    assert!(!is_list_request("foo=bar&not-list-type=2"));
+}
+
+#[test]
+fn single_segment_with_non_list_query_is_bad_request() {
+    // A query that contains "list-type" as a substring but not as a param
+    // should still be a BadRequest
+    assert_eq!(
+        classify_request(&mapping(), "/cholmes", Some("not-list-type=2")),
+        RequestClass::BadRequest("Missing product in path".to_string())
+    );
+}
+
+#[test]
 fn extract_query_param_finds_value() {
     assert_eq!(
         extract_query_param("list-type=2&prefix=foo/", "prefix"),
