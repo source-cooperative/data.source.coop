@@ -1,0 +1,62 @@
+name: Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy & Test
+    if: github.event.action != 'closed'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      worker_name: source-data-proxy-pr-${{ github.event.pull_request.number }}
+      wrangler_config: wrangler.preview.toml
+      var_overrides: "LOG_LEVEL:DEBUG SOURCE_API_URL:https://staging.source.coop"
+      environment: preview
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  comment:
+    name: PR Comment
+    needs: deploy
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Find Comment
+        uses: peter-evans/find-comment@v4
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Latest commit deployed to
+
+      - name: Create or update comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            🚀 Latest commit deployed to ${{ needs.deploy.outputs.deploy_url }}
+
+            * Date: `${{ github.event.pull_request.updated_at }}`
+            * Commit: ${{ github.sha }}
+          edit-mode: replace
+
+  cleanup:
+    name: Cleanup Preview
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Delete preview worker
+        run: npx wrangler@3 delete --name "source-data-proxy-pr-${{ github.event.pull_request.number }}" --force

@@ -1,0 +1,44 @@
+compatibility_date = "2026-03-17"
+main = "build/worker/shim.mjs"
+name = "source-data-proxy"
+
+routes = [
+  {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "a.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "b.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "c.data.source.coop/*", zone_name = "coolnewgeo.com"},
+  {pattern = "d.data.source.coop/*", zone_name = "coolnewgeo.com"},
+]
+
+[build]
+command = "cargo install -q worker-build@0.7.5 && worker-build --release"
+
+[vars]
+LOG_LEVEL = "WARN"
+SOURCE_API_URL = "https://source.coop"
+
+# TODO: Set different sampling rates for prod vs staging
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
+[env.staging]
+routes = [
+  {pattern = "data.staging.coolnewgeo.com/*", zone_name = "coolnewgeo.com"},
+  {pattern = "data.staging.source.coop/*", zone_name = "coolnewgeo.com"},
+]
+
+[env.staging.vars]
+LOG_LEVEL = "DEBUG"
+SOURCE_API_URL = "https://staging.source.coop"
