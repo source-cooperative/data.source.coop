@@ -1,8 +1,10 @@
+mod analytics;
 mod cache;
 mod handlers;
 mod pagination;
 mod registry;
 
+use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::ProxyGateway;
@@ -103,6 +105,48 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
         .await;
     let response = response_from_gateway(result);
     tracing::info!(status = response.status(), "response");
+
+    // ── Analytics ───────────────────────────────────────────────
+    {
+        let (account, product, key) = extract_path_segments(&path);
+        let user_id = headers
+            .get("x-source-user-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let country = headers
+            .get("cf-ipcountry")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let bytes_sent: f64 = response
+            .headers()
+            .get("content-length")
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+
+        log_request(
+            &env,
+            &RequestEvent {
+                account_id: account.unwrap_or(""),
+                product_id: product.unwrap_or(""),
+                file_path: key.unwrap_or(""),
+                method: method.as_str(),
+                user_id,
+                country,
+                content_type: &content_type,
+                bytes_sent,
+                status_code: response.status() as f64,
+            },
+        );
+    }
+
     let response = add_cors(response);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
