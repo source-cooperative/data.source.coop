@@ -1,3 +1,4 @@
+mod analytics;
 mod cache;
 mod handlers;
 mod pagination;
