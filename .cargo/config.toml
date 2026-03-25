@@ -1,2 +1,6 @@
-[build]
-target = "wasm32-unknown-unknown"
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
+
+[alias]
+wclippy = "clippy --target wasm32-unknown-unknown"
+wcheck = "check --target wasm32-unknown-unknown"
