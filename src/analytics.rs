@@ -59,6 +59,22 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
     }
 }
 
+/// Extract account and product segments from a URL path.
+///
+/// Given `/{account}/{product}[/{key}]`, returns `(account, product, key)`.
+/// Returns `None` for segments that aren't present.
+pub fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return (None, None, None);
+    }
+    let mut parts = trimmed.splitn(3, '/');
+    let account = parts.next();
+    let product = parts.next();
+    let key = parts.next();
+    (account, product, key)
+}
+
 /// Truncate a string to at most `max_bytes` bytes on a char boundary.
 fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
