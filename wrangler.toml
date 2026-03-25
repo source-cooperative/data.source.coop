@@ -33,6 +33,10 @@ enabled = true
 head_sampling_rate = 1
 persist = true
 
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "source_data_proxy_production"
+
 [env.staging]
 routes = [
   {pattern = "data.staging.coolnewgeo.com/*", zone_name = "coolnewgeo.com"},
@@ -42,3 +46,7 @@ routes = [
 [env.staging.vars]
 LOG_LEVEL = "DEBUG"
 SOURCE_API_URL = "https://staging.source.coop"
+
+[[env.staging.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "source_data_proxy_staging"
