@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.0.0](https://github.com/source-cooperative/data.source.coop/compare/v1.1.0...v2.0.0) (2026-03-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* rebuild proxy with multistore and cloudflare workers runtime ([#116](https://github.com/source-cooperative/data.source.coop/issues/116))
+
+### Features
+
+* add Analytics Engine request logging ([#119](https://github.com/source-cooperative/data.source.coop/issues/119)) ([d9ab62f](https://github.com/source-cooperative/data.source.coop/commit/d9ab62f8add085feeaff723d79e820fa990b2284))
+* rebuild proxy with multistore and cloudflare workers runtime ([#116](https://github.com/source-cooperative/data.source.coop/issues/116)) ([3e07478](https://github.com/source-cooperative/data.source.coop/commit/3e07478a1aa251ca2a7acee77810421a270069c7))
+
+
+### Bug Fixes
+
+* deserialize before caching ([295b965](https://github.com/source-cooperative/data.source.coop/commit/295b965972b51d8b14fd159736ac5472574bb776))
+* Return 502 on API error instead of empty list ([d0ff1f0](https://github.com/source-cooperative/data.source.coop/commit/d0ff1f0f2cb53212879243740f1de07f79a4ac7f))
+* scrutinise list type more closely ([d63e4f8](https://github.com/source-cooperative/data.source.coop/commit/d63e4f837134f8b24505c2dbde500538336fd892))
+
 ## [1.1.0](https://github.com/source-cooperative/data.source.coop/compare/v1.0.4...v1.1.0) (2026-03-05)
 
 
