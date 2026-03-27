@@ -74,7 +74,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
     // ── Build gateway with route handlers ──────────────────────────
-    let registry = SourceCoopRegistry::new(api_base_url, api_secret, request_id.clone());
+    let registry =
+        SourceCoopRegistry::new(api_base_url.clone(), api_secret.clone(), request_id.clone());
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
@@ -150,37 +151,29 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
-    {
-        let latitude = extract_cf_string(&req, "latitude");
-        let longitude = extract_cf_string(&req, "longitude");
-        tracing::debug!(lat = %latitude, lon = %longitude, "location broadcast check");
-        if !latitude.is_empty() && !longitude.is_empty() {
-            let country = headers
-                .get("cf-ipcountry")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            let city_val = extract_cf_string(&req, "city");
-            let colo = extract_cf_string(&req, "colo");
-            let body = serde_json::json!({
-                "lat": latitude.parse::<f64>().unwrap_or(0.0),
-                "lon": longitude.parse::<f64>().unwrap_or(0.0),
-                "city": city_val,
-                "country": country,
-                "colo": colo,
-                "account_id": account.unwrap_or(""),
-                "product_id": product.unwrap_or(""),
-                "path": key.unwrap_or(""),
-            });
-            if let Ok(location_ws) = env.service("LOCATION_WS") {
-                let mut init = worker::RequestInit::new();
-                init.with_method(worker::Method::Post);
-                init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
-                // Use waitUntil so the worker stays alive after returning the response
-                ctx.wait_until(async move {
-                    let _ = location_ws
-                        .fetch("https://location-ws/location", Some(init))
-                        .await;
-                });
+    if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
+        if response.status() < 400 {
+            let is_public = cache::get_or_fetch_product(
+                api_base_url.as_ref(),
+                acct,
+                prod,
+                api_secret.as_deref(),
+                "",
+            )
+            .await
+            .map(|p| p.is_public())
+            .unwrap_or(false);
+
+            if is_public {
+                maybe_broadcast_location(
+                    &ctx,
+                    &env,
+                    &CfProperties::from_request(&req),
+                    header_str(&headers, "cf-ipcountry"),
+                    acct,
+                    prod,
+                    key,
+                );
             }
         }
     }
@@ -226,6 +219,13 @@ fn extract_request_id(headers: &http::HeaderMap) -> String {
         .unwrap_or_default()
 }
 
+fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
 fn is_write_method(method: &http::Method) -> bool {
     matches!(
         *method,
@@ -233,20 +233,80 @@ fn is_write_method(method: &http::Method) -> bool {
     )
 }
 
-/// Extract a single string field from `request.cf`.
-fn extract_cf_string(req: &web_sys::Request, key: &str) -> String {
-    let cf = js_sys::Reflect::get(req, &wasm_bindgen::JsValue::from_str("cf")).unwrap_or_default();
-    if cf.is_undefined() || cf.is_null() {
-        return String::new();
+// ── Location broadcasting ──────────────────────────────────────────
+
+/// Properties extracted from the Cloudflare `request.cf` object.
+#[derive(Default)]
+struct CfProperties {
+    latitude: String,
+    longitude: String,
+    city: String,
+    colo: String,
+}
+
+impl CfProperties {
+    fn from_request(req: &web_sys::Request) -> Self {
+        let cf =
+            js_sys::Reflect::get(req, &wasm_bindgen::JsValue::from_str("cf")).unwrap_or_default();
+        if cf.is_undefined() || cf.is_null() {
+            return Self::default();
+        }
+        let get = |key: &str| -> String {
+            js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
+                .ok()
+                .map(|v| {
+                    v.as_string()
+                        .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
+                })
+                .unwrap_or_default()
+        };
+        Self {
+            latitude: get("latitude"),
+            longitude: get("longitude"),
+            city: get("city"),
+            colo: get("colo"),
+        }
     }
-    js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
-        .ok()
-        .map(|v| {
-            // cf properties may be strings or numbers depending on the field
-            v.as_string()
-                .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
-        })
-        .unwrap_or_default()
+}
+
+/// Broadcast the request's geolocation to WebSocket viewers via the location-ws service.
+fn maybe_broadcast_location(
+    ctx: &Context,
+    env: &Env,
+    cf: &CfProperties,
+    country: &str,
+    account: &str,
+    product: &str,
+    key: Option<&str>,
+) {
+    let (Ok(lat), Ok(lon)) = (cf.latitude.parse::<f64>(), cf.longitude.parse::<f64>()) else {
+        return;
+    };
+
+    let Ok(location_ws) = env.service("LOCATION_WS") else {
+        return;
+    };
+
+    let body = serde_json::json!({
+        "lat": lat,
+        "lon": lon,
+        "city": cf.city,
+        "country": country,
+        "colo": cf.colo,
+        "account_id": account,
+        "product_id": product,
+        "path": key.unwrap_or(""),
+    });
+
+    let body_str = body.to_string();
+    ctx.wait_until(async move {
+        let mut init = worker::RequestInit::new();
+        init.with_method(worker::Method::Post);
+        init.with_body(Some(wasm_bindgen::JsValue::from_str(&body_str)));
+        let _ = location_ws
+            .fetch("https://location-ws/location", Some(init))
+            .await;
+    });
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
