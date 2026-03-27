@@ -25,7 +25,7 @@ pub(crate) const BUCKET_SEPARATOR: &str = ":";
 async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let max_level = init_tracing(&env);
-    let (api_base_url, api_secret) = load_config(&env);
+    let config = load_config(&env);
 
     // ── Parse request ──────────────────────────────────────────────
     let js_body = JsBody(req.body());
@@ -74,7 +74,11 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
     // ── Build gateway with route handlers ──────────────────────────
-    let registry = SourceCoopRegistry::new(api_base_url, api_secret, request_id.clone());
+    let registry = SourceCoopRegistry::new(
+        config.api_base_url.clone(),
+        config.api_secret.clone(),
+        request_id.clone(),
+    );
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
@@ -106,46 +110,11 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let response = response_from_gateway(result);
     tracing::info!(status = response.status(), "response");
 
-    // ── Analytics ───────────────────────────────────────────────
-    {
-        let (account, product, key) = extract_path_segments(&path);
-        let user_id = headers
-            .get("x-source-user-id")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let country = headers
-            .get("cf-ipcountry")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        let bytes_sent: f64 = response
-            .headers()
-            .get("content-length")
-            .ok()
-            .flatten()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0);
+    // ── Extract path segments (used by analytics + location broadcast) ──
+    let (account, product, key) = extract_path_segments(&path);
 
-        log_request(
-            &env,
-            &RequestEvent {
-                account_id: account.unwrap_or(""),
-                product_id: product.unwrap_or(""),
-                file_path: key.unwrap_or(""),
-                method: method.as_str(),
-                user_id,
-                country,
-                content_type: &content_type,
-                bytes_sent,
-                status_code: response.status() as f64,
-            },
-        );
-    }
+    // ── Analytics ───────────────────────────────────────────────
+    log_analytics(&env, &headers, &response, &method, account, product, key);
 
     let response = add_cors(response);
     if !request_id.is_empty() {
@@ -156,36 +125,45 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn init_tracing(env: &Env) -> tracing::Level {
-    let log_level = env
-        .var("LOG_LEVEL")
-        .map(|v| v.to_string())
-        .unwrap_or_else(|_| "WARN".to_string());
-    let max_level = match log_level.to_uppercase().as_str() {
-        "TRACE" => tracing::Level::TRACE,
-        "DEBUG" => tracing::Level::DEBUG,
-        "INFO" => tracing::Level::INFO,
-        "ERROR" => tracing::Level::ERROR,
-        _ => tracing::Level::WARN,
-    };
-    tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
-    max_level
+struct AppConfig {
+    api_base_url: String,
+    api_secret: Option<String>,
 }
 
-fn load_config(env: &Env) -> (String, Option<String>) {
-    let api_base_url = env
-        .var("SOURCE_API_URL")
+fn load_config(env: &Env) -> AppConfig {
+    AppConfig {
+        api_base_url: env
+            .var("SOURCE_API_URL")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| "https://source.coop".to_string()),
+        api_secret: env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok(),
+    }
+}
+
+fn init_tracing(env: &Env) -> tracing::Level {
+    let max_level = env
+        .var("LOG_LEVEL")
         .map(|v| v.to_string())
-        .unwrap_or_else(|_| "https://source.coop".to_string());
-    let api_secret = env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok();
-    (api_base_url, api_secret)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(tracing::Level::WARN);
+    tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
+    max_level
 }
 
 fn extract_request_id(headers: &http::HeaderMap) -> String {
     headers
         .get("cf-ray")
-        .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+        .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
+        .to_string()
+}
+
+fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
 }
 
 fn is_write_method(method: &http::Method) -> bool {
@@ -195,13 +173,60 @@ fn is_write_method(method: &http::Method) -> bool {
     )
 }
 
+// ── Analytics ──────────────────────────────────────────────────────
+
+fn log_analytics(
+    env: &Env,
+    headers: &http::HeaderMap,
+    response: &web_sys::Response,
+    method: &http::Method,
+    account: Option<&str>,
+    product: Option<&str>,
+    key: Option<&str>,
+) {
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let bytes_sent: f64 = response
+        .headers()
+        .get("content-length")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+    log_request(
+        env,
+        &RequestEvent {
+            account_id: account.unwrap_or(""),
+            product_id: product.unwrap_or(""),
+            file_path: key.unwrap_or(""),
+            method: method.as_str(),
+            user_id: header_str(headers, "x-source-user-id"),
+            country: header_str(headers, "cf-ipcountry"),
+            content_type: &content_type,
+            bytes_sent,
+            status_code: response.status() as f64,
+        },
+    );
+}
+
 // ── CORS ────────────────────────────────────────────────────────────
 
 fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     let h = resp.headers();
-    let _ = h.set("access-control-allow-origin", "*");
-    let _ = h.set("access-control-allow-methods", "GET, HEAD, OPTIONS");
-    let _ = h.set("access-control-allow-headers", "*");
-    let _ = h.set("access-control-expose-headers", "*");
+    for (name, value) in [
+        ("access-control-allow-origin", "*"),
+        ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
+        ("access-control-allow-headers", "*"),
+        ("access-control-expose-headers", "*"),
+    ] {
+        if let Err(e) = h.set(name, value) {
+            tracing::warn!("failed to set CORS header {}: {:?}", name, e);
+        }
+    }
     resp
 }
