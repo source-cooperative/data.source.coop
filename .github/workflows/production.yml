@@ -11,6 +11,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy & Test
+    needs: deploy-location-ws
     uses: ./.github/workflows/deploy.yml
     with:
       worker_name: source-data-proxy
