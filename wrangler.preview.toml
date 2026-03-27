@@ -23,3 +23,7 @@ persist = true
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "source_data_proxy_staging"
+
+[[services]]
+binding = "LOCATION_WS"
+service = "location-ws"

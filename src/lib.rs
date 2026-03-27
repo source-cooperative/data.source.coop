@@ -106,9 +106,11 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     let response = response_from_gateway(result);
     tracing::info!(status = response.status(), "response");
 
+    // ── Extract path segments (used by analytics + location broadcast) ──
+    let (account, product, key) = extract_path_segments(&path);
+
     // ── Analytics ───────────────────────────────────────────────
     {
-        let (account, product, key) = extract_path_segments(&path);
         let user_id = headers
             .get("x-source-user-id")
             .and_then(|v| v.to_str().ok())
@@ -145,6 +147,42 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 status_code: response.status() as f64,
             },
         );
+    }
+
+    // ── Broadcast location to WebSocket viewers ──────────────────
+    {
+        let latitude = extract_cf_string(&req, "latitude");
+        let longitude = extract_cf_string(&req, "longitude");
+        if !latitude.is_empty() && !longitude.is_empty() {
+            let country = headers
+                .get("cf-ipcountry")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let city_val = extract_cf_string(&req, "city");
+            let colo = extract_cf_string(&req, "colo");
+            let body = serde_json::json!({
+                "lat": latitude.parse::<f64>().unwrap_or(0.0),
+                "lon": longitude.parse::<f64>().unwrap_or(0.0),
+                "city": city_val,
+                "country": country,
+                "colo": colo,
+                "account_id": account.unwrap_or(""),
+                "product_id": product.unwrap_or(""),
+                "path": key.unwrap_or(""),
+            });
+            if let Ok(location_ws) = env.service("LOCATION_WS") {
+                let mut init = worker::RequestInit::new();
+                init.with_method(worker::Method::Post);
+                init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
+                // Fire-and-forget: spawn the async fetch without awaiting in the
+                // main request path so we don't add latency.
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = location_ws
+                        .fetch("https://location-ws/location", Some(init))
+                        .await;
+                });
+            }
+        }
     }
 
     let response = add_cors(response);
@@ -193,6 +231,18 @@ fn is_write_method(method: &http::Method) -> bool {
         *method,
         http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
     )
+}
+
+/// Extract a single string field from `request.cf`.
+fn extract_cf_string(req: &web_sys::Request, key: &str) -> String {
+    let cf = js_sys::Reflect::get(req, &wasm_bindgen::JsValue::from_str("cf")).unwrap_or_default();
+    if cf.is_undefined() || cf.is_null() {
+        return String::new();
+    }
+    js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
