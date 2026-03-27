@@ -153,6 +153,7 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
     {
         let latitude = extract_cf_string(&req, "latitude");
         let longitude = extract_cf_string(&req, "longitude");
+        tracing::debug!(lat = %latitude, lon = %longitude, "location broadcast check");
         if !latitude.is_empty() && !longitude.is_empty() {
             let country = headers
                 .get("cf-ipcountry")
@@ -241,7 +242,11 @@ fn extract_cf_string(req: &web_sys::Request, key: &str) -> String {
     }
     js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
         .ok()
-        .and_then(|v| v.as_string())
+        .map(|v| {
+            // cf properties may be strings or numbers depending on the field
+            v.as_string()
+                .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
+        })
         .unwrap_or_default()
 }
 
