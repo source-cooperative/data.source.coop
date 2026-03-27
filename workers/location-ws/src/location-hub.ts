@@ -2,7 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 
 export interface Env {
   LOCATION_HUB: DurableObjectNamespace<LocationHub>;
-  MAX_BROADCASTS_PER_SECOND: string;
+  EMIT_INTERVAL_MS: string;
+  MAX_BROADCASTS_PER_EMIT: string;
   CORS_ORIGIN: string;
 }
 
@@ -21,20 +22,25 @@ interface Stats {
   requestCount: number;
   broadcastCount: number;
   windowStart: number;
+  seenLocations: Set<string>;
 }
+
 
 export class LocationHub extends DurableObject<Env> {
   private stats: Stats = {
     requestCount: 0,
     broadcastCount: 0,
     windowStart: Date.now(),
+    seenLocations: new Set(),
   };
   private alarmScheduled = false;
+  private emitInterval: number;
   private maxBroadcasts: number;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.maxBroadcasts = parseInt(env.MAX_BROADCASTS_PER_SECOND) || 50;
+    this.emitInterval = parseInt(env.EMIT_INTERVAL_MS) || 500;
+    this.maxBroadcasts = parseInt(env.MAX_BROADCASTS_PER_EMIT) || 25;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -70,11 +76,24 @@ export class LocationHub extends DurableObject<Env> {
     const location: LocationEvent = await request.json();
 
     const now = Date.now();
-    if (now - this.stats.windowStart >= 1000) {
-      this.stats = { requestCount: 0, broadcastCount: 0, windowStart: now };
+    if (now - this.stats.windowStart >= this.emitInterval) {
+      this.stats = {
+        requestCount: 0,
+        broadcastCount: 0,
+        windowStart: now,
+        seenLocations: new Set(),
+      };
     }
 
     this.stats.requestCount++;
+
+    // Deduplicate: one event per unique location per window
+    const locationKey = `${location.lat},${location.lon}`;
+    if (this.stats.seenLocations.has(locationKey)) {
+      this.ensureAlarm();
+      return new Response("ok");
+    }
+    this.stats.seenLocations.add(locationKey);
 
     // Sample: only broadcast if under the ceiling
     if (this.stats.broadcastCount < this.maxBroadcasts) {
@@ -97,7 +116,7 @@ export class LocationHub extends DurableObject<Env> {
     if (!this.alarmScheduled) {
       const currentAlarm = await this.ctx.storage.getAlarm();
       if (currentAlarm == null) {
-        await this.ctx.storage.setAlarm(Date.now() + 1000);
+        await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
       }
       this.alarmScheduled = true;
     }
@@ -130,17 +149,18 @@ export class LocationHub extends DurableObject<Env> {
         requestCount: 0,
         broadcastCount: 0,
         windowStart: Date.now(),
+        seenLocations: new Set(),
       };
 
       // Keep alarm running while clients are connected
-      await this.ctx.storage.setAlarm(Date.now() + 1000);
+      await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
       this.alarmScheduled = true;
     }
   }
 
   async webSocketMessage(
     _ws: WebSocket,
-    _message: string | ArrayBuffer
+    _message: string | ArrayBuffer,
   ): Promise<void> {
     // Clients don't send messages; ignore
   }
@@ -148,7 +168,7 @@ export class LocationHub extends DurableObject<Env> {
   async webSocketClose(
     ws: WebSocket,
     code: number,
-    reason: string
+    reason: string,
   ): Promise<void> {
     ws.close(code, reason);
   }
