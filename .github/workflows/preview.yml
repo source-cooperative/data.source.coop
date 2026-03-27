@@ -22,6 +22,17 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+  deploy-location-ws:
+    name: Deploy Location WS
+    if: github.event.action != 'closed'
+    uses: ./.github/workflows/deploy-location-ws.yml
+    with:
+      worker_name: location-ws-pr-${{ github.event.pull_request.number }}
+      environment: preview
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
   comment:
     name: PR Comment
     needs: deploy
@@ -60,3 +71,5 @@ jobs:
     steps:
       - name: Delete preview worker
         run: npx wrangler@3 delete --name "source-data-proxy-pr-${{ github.event.pull_request.number }}" --force
+      - name: Delete preview location-ws worker
+        run: npx wrangler@3 delete --name "location-ws-pr-${{ github.event.pull_request.number }}" --force
