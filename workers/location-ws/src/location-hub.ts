@@ -12,6 +12,9 @@ export interface LocationEvent {
   city?: string;
   country?: string;
   colo?: string;
+  account_id?: string;
+  product_id?: string;
+  path?: string;
 }
 
 interface Stats {
