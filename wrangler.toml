@@ -37,6 +37,10 @@ persist = true
 binding = "ANALYTICS"
 dataset = "source_data_proxy_production"
 
+[[services]]
+binding = "PUBLIC_LOG_STREAM"
+service = "public-log-stream"
+
 [env.staging]
 routes = [
   {pattern = "data.staging.coolnewgeo.com/*", zone_name = "coolnewgeo.com"},
@@ -50,3 +54,7 @@ SOURCE_API_URL = "https://staging.source.coop"
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "source_data_proxy_staging"
+
+[[env.staging.services]]
+binding = "PUBLIC_LOG_STREAM"
+service = "public-log-stream"
