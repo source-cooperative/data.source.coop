@@ -11,12 +11,14 @@ concurrency:
 jobs:
   deploy:
     name: Deploy & Test
+    needs: deploy-location-ws
     if: github.event.action != 'closed'
     uses: ./.github/workflows/deploy.yml
     with:
       worker_name: source-data-proxy-pr-${{ github.event.pull_request.number }}
       wrangler_config: wrangler.preview.toml
       var_overrides: "LOG_LEVEL:DEBUG SOURCE_API_URL:https://staging.source.coop"
+      service_overrides: "LOCATION_WS:location-ws-pr-${{ github.event.pull_request.number }}"
       environment: preview
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: ""
+      service_overrides:
+        description: "Additional --service flags (e.g. 'LOCATION_WS:location-ws-pr-1')"
+        required: false
+        type: string
+        default: ""
       environment:
         description: "GitHub environment name (preview, staging, production)"
         required: true
@@ -68,6 +73,9 @@ jobs:
           fi
           for var in ${{ inputs.var_overrides }}; do
             EXTRA_ARGS="$EXTRA_ARGS --var $var"
+          done
+          for svc in ${{ inputs.service_overrides }}; do
+            EXTRA_ARGS="$EXTRA_ARGS --service $svc"
           done
           npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS
 

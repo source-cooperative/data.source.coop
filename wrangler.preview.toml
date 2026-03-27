@@ -26,4 +26,4 @@ dataset = "source_data_proxy_staging"
 
 [[services]]
 binding = "LOCATION_WS"
-service = "location-ws"
+service = "location_ws_staging"
