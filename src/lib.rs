@@ -22,7 +22,7 @@ use worker::{event, Context, Env, Result};
 pub(crate) const BUCKET_SEPARATOR: &str = ":";
 
 #[event(fetch)]
-async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys::Response> {
+async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let max_level = init_tracing(&env);
     let (api_base_url, api_secret) = load_config(&env);
@@ -175,9 +175,8 @@ async fn fetch(req: web_sys::Request, env: Env, _ctx: Context) -> Result<web_sys
                 let mut init = worker::RequestInit::new();
                 init.with_method(worker::Method::Post);
                 init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
-                // Fire-and-forget: spawn the async fetch without awaiting in the
-                // main request path so we don't add latency.
-                wasm_bindgen_futures::spawn_local(async move {
+                // Use waitUntil so the worker stays alive after returning the response
+                ctx.wait_until(async move {
                     let _ = location_ws
                         .fetch("https://location-ws/location", Some(init))
                         .await;
