@@ -75,6 +75,10 @@ export class LocationHub extends DurableObject<Env> {
   private async handleLocation(request: Request): Promise<Response> {
     const location: LocationEvent = await request.json();
 
+    // Anonymize to ~1km precision (city-level)
+    location.lat = Math.round(location.lat * 100) / 100;
+    location.lon = Math.round(location.lon * 100) / 100;
+
     const now = Date.now();
     if (now - this.stats.windowStart >= this.emitInterval) {
       this.stats = {
@@ -87,7 +91,7 @@ export class LocationHub extends DurableObject<Env> {
 
     this.stats.requestCount++;
 
-    // Deduplicate: one event per unique location per window
+    // Deduplicate: one event per unique anonymized location per window
     const locationKey = `${location.lat},${location.lon}`;
     if (this.stats.seenLocations.has(locationKey)) {
       this.ensureAlarm();
