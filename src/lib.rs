@@ -153,28 +153,19 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // ── Broadcast location to WebSocket viewers ──────────────────
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
         if response.status() < 400 {
-            let is_public = cache::get_or_fetch_product(
-                api_base_url.as_ref(),
-                acct,
-                prod,
-                api_secret.as_deref(),
-                "",
-            )
-            .await
-            .map(|p| p.is_public())
-            .unwrap_or(false);
-
-            if is_public {
-                maybe_broadcast_location(
-                    &ctx,
-                    &env,
-                    &CfProperties::from_request(&req),
-                    header_str(&headers, "cf-ipcountry"),
-                    acct,
-                    prod,
-                    key,
-                );
-            }
+            maybe_broadcast_location(
+                &ctx,
+                &env,
+                LocationEvent {
+                    cf: CfProperties::from_request(&req),
+                    country: header_str(&headers, "cf-ipcountry").to_string(),
+                    account: acct.to_string(),
+                    product: prod.to_string(),
+                    key: key.unwrap_or("").to_string(),
+                    api_base_url: api_base_url.clone(),
+                    api_secret: api_secret.clone(),
+                },
+            );
         }
     }
 
@@ -269,17 +260,23 @@ impl CfProperties {
     }
 }
 
+struct LocationEvent {
+    cf: CfProperties,
+    country: String,
+    account: String,
+    product: String,
+    key: String,
+    api_base_url: String,
+    api_secret: Option<String>,
+}
+
 /// Broadcast the request's geolocation to WebSocket viewers via the location-ws service.
-fn maybe_broadcast_location(
-    ctx: &Context,
-    env: &Env,
-    cf: &CfProperties,
-    country: &str,
-    account: &str,
-    product: &str,
-    key: Option<&str>,
-) {
-    let (Ok(lat), Ok(lon)) = (cf.latitude.parse::<f64>(), cf.longitude.parse::<f64>()) else {
+/// Runs entirely inside `wait_until` so it never blocks the response.
+fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
+    let (Ok(lat), Ok(lon)) = (
+        event.cf.latitude.parse::<f64>(),
+        event.cf.longitude.parse::<f64>(),
+    ) else {
         return;
     };
 
@@ -287,22 +284,34 @@ fn maybe_broadcast_location(
         return;
     };
 
-    let body = serde_json::json!({
-        "lat": lat,
-        "lon": lon,
-        "city": cf.city,
-        "country": country,
-        "colo": cf.colo,
-        "account_id": account,
-        "product_id": product,
-        "path": key.unwrap_or(""),
-    });
-
-    let body_str = body.to_string();
     ctx.wait_until(async move {
+        let is_public = cache::get_or_fetch_product(
+            &event.api_base_url,
+            &event.account,
+            &event.product,
+            event.api_secret.as_deref(),
+            "",
+        )
+        .await
+        .map(|p| p.is_public())
+        .unwrap_or(false);
+        if !is_public {
+            return;
+        }
+
+        let body = serde_json::json!({
+            "lat": lat,
+            "lon": lon,
+            "city": event.cf.city,
+            "country": event.country,
+            "colo": event.cf.colo,
+            "account_id": event.account,
+            "product_id": event.product,
+            "path": event.key,
+        });
         let mut init = worker::RequestInit::new();
         init.with_method(worker::Method::Post);
-        init.with_body(Some(wasm_bindgen::JsValue::from_str(&body_str)));
+        init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
         let _ = location_ws
             .fetch("https://location-ws/location", Some(init))
             .await;
