@@ -57,4 +57,4 @@ dataset = "source_data_proxy_staging"
 
 [[env.staging.services]]
 binding = "PUBLIC_LOG_STREAM"
-service = "public-log-stream"
+service = "public-log-stream-staging"
