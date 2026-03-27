@@ -4,6 +4,7 @@ compatibility_date = "2026-03-17"
 
 routes = [
   {pattern = "logs.source.coop/*", zone_name = "coolnewgeo.com"},
+  {custom_domain = true, pattern = "logs.coolnewgeo.com"},
 ]
 
 [[durable_objects.bindings]]
@@ -22,4 +23,5 @@ CORS_ORIGIN = "*"
 [env.staging]
 routes = [
   {pattern = "logs.staging.source.coop/*", zone_name = "coolnewgeo.com"},
+  {custom_domain = true, pattern = "logs.staging.coolnewgeo.com"},
 ]
