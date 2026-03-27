@@ -24,7 +24,7 @@ on:
         type: string
         default: ""
       service_overrides:
-        description: "Additional --service flags (e.g. 'LOCATION_WS:location-ws-pr-1')"
+        description: "Service binding overrides as BINDING:SERVICE pairs (e.g. 'LOCATION_WS:location-ws-pr-1')"
         required: false
         type: string
         default: ""
@@ -62,6 +62,18 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Override service bindings
+        if: inputs.service_overrides != ''
+        run: |
+          for pair in ${{ inputs.service_overrides }}; do
+            BINDING="${pair%%:*}"
+            SERVICE="${pair#*:}"
+            # Find the binding line and replace the service on the next line
+            sed -i "/binding = \"$BINDING\"/{ n; s/service = \".*\"/service = \"$SERVICE\"/; }" ${{ inputs.wrangler_config }}
+          done
+          echo "Updated ${{ inputs.wrangler_config }}:"
+          cat ${{ inputs.wrangler_config }}
+
       - name: Deploy worker
         run: |
           EXTRA_ARGS=""
@@ -73,9 +85,6 @@ jobs:
           fi
           for var in ${{ inputs.var_overrides }}; do
             EXTRA_ARGS="$EXTRA_ARGS --var $var"
-          done
-          for svc in ${{ inputs.service_overrides }}; do
-            EXTRA_ARGS="$EXTRA_ARGS --service $svc"
           done
           npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS
 
