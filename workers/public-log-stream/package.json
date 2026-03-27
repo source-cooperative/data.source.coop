@@ -1,5 +1,5 @@
 {
-  "name": "location-ws",
+  "name": "public-log-stream",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",

@@ -1,4 +1,4 @@
-name: Deploy Location WS
+name: Deploy Public Log Stream
 
 on:
   workflow_call:
@@ -7,7 +7,7 @@ on:
         description: "Cloudflare Worker name override"
         required: false
         type: string
-        default: "location-ws"
+        default: "public-log-stream"
       wrangler_env:
         description: "Wrangler environment (e.g. staging)"
         required: false
@@ -25,7 +25,7 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Location WS
+    name: Deploy Public Log Stream
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     env:
@@ -38,17 +38,17 @@ jobs:
           node-version: "22"
 
       - name: Install dependencies
-        working-directory: workers/location-ws
+        working-directory: workers/public-log-stream
         run: npm ci
 
       - name: Deploy worker
-        working-directory: workers/location-ws
+        working-directory: workers/public-log-stream
         run: |
           EXTRA_ARGS=""
           if [ -n "${{ inputs.wrangler_env }}" ]; then
             EXTRA_ARGS="--env ${{ inputs.wrangler_env }}"
           fi
-          if [ -n "${{ inputs.worker_name }}" ] && [ "${{ inputs.worker_name }}" != "location-ws" ]; then
+          if [ -n "${{ inputs.worker_name }}" ] && [ "${{ inputs.worker_name }}" != "public-log-stream" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --name ${{ inputs.worker_name }}"
           fi
           npx wrangler deploy $EXTRA_ARGS

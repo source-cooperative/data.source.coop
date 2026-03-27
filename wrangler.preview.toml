@@ -25,5 +25,5 @@ binding = "ANALYTICS"
 dataset = "source_data_proxy_staging"
 
 [[services]]
-binding = "LOCATION_WS"
-service = "location-ws-staging"
+binding = "PUBLIC_LOG_STREAM"
+service = "public-log-stream-staging"

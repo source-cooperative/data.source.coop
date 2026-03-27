@@ -11,7 +11,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy & Test
-    needs: deploy-location-ws
+    needs: deploy-public-log-stream
     uses: ./.github/workflows/deploy.yml
     with:
       worker_name: source-data-proxy
@@ -20,9 +20,9 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  deploy-location-ws:
-    name: Deploy Location WS
-    uses: ./.github/workflows/deploy-location-ws.yml
+  deploy-public-log-stream:
+    name: Deploy Public Log Stream
+    uses: ./.github/workflows/deploy-public-log-stream.yml
     with:
       environment: production
     secrets:

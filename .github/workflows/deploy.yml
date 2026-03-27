@@ -24,7 +24,7 @@ on:
         type: string
         default: ""
       service_overrides:
-        description: "Service binding overrides as BINDING:SERVICE pairs (e.g. 'LOCATION_WS:location-ws-pr-1')"
+        description: "Service binding overrides as BINDING:SERVICE pairs (e.g. 'PUBLIC_LOG_STREAM:public-log-stream-pr-1')"
         required: false
         type: string
         default: ""

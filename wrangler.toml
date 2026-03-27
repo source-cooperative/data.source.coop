@@ -38,8 +38,8 @@ binding = "ANALYTICS"
 dataset = "source_data_proxy_production"
 
 [[services]]
-binding = "LOCATION_WS"
-service = "location-ws"
+binding = "PUBLIC_LOG_STREAM"
+service = "public-log-stream"
 
 [env.staging]
 routes = [
@@ -56,5 +56,5 @@ binding = "ANALYTICS"
 dataset = "source_data_proxy_staging"
 
 [[env.staging.services]]
-binding = "LOCATION_WS"
-service = "location-ws"
+binding = "PUBLIC_LOG_STREAM"
+service = "public-log-stream"

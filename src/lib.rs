@@ -270,7 +270,7 @@ struct LocationEvent {
     api_secret: Option<String>,
 }
 
-/// Broadcast the request's geolocation to WebSocket viewers via the location-ws service.
+/// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
 /// Runs entirely inside `wait_until` so it never blocks the response.
 fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
     let (Ok(lat), Ok(lon)) = (
@@ -280,7 +280,7 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
         return;
     };
 
-    let Ok(location_ws) = env.service("LOCATION_WS") else {
+    let Ok(location_ws) = env.service("PUBLIC_LOG_STREAM") else {
         return;
     };
 
@@ -313,7 +313,7 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
         init.with_method(worker::Method::Post);
         init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
         let _ = location_ws
-            .fetch("https://location-ws/location", Some(init))
+            .fetch("https://public-log-stream/location", Some(init))
             .await;
     });
 }
