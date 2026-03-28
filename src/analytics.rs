@@ -16,7 +16,7 @@ pub struct RequestEvent<'a> {
 /// Write a request event to the Analytics Engine dataset.
 ///
 /// Schema:
-///   index1:  account_id
+///   index1:  "{account_id}/{product_id}" (sampling boundary per product)
 ///   blob1:   account_id
 ///   blob2:   product_id
 ///   blob3:   file_path (truncated to 256 bytes)
@@ -41,8 +41,10 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
     // Truncate file_path to 256 bytes (Analytics Engine blob limit)
     let file_path = truncate_to_byte_limit(event.file_path, 256);
 
+    let index = format!("{}/{}", event.account_id, event.product_id);
+
     let result = AnalyticsEngineDataPointBuilder::new()
-        .indexes([event.account_id])
+        .indexes([index.as_str()])
         .add_blob(event.account_id) // blob1
         .add_blob(event.product_id) // blob2
         .add_blob(file_path) // blob3
