@@ -11,7 +11,18 @@ concurrency:
 jobs:
   deploy:
     name: Deploy & Test
+    needs: deploy-public-log-stream
     uses: ./.github/workflows/deploy.yml
+    with:
+      wrangler_env: staging
+      environment: staging
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  deploy-public-log-stream:
+    name: Deploy Public Log Stream
+    uses: ./.github/workflows/deploy-public-log-stream.yml
     with:
       wrangler_env: staging
       environment: staging

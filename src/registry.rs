@@ -233,10 +233,31 @@ async fn resolve_product_inner(
 
 // ── API response types ─────────────────────────────────────────────
 
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DataMode {
+    #[default]
+    Open,
+    Subscription,
+    Private,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceProduct {
     pub product_id: String,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub data_mode: DataMode,
     pub metadata: SourceProductMetadata,
+}
+
+impl SourceProduct {
+    pub fn is_public(&self) -> bool {
+        !self.disabled && self.data_mode == DataMode::Open
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

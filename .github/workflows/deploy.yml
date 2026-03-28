@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: ""
+      service_overrides:
+        description: "Service binding overrides as BINDING:SERVICE pairs (e.g. 'PUBLIC_LOG_STREAM:public-log-stream-pr-1')"
+        required: false
+        type: string
+        default: ""
       environment:
         description: "GitHub environment name (preview, staging, production)"
         required: true
@@ -56,6 +61,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Override service bindings
+        if: inputs.service_overrides != ''
+        run: |
+          for pair in ${{ inputs.service_overrides }}; do
+            BINDING="${pair%%:*}"
+            SERVICE="${pair#*:}"
+            # Find the binding line and replace the service on the next line
+            sed -i "/binding = \"$BINDING\"/{ n; s/service = \".*\"/service = \"$SERVICE\"/; }" ${{ inputs.wrangler_config }}
+          done
+          echo "Updated ${{ inputs.wrangler_config }}:"
+          cat ${{ inputs.wrangler_config }}
 
       - name: Deploy worker
         run: |

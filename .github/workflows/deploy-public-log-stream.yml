@@ -1,0 +1,54 @@
+name: Deploy Public Log Stream
+
+on:
+  workflow_call:
+    inputs:
+      worker_name:
+        description: "Cloudflare Worker name override"
+        required: false
+        type: string
+        default: "public-log-stream"
+      wrangler_env:
+        description: "Wrangler environment (e.g. staging)"
+        required: false
+        type: string
+        default: ""
+      environment:
+        description: "GitHub environment name (preview, staging, production)"
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy Public Log Stream
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: workers/public-log-stream
+        run: npm ci
+
+      - name: Deploy worker
+        working-directory: workers/public-log-stream
+        run: |
+          EXTRA_ARGS=""
+          if [ -n "${{ inputs.wrangler_env }}" ]; then
+            EXTRA_ARGS="--env ${{ inputs.wrangler_env }}"
+          fi
+          if [ -n "${{ inputs.worker_name }}" ] && [ "${{ inputs.worker_name }}" != "public-log-stream" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --name ${{ inputs.worker_name }}"
+          fi
+          npx wrangler deploy $EXTRA_ARGS
