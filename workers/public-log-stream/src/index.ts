@@ -21,7 +21,11 @@ export default {
       return stub.fetch(request);
     }
 
+    // /location is internal-only (called via service binding)
     if (url.pathname === "/location" && request.method === "POST") {
+      if (url.hostname !== "public-log-stream") {
+        return new Response("Not found", { status: 404, headers: corsHeaders });
+      }
       const response = await stub.fetch(request);
       return new Response(response.body, {
         status: response.status,
@@ -39,7 +43,7 @@ export default {
 
 function getCorsHeaders(
   origin: string,
-  request: Request
+  request: Request,
 ): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin,
