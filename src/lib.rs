@@ -128,8 +128,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
                     account: acct.to_string(),
                     product: prod.to_string(),
                     key: key.unwrap_or("").to_string(),
-                    api_base_url: api_base_url.clone(),
-                    api_secret: api_secret.clone(),
+                    api_base_url: config.api_base_url.clone(),
+                    api_secret: config.api_secret.clone(),
                 },
             );
         }
@@ -176,13 +176,6 @@ fn extract_request_id(headers: &http::HeaderMap) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string()
-}
-
-fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
 }
 
 fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
