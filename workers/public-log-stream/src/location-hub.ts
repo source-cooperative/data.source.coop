@@ -34,6 +34,7 @@ export class LocationHub extends DurableObject<Env> {
     seenLocations: new Set(),
   };
   private alarmScheduled = false;
+  private sentIdle = false;
   private emitInterval: number;
   private maxBroadcasts: number;
 
@@ -90,6 +91,7 @@ export class LocationHub extends DurableObject<Env> {
     }
 
     this.stats.requestCount++;
+    this.sentIdle = false;
 
     // Deduplicate: one event per unique anonymized location per window
     const locationKey = `${location.lat},${location.lon}`;
@@ -131,21 +133,28 @@ export class LocationHub extends DurableObject<Env> {
     const clients = this.ctx.getWebSockets();
 
     if (clients.length > 0) {
-      const statsMessage = JSON.stringify({
-        type: "stats",
-        data: {
-          requestsPerSecond: this.stats.requestCount,
-          broadcastsPerSecond: this.stats.broadcastCount,
-          viewers: clients.length,
-        },
-      });
+      const hasActivity = this.stats.requestCount > 0;
 
-      for (const ws of clients) {
-        try {
-          ws.send(statsMessage);
-        } catch {
-          // Cleaned up in webSocketClose
+      // Send stats if there's activity, or once when going idle
+      if (hasActivity || !this.sentIdle) {
+        const statsMessage = JSON.stringify({
+          type: "stats",
+          data: {
+            requestsPerSecond: this.stats.requestCount,
+            broadcastsPerSecond: this.stats.broadcastCount,
+            viewers: clients.length,
+          },
+        });
+
+        for (const ws of clients) {
+          try {
+            ws.send(statsMessage);
+          } catch {
+            // Cleaned up in webSocketClose
+          }
         }
+
+        this.sentIdle = !hasActivity;
       }
 
       // Reset for next window
