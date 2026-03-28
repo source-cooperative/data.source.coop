@@ -2,7 +2,6 @@ mod analytics;
 mod cache;
 mod handlers;
 mod pagination;
-#[allow(dead_code)]
 mod redirect;
 mod registry;
 
@@ -17,6 +16,7 @@ use multistore_cf_workers::{
     JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
 };
 use multistore_path_mapping::{MappedRegistry, PathMapping};
+use redirect::{build_redirect_path, extract_redirect_segments, permanent_redirect_xml};
 use registry::SourceCoopRegistry;
 use worker::{event, Context, Env, Result};
 
@@ -74,6 +74,46 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         display_bucket_segments: 1,
     };
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
+
+    // ── Short-circuit: account rename redirect ──────────────────
+    {
+        let (account, product) = extract_redirect_segments(&path);
+        if let Some(account) = account {
+            let registry = SourceCoopRegistry::new(
+                config.api_base_url.clone(),
+                config.api_secret.clone(),
+                request_id.clone(),
+            );
+            let redirect_result = if let Some(product) = product {
+                match registry.get_product_or_redirect(account, product).await {
+                    Ok(cache::ApiResponse::Redirect(info)) => Some(info.redirect_to),
+                    _ => None,
+                }
+            } else {
+                match registry.list_products_or_redirect(account).await {
+                    Ok(cache::ApiResponse::Redirect(info)) => Some(info.redirect_to),
+                    _ => None,
+                }
+            };
+
+            if let Some(new_account) = redirect_result {
+                tracing::info!(
+                    old_account = account,
+                    new_account = %new_account,
+                    "account redirect"
+                );
+                let location = build_redirect_path(&path, query.as_deref(), &new_account);
+                let xml = permanent_redirect_xml(&new_account, &request_id);
+                let resp = xml_response(301, &xml);
+                let _ = resp.headers().set("location", &location);
+
+                let (acct, prod, key) = extract_path_segments(&path);
+                log_analytics(&env, &headers, &resp, &method, acct, prod, key);
+
+                return Ok(add_cors(resp));
+            }
+        }
+    }
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(

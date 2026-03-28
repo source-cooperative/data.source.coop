@@ -47,7 +47,6 @@ impl SourceCoopRegistry {
     }
 
     /// Fetch product metadata, returning redirect info if the account was renamed.
-    #[allow(dead_code)]
     pub async fn get_product_or_redirect(
         &self,
         account: &str,
@@ -64,7 +63,6 @@ impl SourceCoopRegistry {
     }
 
     /// List products for an account, returning redirect info if the account was renamed.
-    #[allow(dead_code)]
     pub async fn list_products_or_redirect(
         &self,
         account: &str,
