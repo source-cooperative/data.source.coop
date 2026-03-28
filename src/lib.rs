@@ -238,6 +238,7 @@ fn log_analytics(
             status_code: response.status() as f64,
         },
     );
+}
 
 // ── Location broadcasting ──────────────────────────────────────────
 
