@@ -45,6 +45,38 @@ impl SourceCoopRegistry {
             .map(|p| p.product_id)
             .collect())
     }
+
+    /// Fetch product metadata, returning redirect info if the account was renamed.
+    #[allow(dead_code)]
+    pub async fn get_product_or_redirect(
+        &self,
+        account: &str,
+        product: &str,
+    ) -> Result<crate::cache::ApiResponse<SourceProduct>, ProxyError> {
+        crate::cache::get_or_fetch_product_or_redirect(
+            &self.api_base_url,
+            account,
+            product,
+            self.api_secret.as_deref(),
+            &self.request_id,
+        )
+        .await
+    }
+
+    /// List products for an account, returning redirect info if the account was renamed.
+    #[allow(dead_code)]
+    pub async fn list_products_or_redirect(
+        &self,
+        account: &str,
+    ) -> Result<crate::cache::ApiResponse<SourceProductList>, ProxyError> {
+        crate::cache::get_or_fetch_product_list_or_redirect(
+            &self.api_base_url,
+            account,
+            self.api_secret.as_deref(),
+            &self.request_id,
+        )
+        .await
+    }
 }
 
 impl BucketRegistry for SourceCoopRegistry {
