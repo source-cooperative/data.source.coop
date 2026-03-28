@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/source-cooperative/data.source.coop/compare/v2.0.0...v2.1.0) (2026-03-28)
+
+
+### Features
+
+* real-time public log stream via Durable Objects ([#122](https://github.com/source-cooperative/data.source.coop/issues/122)) ([3bf3524](https://github.com/source-cooperative/data.source.coop/commit/3bf3524a23e4b180946613f4c6ab6ff99dd2caf3))
+
+
+### Bug Fixes
+
+* **log-stream:** prevent external requests ([a8095f6](https://github.com/source-cooperative/data.source.coop/commit/a8095f6760584621a50ee578d30fe4448201af28))
+* use staging log stream ([be7f97a](https://github.com/source-cooperative/data.source.coop/commit/be7f97a743731fbd5b05d3a75d756e0a7e53ccd7))
+
 ## [2.0.0](https://github.com/source-cooperative/data.source.coop/compare/v1.1.0...v2.0.0) (2026-03-26)
 
 
