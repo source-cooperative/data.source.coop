@@ -2,6 +2,8 @@ mod analytics;
 mod cache;
 mod handlers;
 mod pagination;
+#[allow(dead_code)]
+mod redirect;
 mod registry;
 
 use analytics::{extract_path_segments, log_request, RequestEvent};
