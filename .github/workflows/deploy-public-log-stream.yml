@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: "public-log-stream"
+      wrangler_config:
+        description: "Wrangler config file to use"
+        required: false
+        type: string
+        default: "wrangler.toml"
       wrangler_env:
         description: "Wrangler environment (e.g. staging)"
         required: false
@@ -44,9 +49,9 @@ jobs:
       - name: Deploy worker
         working-directory: workers/public-log-stream
         run: |
-          EXTRA_ARGS=""
+          EXTRA_ARGS="--config ${{ inputs.wrangler_config }}"
           if [ -n "${{ inputs.wrangler_env }}" ]; then
-            EXTRA_ARGS="--env ${{ inputs.wrangler_env }}"
+            EXTRA_ARGS="$EXTRA_ARGS --env ${{ inputs.wrangler_env }}"
           fi
           if [ -n "${{ inputs.worker_name }}" ] && [ "${{ inputs.worker_name }}" != "public-log-stream" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --name ${{ inputs.worker_name }}"
