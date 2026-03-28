@@ -1,9 +1,9 @@
 //! S3-compliant redirect support for renamed accounts.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Redirect info returned by the Source API when an account has been renamed.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RedirectInfo {
     pub redirect_to: String,
 }
