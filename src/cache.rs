@@ -20,7 +20,6 @@ const DATA_CONNECTIONS_CACHE_SECS: u32 = 1800; // 30 minutes
 const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
 
 /// Result from the Source API: either the expected data or a redirect.
-#[allow(dead_code)]
 pub enum ApiResponse<T> {
     Ok(T),
     Redirect(RedirectInfo),
@@ -65,6 +64,7 @@ pub async fn get_or_fetch_data_connections(
 }
 
 /// Fetch an account's product list, cached for `PRODUCT_LIST_CACHE_SECS`.
+#[allow(dead_code)]
 pub async fn get_or_fetch_product_list(
     api_base_url: &str,
     account: &str,

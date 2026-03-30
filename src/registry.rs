@@ -31,6 +31,7 @@ impl SourceCoopRegistry {
     }
 
     /// List products for an account via the Source API.
+    #[allow(dead_code)]
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
         let product_list = crate::cache::get_or_fetch_product_list(
             &self.api_base_url,
