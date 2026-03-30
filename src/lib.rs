@@ -75,35 +75,30 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     };
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
+    // ── Build registry (shared by redirect check + gateway) ───────
+    let registry = SourceCoopRegistry::new(
+        config.api_base_url.clone(),
+        config.api_secret.clone(),
+        request_id.clone(),
+    );
+
     // ── Short-circuit: account rename redirect ──────────────────
+    // Only check product-level requests here. Account-only requests
+    // (e.g. /{account}?list-type=2) are handled by AccountListHandler
+    // to avoid a redundant API call.
     {
         let (account, product) = extract_redirect_segments(&path);
-        if let Some(account) = account {
-            let registry = SourceCoopRegistry::new(
-                config.api_base_url.clone(),
-                config.api_secret.clone(),
-                request_id.clone(),
-            );
-            let redirect_result = if let Some(product) = product {
-                match registry.get_product_or_redirect(account, product).await {
-                    Ok(cache::ApiResponse::Redirect(info)) => Some(info.redirect_to),
-                    _ => None,
-                }
-            } else {
-                match registry.list_products_or_redirect(account).await {
-                    Ok(cache::ApiResponse::Redirect(info)) => Some(info.redirect_to),
-                    _ => None,
-                }
-            };
-
-            if let Some(new_account) = redirect_result {
+        if let (Some(account), Some(product)) = (account, product) {
+            if let Ok(cache::ApiResponse::Redirect(info)) =
+                registry.get_product_or_redirect(account, product).await
+            {
                 tracing::info!(
                     old_account = account,
-                    new_account = %new_account,
+                    new_account = %info.redirect_to,
                     "account redirect"
                 );
-                let location = build_redirect_path(&path, query.as_deref(), &new_account);
-                let xml = permanent_redirect_xml(&new_account, &request_id);
+                let location = build_redirect_path(&path, query.as_deref(), &info.redirect_to);
+                let xml = permanent_redirect_xml(&info.redirect_to, &request_id);
                 let resp = xml_response(301, &xml);
                 let _ = resp.headers().set("location", &location);
 
@@ -114,13 +109,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             }
         }
     }
-
-    // ── Build gateway with route handlers ──────────────────────────
-    let registry = SourceCoopRegistry::new(
-        config.api_base_url.clone(),
-        config.api_secret.clone(),
-        request_id.clone(),
-    );
 
     let gateway = ProxyGateway::new(
         WorkerBackend,

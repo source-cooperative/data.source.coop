@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Redirect info returned by the Source API when an account has been renamed.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedirectInfo {
     pub redirect_to: String,
 }

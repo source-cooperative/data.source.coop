@@ -83,7 +83,6 @@ pub async fn get_or_fetch_product_list(
 }
 
 /// Fetch a single product's metadata, returning redirect info if the account was renamed.
-#[allow(dead_code)]
 pub async fn get_or_fetch_product_or_redirect(
     api_base_url: &str,
     account: &str,
@@ -103,7 +102,6 @@ pub async fn get_or_fetch_product_or_redirect(
 }
 
 /// Fetch an account's product list, returning redirect info if the account was renamed.
-#[allow(dead_code)]
 pub async fn get_or_fetch_product_list_or_redirect(
     api_base_url: &str,
     account: &str,

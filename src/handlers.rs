@@ -86,9 +86,9 @@ impl RouteHandler for AccountListHandler {
                         build_redirect_path(&original_path, req.query, &info.redirect_to);
                     let xml = permanent_redirect_xml(&info.redirect_to, &self.registry.request_id);
                     let mut result = ProxyResult::xml(301, xml);
-                    result
-                        .headers
-                        .insert(http::header::LOCATION, location.parse().unwrap());
+                    if let Ok(value) = location.parse() {
+                        result.headers.insert(http::header::LOCATION, value);
+                    }
                     Some(result)
                 }
                 Ok(ApiResponse::Ok(product_list)) => {
