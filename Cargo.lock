@@ -787,8 +787,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.3.0"
-source = "git+https://github.com/developmentseed/multistore.git?branch=fix%2Fdirectory-marker-support#0e493ef49e6c04ec356027cc910db56bf6214e30"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0b8ee9b42e77900a5378712d1e4f295e89fb30135d2a65426d29ac6ddd50c66"
 dependencies = [
  "async-trait",
  "base64",
@@ -813,8 +814,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.3.0"
-source = "git+https://github.com/developmentseed/multistore.git?branch=fix%2Fdirectory-marker-support#0e493ef49e6c04ec356027cc910db56bf6214e30"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41f2c455b78a8d5591d0f28e4968b718c419324a0e32d4081322dec8d7b378bb"
 dependencies = [
  "async-trait",
  "bytes",
@@ -836,8 +838,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.3.0"
-source = "git+https://github.com/developmentseed/multistore.git?branch=fix%2Fdirectory-marker-support#0e493ef49e6c04ec356027cc910db56bf6214e30"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc12426dcc148af09dcb4fed8ccae767c8841f6d8a381201ae737bb359450f68"
 dependencies = [
  "multistore",
  "percent-encoding",
