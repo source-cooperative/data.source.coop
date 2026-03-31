@@ -25,7 +25,7 @@ We continue with **Rust** as the implementation language.
 
 **Type system and correctness.** The proxy handles authentication tokens, credential issuance, cryptographic signature verification, and access policy evaluation. Rust's type system — and in particular its trait system — encodes invariants that would be runtime errors in other languages. This is increasingly valuable in a codebase where AI-assisted development is part of the workflow: a strong type system provides a correctness harness that catches generated code that compiles but violates domain constraints.
 
-**Trait-based extensibility.** The Rust trait system is central to the modularity goals described in ADR-008. Traits allow the core proxy framework to define interfaces — for auth, authz, storage backend, middleware, configuration — that downstream users implement without forking the core.
+**Trait-based extensibility.** The Rust trait system is central to multistore's modularity goals. Traits allow the core proxy framework to define interfaces — for auth, authz, storage backend, middleware, configuration — that downstream users implement without forking the core.
 
 **Community familiarity.** Rust is the best fit given the actual pool of contributors.
 

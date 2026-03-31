@@ -1,7 +1,7 @@
 # ADR-009: Configuration Layer — Policy Store Implementation and Caching Strategy
 
 **Date:** 2026-03-14
-**RFC:** RFC-001 §12
+**RFC:** RFC-001 §11
 **Depends on:** ADR-004, ADR-005
 
 ---
@@ -66,7 +66,7 @@ The product metadata record includes a `backend_config` that bridges authorizati
 }
 ```
 
-The `credential_ref` identifies either an OIDC trust relationship or a stored credential secret (see ADR-006). The exact schema is defined by the `proxy-storage` crate's backend resolver trait (ADR-008).
+The `credential_ref` identifies either an OIDC trust relationship or a stored credential secret (see ADR-006). The exact schema is defined by multistore's storage backend resolver trait.
 
 ### Implementation Approach
 

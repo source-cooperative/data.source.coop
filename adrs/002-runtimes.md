@@ -29,7 +29,7 @@ Key properties:
 - **WASM compatibility.** Rust compiles to WASM with mature toolchain support (`wasm-pack`, `worker-rs`).
 
 > [!NOTE]
-> **Future extension: Regional ECS deployments.** For high-throughput, in-region workflows — data pipelines (Spark, Databricks, Polars) running in the same cloud region as the source data — routing through an edge node adds unnecessary hops and egress fees. Regional ECS deployments running the same Rust core could serve these workloads with lower latency and zero cross-region egress. The trait-based architecture (ADR-008) is designed to support additional runtime targets without code divergence. This can be pursued when there is demonstrated demand.
+> **Future extension: Regional ECS deployments.** For high-throughput, in-region workflows — data pipelines (Spark, Databricks, Polars) running in the same cloud region as the source data — routing through an edge node adds unnecessary hops and egress fees. Regional ECS deployments running the same Rust core could serve these workloads with lower latency and zero cross-region egress. Multistore's trait-based architecture is designed to support additional runtime targets without code divergence. This can be pursued when there is demonstrated demand.
 
 ---
 
