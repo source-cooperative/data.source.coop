@@ -151,6 +151,10 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
         .await
         .map_err(|e| ProxyError::Internal(format!("body read failed: {}", e)))?;
 
+    // ── Deserialize first, then cache only on success ──────────
+    let result: T = serde_json::from_str(&text)
+        .map_err(|e| ProxyError::Internal(format!("JSON parse failed: {} for {}", e, api_url)))?;
+
     // ── Store in cache ─────────────────────────────────────────
     let headers = worker::Headers::new();
     let _ = headers.set("content-type", "application/json");
@@ -162,7 +166,5 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
         }
     }
 
-    // ── Deserialize and return ─────────────────────────────────
-    serde_json::from_str(&text)
-        .map_err(|e| ProxyError::Internal(format!("JSON parse failed: {} for {}", e, api_url)))
+    Ok(result)
 }

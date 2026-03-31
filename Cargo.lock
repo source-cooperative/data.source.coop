@@ -787,9 +787,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02623487c2ae2bb1662508ecbbd4825fdf47157fcc43053a92ecfab6d1721cdc"
+checksum = "e29973d954f130a475dd335a1dcbb33c2c2e91ac74a5edab72fe7ebde8454d7c"
 dependencies = [
  "async-trait",
  "base64",
@@ -814,9 +814,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bf468de19f74cc94eb062b9d07a2b584401b7ed368c58fa15e0434df7c432e6"
+checksum = "d211b6a706d1b80dd5be35bcc7ffb27f8e29848558fc8e720d13043647c3697d"
 dependencies = [
  "async-trait",
  "bytes",
@@ -838,11 +838,12 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6727e4df8935d72848730c4bb44bb0f2a2cfd52532a405c153d924882cb8b79a"
+checksum = "9357c9d391401a15195f6184ac5565a96e7a11250120edc75d3beaeb8f9edacb"
 dependencies = [
  "multistore",
+ "percent-encoding",
  "tracing",
 ]
 
@@ -1407,11 +1408,12 @@ dependencies = [
 
 [[package]]
 name = "source-data-proxy"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "console_error_panic_hook",
  "futures",
  "http",
+ "js-sys",
  "multistore",
  "multistore-cf-workers",
  "multistore-path-mapping",
@@ -1419,6 +1421,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
  "worker",

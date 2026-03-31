@@ -1,0 +1,17 @@
+name = "public-log-stream"
+main = "src/index.ts"
+compatibility_date = "2026-03-17"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "LOCATION_HUB"
+class_name = "LocationHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LocationHub"]
+
+[vars]
+EMIT_INTERVAL_MS = "500"
+MAX_BROADCASTS_PER_EMIT = "25"
+CORS_ORIGIN = "*"

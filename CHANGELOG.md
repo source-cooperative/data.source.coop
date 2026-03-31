@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.1.0](https://github.com/source-cooperative/data.source.coop/compare/v2.0.0...v2.1.0) (2026-03-28)
+
+
+### Features
+
+* real-time public log stream via Durable Objects ([#122](https://github.com/source-cooperative/data.source.coop/issues/122)) ([3bf3524](https://github.com/source-cooperative/data.source.coop/commit/3bf3524a23e4b180946613f4c6ab6ff99dd2caf3))
+
+
+### Bug Fixes
+
+* **log-stream:** prevent external requests ([a8095f6](https://github.com/source-cooperative/data.source.coop/commit/a8095f6760584621a50ee578d30fe4448201af28))
+* use staging log stream ([be7f97a](https://github.com/source-cooperative/data.source.coop/commit/be7f97a743731fbd5b05d3a75d756e0a7e53ccd7))
+
+## [2.0.0](https://github.com/source-cooperative/data.source.coop/compare/v1.1.0...v2.0.0) (2026-03-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* rebuild proxy with multistore and cloudflare workers runtime ([#116](https://github.com/source-cooperative/data.source.coop/issues/116))
+
+### Features
+
+* add Analytics Engine request logging ([#119](https://github.com/source-cooperative/data.source.coop/issues/119)) ([d9ab62f](https://github.com/source-cooperative/data.source.coop/commit/d9ab62f8add085feeaff723d79e820fa990b2284))
+* rebuild proxy with multistore and cloudflare workers runtime ([#116](https://github.com/source-cooperative/data.source.coop/issues/116)) ([3e07478](https://github.com/source-cooperative/data.source.coop/commit/3e07478a1aa251ca2a7acee77810421a270069c7))
+
+
+### Bug Fixes
+
+* deserialize before caching ([295b965](https://github.com/source-cooperative/data.source.coop/commit/295b965972b51d8b14fd159736ac5472574bb776))
+* Return 502 on API error instead of empty list ([d0ff1f0](https://github.com/source-cooperative/data.source.coop/commit/d0ff1f0f2cb53212879243740f1de07f79a4ac7f))
+* scrutinise list type more closely ([d63e4f8](https://github.com/source-cooperative/data.source.coop/commit/d63e4f837134f8b24505c2dbde500538336fd892))
+
 ## [1.1.0](https://github.com/source-cooperative/data.source.coop/compare/v1.0.4...v1.1.0) (2026-03-05)
 
 

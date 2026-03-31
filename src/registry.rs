@@ -13,7 +13,7 @@ use std::collections::HashMap;
 pub struct SourceCoopRegistry {
     api_base_url: String,
     api_secret: Option<String>,
-    request_id: String,
+    pub(crate) request_id: String,
 }
 
 impl SourceCoopRegistry {
@@ -25,9 +25,9 @@ impl SourceCoopRegistry {
         }
     }
 
-    /// Parse "account--product" bucket name into (account, product).
+    /// Parse "account:product" bucket name into (account, product).
     fn parse_bucket_name(name: &str) -> Option<(&str, &str)> {
-        name.split_once("--")
+        name.split_once(crate::BUCKET_SEPARATOR)
     }
 
     /// List products for an account via the Source API.
@@ -77,7 +77,7 @@ impl BucketRegistry for SourceCoopRegistry {
         &self,
         _identity: &ResolvedIdentity,
     ) -> Result<Vec<BucketEntry>, ProxyError> {
-        Ok(vec![])
+        unimplemented!("Bucket listing is not supported")
     }
 }
 
@@ -213,7 +213,7 @@ async fn resolve_product_inner(
     };
 
     let config = BucketConfig {
-        name: format!("{}--{}", account, product),
+        name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
         backend_type,
         backend_prefix,
         anonymous_access: true,
@@ -233,10 +233,31 @@ async fn resolve_product_inner(
 
 // ── API response types ─────────────────────────────────────────────
 
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DataMode {
+    #[default]
+    Open,
+    Subscription,
+    Private,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceProduct {
     pub product_id: String,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub data_mode: DataMode,
     pub metadata: SourceProductMetadata,
+}
+
+impl SourceProduct {
+    pub fn is_public(&self) -> bool {
+        !self.disabled && self.data_mode == DataMode::Open
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
