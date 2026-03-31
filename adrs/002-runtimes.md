@@ -29,7 +29,7 @@ Key properties:
 - **WASM compatibility.** Rust compiles to WASM with mature toolchain support (`wasm-pack`, `worker-rs`).
 
 > [!NOTE]
-> **Future extension: Regional ECS deployments.** For high-throughput, in-region workflows — data pipelines (Spark, Databricks, Polars) running in the same cloud region as the source data — routing through an edge node adds unnecessary hops and egress fees. Regional ECS deployments running the same Rust core could serve these workloads with lower latency and zero cross-region egress. Multistore's trait-based architecture is designed to support additional runtime targets without code divergence. This can be pursued when there is demonstrated demand.
+> **Future extension: Regional ECS deployments.** For high-throughput, in-region workflows — data pipelines (Spark, Databricks, Polars) running in the same cloud region as the source data — routing through an edge node adds unnecessary hops and egress fees. Regional ECS deployments running the same Rust core could serve these workloads with lower latency and zero cross-region egress. Multistore is designed to support additional runtime targets without code divergence. This can be pursued when there is demonstrated demand.
 
 ---
 
@@ -55,6 +55,6 @@ Key properties:
 
 **CDN in front of ECS** — considered. A traditional CDN (CloudFront, Cloudflare) can cache static responses, but the proxy's responses are not cacheable in a general-purpose CDN sense (authenticated, per-user). The proxy logic must run at the edge, not just caching.
 
-**Workers + Regional ECS** — considered as the initial deployment. Simpler to start with Workers only and add regional ECS deployments when demand materialises. The trait-based architecture supports this without requiring upfront investment in a second deployment target.
+**Workers + Regional ECS** — considered as the initial deployment. Simpler to start with Workers only and add regional ECS deployments when demand materialises. Multistore's architecture supports this without requiring upfront investment in a second deployment target.
 
 **Lambda@Edge / CloudFront Functions** — considered. More limited runtime environment, tighter CPU and memory constraints, and AWS-specific. Workers offer a more capable and provider-neutral edge compute model.
