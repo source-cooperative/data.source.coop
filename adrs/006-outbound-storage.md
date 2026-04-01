@@ -38,6 +38,18 @@ This model means:
 - The trust relationship is declarative and auditable
 - Key rotation at the proxy level propagates automatically without reconfiguring upstream providers
 
+#### Direct Federation vs. Brokered Role Access
+
+There are two ways a third-party data provider can grant the proxy access to their storage:
+
+1. **Direct federation** — The data provider registers Source Cooperative as a trusted OIDC identity provider in their own cloud account and creates a role (or service account, or federated identity) that the proxy can assume directly. This gives the provider full control but requires them to configure IdP trust in their account.
+
+2. **Brokered role access** — Source Cooperative registers itself as an OIDC identity provider in its _own_ cloud account and assumes its own cloud role (e.g. an AWS IAM role, GCP service account, or Azure managed identity). The data provider then grants that Source Cooperative role cross-account access to their storage (e.g. via an S3 bucket policy, GCS IAM binding, or Azure role assignment). The provider never needs to register Source Cooperative as an identity provider — they only need to trust an existing cloud identity.
+
+The brokered model lowers the barrier for data providers: granting a cloud role access to a bucket is a familiar operation, while registering an external OIDC identity provider is not. It also centralises the OIDC configuration to a single place (Source Cooperative's own account) rather than requiring each provider to replicate it. The tradeoff is that the provider must trust Source Cooperative's intermediate role, and Source Cooperative's account becomes a choke point — any misconfiguration or compromise of that role affects all providers who rely on it.
+
+Both models can coexist. Providers with stricter security requirements or existing IdP federation workflows can use direct federation; providers who prefer simplicity can grant access to Source Cooperative's brokered role.
+
 ### Outbound Authentication — Stored Credentials (Fallback)
 
 The current proxy fetches static cloud credentials (access key ID and secret access key) from the Source Cooperative API for each data connection. The API stores these credentials and serves them to the proxy on demand, cached with a short TTL.
