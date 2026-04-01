@@ -787,9 +787,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e29973d954f130a475dd335a1dcbb33c2c2e91ac74a5edab72fe7ebde8454d7c"
+checksum = "b0b8ee9b42e77900a5378712d1e4f295e89fb30135d2a65426d29ac6ddd50c66"
 dependencies = [
  "async-trait",
  "base64",
@@ -814,9 +814,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d211b6a706d1b80dd5be35bcc7ffb27f8e29848558fc8e720d13043647c3697d"
+checksum = "41f2c455b78a8d5591d0f28e4968b718c419324a0e32d4081322dec8d7b378bb"
 dependencies = [
  "async-trait",
  "bytes",
@@ -838,9 +838,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9357c9d391401a15195f6184ac5565a96e7a11250120edc75d3beaeb8f9edacb"
+checksum = "fc12426dcc148af09dcb4fed8ccae767c8841f6d8a381201ae737bb359450f68"
 dependencies = [
  "multistore",
  "percent-encoding",
