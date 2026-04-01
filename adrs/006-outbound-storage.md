@@ -56,6 +56,13 @@ The current proxy fetches static cloud credentials (access key ID and secret acc
 
 For upstream providers or storage systems that do not support OIDC workload identity federation, this model continues: the proxy fetches stored credentials from the API and uses them to authenticate to the upstream backend. This is not a preferred path — stored credentials must be rotated manually, create a larger blast radius if compromised, and require the platform to hold long-lived secrets on behalf of providers. Data providers should be encouraged to configure OIDC trust relationships where their cloud supports it.
 
+Notable backends that **do not** support external OIDC identity federation for storage access (and therefore require stored credentials):
+
+- **Cloudflare R2** — API tokens or access key pairs only; no mechanism to trust an external OIDC issuer for storage operations
+- **Backblaze B2** — Application keys only; no STS or federation mechanism
+- **Wasabi** — Supports STS `AssumeRole` for its own IAM users, but OIDC integration is limited to console SSO, not storage API federation from an external identity provider
+- **DigitalOcean Spaces** — No support for trusting an external OIDC issuer; workload identity is limited to DigitalOcean's own internal Droplet-issued tokens
+
 ### Data Provider Hosting
 
 Data providers register their upstream storage (their own S3 bucket, GCS bucket, etc.) with Source Cooperative. The proxy serves as an access control, metering, and distribution layer in front of their data.
