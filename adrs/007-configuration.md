@@ -1,4 +1,4 @@
-# ADR-009: Configuration Layer — Policy Store Implementation and Caching Strategy
+# ADR-007: Configuration Layer — Policy Store Implementation and Caching Strategy
 
 **Date:** 2026-03-14
 **RFC:** RFC-001 §11
