@@ -106,6 +106,8 @@ Environment variables (set in `wrangler.toml` or via Cloudflare dashboard):
 | `SOURCE_API_SECRET` | — | Optional API authentication token |
 | `LOG_LEVEL` | `WARN` | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`) |
 
-## Design Documents
+## Documentation
 
-See [`docs/plans/`](docs/plans/) for architecture and design documents.
+Architecture decisions and RFCs are published at the [project documentation site](https://source-cooperative.github.io/data.source.coop/).
+
+Source files live in [`docs/src/`](docs/src/).
