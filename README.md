@@ -66,7 +66,7 @@ The proxy rewrites Source Cooperative URL paths (`/{account}/{product}/{key}`) i
 ```
 Client Request: GET /{account}/{product}/{key}
   │
-  ├─ [routing]   Parse path, rewrite to bucket={account}--{product}, key={key}
+  ├─ [routing]   Parse path, rewrite to bucket={account}:{product}, key={key}
   ├─ [registry]  Resolve backend via Source API (product metadata + data connections)
   ├─ [cache]     Cache API responses (products: 5min, data connections: 30min, listings: 1min)
   ├─ [multistore ProxyGateway]  Generate presigned URL for the resolved storage backend
@@ -77,11 +77,13 @@ Client Request: GET /{account}/{product}/{key}
 
 | Module | Purpose |
 |---|---|
-| `src/lib.rs` | Fetch handler, request routing, CORS |
+| `src/lib.rs` | Fetch handler, OIDC discovery endpoints, request routing, CORS |
 | `src/routing.rs` | Request classification and path rewriting |
 | `src/registry.rs` | Source Cooperative API client and backend resolution |
 | `src/cache.rs` | Cloudflare Cache API wrapper with per-datatype TTLs |
 | `src/pagination.rs` | S3-compatible pagination for prefix listings |
+| `src/analytics.rs` | Cloudflare Analytics Engine request logging |
+| `src/handlers.rs` | Custom route handlers (index, account listing) |
 
 ### Supported Operations
 
@@ -93,18 +95,107 @@ Client Request: GET /{account}/{product}/{key}
 | `GET /{account}/{product}/{key}` | Download an object (supports range requests) |
 | `HEAD /{account}/{product}/{key}` | Get object metadata |
 | `OPTIONS *` | CORS preflight |
+| `GET /.well-known/openid-configuration` | OIDC discovery document |
+| `GET /.well-known/jwks.json` | JSON Web Key Set for JWT verification |
 
 Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.
 
 ## Configuration
 
-Environment variables (set in `wrangler.toml` or via Cloudflare dashboard):
+### Environment Variables
+
+Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 | Variable | Default | Description |
 |---|---|---|
 | `SOURCE_API_URL` | `https://source.coop` | Source Cooperative API base URL |
-| `SOURCE_API_SECRET` | — | Optional API authentication token |
 | `LOG_LEVEL` | `WARN` | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `OIDC_PROVIDER_ISSUER` | `https://data.source.coop` | Issuer URL for minted JWTs and OIDC discovery |
+| `OIDC_PROVIDER_KID` | `data-proxy-1` | Key ID for the active signing key |
+| `OIDC_PROVIDER_KID_PREVIOUS` | — | Key ID for the previous key (during rotation) |
+
+### Secrets
+
+Set via `wrangler secret put`:
+
+| Secret | Description |
+|---|---|
+| `SOURCE_API_SECRET` | Static API token (legacy fallback, used when OIDC is not configured) |
+| `OIDC_PROVIDER_KEY` | PEM-encoded PKCS#8 RSA private key for JWT signing |
+| `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation) |
+
+### Authentication Priority
+
+The proxy authenticates to the Source Cooperative API in this order:
+
+1. **OIDC JWT** — if `OIDC_PROVIDER_KEY` is set, the proxy mints a short-lived JWT (60s TTL) signed with its RSA key and sends it as a `Bearer` token
+2. **Static secret** — if only `SOURCE_API_SECRET` is set, it is sent as the `Authorization` header
+3. **None** — if neither is configured, requests are unauthenticated
+
+## OIDC Provider
+
+When configured with an RSA key, the proxy acts as its own OpenID Connect identity provider. It serves standard discovery endpoints so that relying parties (such as the Source Cooperative API) can verify its JWTs.
+
+### Endpoints
+
+- `GET /.well-known/openid-configuration` — discovery document containing issuer and JWKS URI
+- `GET /.well-known/jwks.json` — public key(s) for JWT signature verification
+
+These endpoints are only active when `OIDC_PROVIDER_KEY` is configured.
+
+### Setup
+
+Generate an RSA key pair and deploy it:
+
+```sh
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out oidc-key.pem
+wrangler secret put OIDC_PROVIDER_KEY < oidc-key.pem
+wrangler deploy
+```
+
+Verify the endpoints:
+
+```sh
+curl https://data.source.coop/.well-known/openid-configuration
+curl https://data.source.coop/.well-known/jwks.json
+```
+
+### Key Rotation
+
+The proxy supports zero-downtime key rotation by serving both active and previous public keys in the JWKS endpoint. Only the active key signs new tokens.
+
+**Rotation procedure:**
+
+1. Generate a new RSA key with a new key ID:
+
+   ```sh
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out new-key.pem
+   ```
+
+2. Move the current key to the previous slot and deploy the new key:
+
+   ```sh
+   # Copy current key to previous slot
+   wrangler secret put OIDC_PROVIDER_KEY_PREVIOUS  # paste current key PEM
+   ```
+
+   Update `OIDC_PROVIDER_KID_PREVIOUS` in `wrangler.toml` to the current `OIDC_PROVIDER_KID` value, then set the new key ID and deploy:
+
+   ```sh
+   wrangler secret put OIDC_PROVIDER_KEY < new-key.pem
+   # Update OIDC_PROVIDER_KID in wrangler.toml to the new key ID
+   wrangler deploy
+   ```
+
+3. The JWKS endpoint now serves both keys. Wait for relying parties to refresh their JWKS cache.
+
+4. Remove the previous key:
+
+   ```sh
+   # Remove OIDC_PROVIDER_KID_PREVIOUS from wrangler.toml
+   wrangler secret delete OIDC_PROVIDER_KEY_PREVIOUS
+   wrangler deploy
+   ```
 
 ## Design Documents
 
