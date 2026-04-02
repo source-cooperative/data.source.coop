@@ -21,7 +21,8 @@ OIDC_PROVIDER_KID = "data-proxy-1"
 # Required secrets (set via `wrangler secret put`):
 #   OIDC_PROVIDER_KEY          - PEM-encoded PKCS#8 RSA private key (active)
 #   OIDC_PROVIDER_KEY_PREVIOUS - PEM-encoded previous key (optional, for rotation)
-#   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key (optional, for rotation)
+# Optional vars for key rotation:
+#   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key
 
 # TODO: Set different sampling rates for prod vs staging
 [observability]

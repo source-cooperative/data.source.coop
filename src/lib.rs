@@ -452,16 +452,25 @@ fn build_jwks_json(oidc: &OidcConfig) -> String {
         oidc.signer.public_key(),
         oidc.signer.kid(),
     ))
-    .unwrap();
-    let previous_signer = oidc.previous_signer.as_ref().unwrap();
+    .expect("active JWKS from library should be valid JSON");
+    let previous_signer = oidc.previous_signer.as_ref().expect("checked above");
     let previous: serde_json::Value = serde_json::from_str(&single_jwks_json(
         previous_signer.public_key(),
         previous_signer.kid(),
     ))
-    .unwrap();
+    .expect("previous JWKS from library should be valid JSON");
 
-    let mut keys = active["keys"].as_array().unwrap().clone();
-    keys.extend(previous["keys"].as_array().unwrap().iter().cloned());
+    let mut keys = active["keys"]
+        .as_array()
+        .expect("JWKS has keys array")
+        .clone();
+    keys.extend(
+        previous["keys"]
+            .as_array()
+            .expect("JWKS has keys array")
+            .iter()
+            .cloned(),
+    );
 
     serde_json::json!({ "keys": keys }).to_string()
 }
