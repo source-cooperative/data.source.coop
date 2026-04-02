@@ -16,6 +16,12 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 [vars]
 LOG_LEVEL = "WARN"
 SOURCE_API_URL = "https://source.coop"
+OIDC_PROVIDER_ISSUER = "https://data.source.coop"
+OIDC_PROVIDER_KID = "data-proxy-1"
+# Required secrets (set via `wrangler secret put`):
+#   OIDC_PROVIDER_KEY          - PEM-encoded PKCS#8 RSA private key (active)
+#   OIDC_PROVIDER_KEY_PREVIOUS - PEM-encoded previous key (optional, for rotation)
+#   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key (optional, for rotation)
 
 # TODO: Set different sampling rates for prod vs staging
 [observability]
@@ -50,6 +56,8 @@ routes = [
 [env.staging.vars]
 LOG_LEVEL = "DEBUG"
 SOURCE_API_URL = "https://staging.source.coop"
+OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
+OIDC_PROVIDER_KID = "data-proxy-1"
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
