@@ -1,0 +1,26 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: Marvin Attack on the `rsa` crate (medium severity, 5.9)
+    #
+    # This advisory covers a timing side-channel in RSA PKCS#1 v1.5 *decryption*
+    # that could allow an attacker to recover plaintext by observing response
+    # times across many crafted ciphertexts.
+    #
+    # This does not affect us because:
+    #
+    # 1. We only use RSA for *signing* (PKCS#1 v1.5 with SHA-256 via
+    #    `SigningKey::<Sha256>`). The vulnerable code path is in the decryption
+    #    routine, which we never call.
+    #
+    # 2. The private key never processes attacker-controlled input. The proxy
+    #    signs its own JWTs with claims it constructs — no external ciphertext
+    #    is ever decrypted.
+    #
+    # 3. No fixed version exists. The `rsa` crate has not released a patch as
+    #    of 0.9.x. If a fix or alternative crate becomes available upstream in
+    #    `multistore-oidc-provider`, we should adopt it and remove this ignore.
+    #
+    # Revisit when: the `rsa` crate ships a fix, or `multistore-oidc-provider`
+    # migrates to a different RSA/signing implementation (e.g. ES256).
+    "RUSTSEC-2023-0071",
+]
