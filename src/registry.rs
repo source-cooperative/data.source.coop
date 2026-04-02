@@ -12,15 +12,15 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct SourceCoopRegistry {
     api_base_url: String,
-    api_secret: Option<String>,
+    api_auth: crate::ApiAuth,
     pub(crate) request_id: String,
 }
 
 impl SourceCoopRegistry {
-    pub fn new(api_base_url: String, api_secret: Option<String>, request_id: String) -> Self {
+    pub fn new(api_base_url: String, api_auth: crate::ApiAuth, request_id: String) -> Self {
         Self {
             api_base_url,
-            api_secret,
+            api_auth,
             request_id,
         }
     }
@@ -35,7 +35,7 @@ impl SourceCoopRegistry {
         let product_list = crate::cache::get_or_fetch_product_list(
             &self.api_base_url,
             account,
-            self.api_secret.as_deref(),
+            &self.api_auth,
             &self.request_id,
         )
         .await?;
@@ -61,7 +61,7 @@ impl BucketRegistry for SourceCoopRegistry {
             &self.api_base_url,
             account,
             product,
-            self.api_secret.as_deref(),
+            &self.api_auth,
             &self.request_id,
         )
         .await?;
@@ -87,25 +87,19 @@ async fn resolve_product_send(
     api_base_url: &str,
     account: &str,
     product: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<BucketConfig, ProxyError> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let api_base_url = api_base_url.to_string();
     let account = account.to_string();
     let product = product.to_string();
-    let api_secret = api_secret.map(|s| s.to_string());
+    let api_auth = api_auth.clone();
     let request_id = request_id.to_string();
 
     wasm_bindgen_futures::spawn_local(async move {
-        let result = resolve_product_inner(
-            &api_base_url,
-            &account,
-            &product,
-            api_secret.as_deref(),
-            &request_id,
-        )
-        .await;
+        let result =
+            resolve_product_inner(&api_base_url, &account, &product, &api_auth, &request_id).await;
         let _ = tx.send(result);
     });
 
@@ -118,7 +112,7 @@ async fn resolve_product_inner(
     api_base_url: &str,
     account: &str,
     product: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<BucketConfig, ProxyError> {
     let span = tracing::info_span!(
@@ -131,7 +125,7 @@ async fn resolve_product_inner(
 
     // 1. Fetch product metadata
     let source_product =
-        crate::cache::get_or_fetch_product(api_base_url, account, product, api_secret, request_id)
+        crate::cache::get_or_fetch_product(api_base_url, account, product, api_auth, request_id)
             .await?;
 
     // 2. Find primary mirror
@@ -147,7 +141,7 @@ async fn resolve_product_inner(
 
     // 3. Fetch data connections to resolve the actual bucket
     let connections =
-        crate::cache::get_or_fetch_data_connections(api_base_url, api_secret, request_id).await?;
+        crate::cache::get_or_fetch_data_connections(api_base_url, api_auth, request_id).await?;
 
     let connection = connections
         .iter()

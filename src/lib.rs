@@ -90,10 +90,21 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     };
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
+    // ── Build API auth ─────────────────────────────────────────────
+    let api_auth = match (&config.oidc, &config.api_secret) {
+        (Some(oidc), _) => ApiAuth::Oidc {
+            signer: Box::new(oidc.signer.clone()),
+            issuer: oidc.issuer.clone(),
+            audience: config.api_base_url.clone(),
+        },
+        (None, Some(secret)) => ApiAuth::Secret(secret.clone()),
+        (None, None) => ApiAuth::None,
+    };
+
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
         config.api_base_url.clone(),
-        config.api_secret.clone(),
+        api_auth.clone(),
         request_id.clone(),
     );
 
@@ -146,7 +157,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
                     product: prod.to_string(),
                     key: key.unwrap_or("").to_string(),
                     api_base_url: config.api_base_url.clone(),
-                    api_secret: config.api_secret.clone(),
+                    api_auth: api_auth.clone(),
                 },
             );
         }
@@ -172,6 +183,42 @@ struct OidcConfig {
     issuer: String,
     /// Previous key for rotation — served in JWKS but not used for signing.
     previous_signer: Option<JwtSigner>,
+}
+
+/// How the proxy authenticates to the Source Cooperative API.
+#[derive(Clone)]
+pub(crate) enum ApiAuth {
+    /// OIDC JWT bearer token.
+    Oidc {
+        signer: Box<JwtSigner>,
+        issuer: String,
+        audience: String,
+    },
+    /// Static shared secret (legacy).
+    Secret(String),
+    /// No authentication.
+    None,
+}
+
+impl ApiAuth {
+    /// Generate an Authorization header value.
+    fn authorization_header(&self) -> Option<String> {
+        match self {
+            ApiAuth::Oidc {
+                signer,
+                issuer,
+                audience,
+            } => match signer.sign("data-proxy", issuer, audience, &[]) {
+                Ok(token) => Some(format!("Bearer {}", token)),
+                Err(e) => {
+                    tracing::error!("failed to sign API auth JWT: {}", e);
+                    None
+                }
+            },
+            ApiAuth::Secret(secret) => Some(secret.clone()),
+            ApiAuth::None => None,
+        }
+    }
 }
 
 fn load_config(env: &Env) -> AppConfig {
@@ -339,7 +386,7 @@ struct LocationEvent {
     product: String,
     key: String,
     api_base_url: String,
-    api_secret: Option<String>,
+    api_auth: ApiAuth,
 }
 
 /// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
@@ -361,7 +408,7 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             &event.api_base_url,
             &event.account,
             &event.product,
-            event.api_secret.as_deref(),
+            &event.api_auth,
             "",
         )
         .await

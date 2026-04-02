@@ -25,24 +25,17 @@ pub async fn get_or_fetch_product(
     api_base_url: &str,
     account: &str,
     product: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<SourceProduct, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
-    cached_fetch(
-        &api_url,
-        &api_url,
-        PRODUCT_CACHE_SECS,
-        api_secret,
-        request_id,
-    )
-    .await
+    cached_fetch(&api_url, &api_url, PRODUCT_CACHE_SECS, api_auth, request_id).await
 }
 
 /// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
 pub async fn get_or_fetch_data_connections(
     api_base_url: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
@@ -50,7 +43,7 @@ pub async fn get_or_fetch_data_connections(
         &api_url,
         &api_url,
         DATA_CONNECTIONS_CACHE_SECS,
-        api_secret,
+        api_auth,
         request_id,
     )
     .await
@@ -60,7 +53,7 @@ pub async fn get_or_fetch_data_connections(
 pub async fn get_or_fetch_product_list(
     api_base_url: &str,
     account: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<SourceProductList, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
@@ -68,7 +61,7 @@ pub async fn get_or_fetch_product_list(
         &api_url,
         &api_url,
         PRODUCT_LIST_CACHE_SECS,
-        api_secret,
+        api_auth,
         request_id,
     )
     .await
@@ -83,7 +76,7 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     cache_key: &str,
     api_url: &str,
     ttl_secs: u32,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<T, ProxyError> {
     let span = tracing::info_span!(
@@ -117,9 +110,9 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     init.set_method("GET");
     let req_headers = web_sys::Headers::new()
         .map_err(|e| ProxyError::Internal(format!("headers build failed: {:?}", e)))?;
-    if let Some(secret) = api_secret {
+    if let Some(auth_value) = api_auth.authorization_header() {
         req_headers
-            .set("Authorization", secret)
+            .set("Authorization", &auth_value)
             .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
     }
     if !request_id.is_empty() {
