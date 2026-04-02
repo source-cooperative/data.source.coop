@@ -135,9 +135,7 @@ No external database lookup is required to verify a request or reconstruct the s
 ## Permanent API Keys
 
 > [!NOTE]
-> **Not included in the initial implementation.** The proxy supports only STS-issued session credentials and anonymous access. Long-lived API keys may be added in the future for workflows where neither workload identity federation nor interactive authentication via `auth.source.coop` is feasible — for example, on-premises instruments, legacy ETL systems, or environments without OIDC support.
->
-> API keys would be exchanged for temporary STS credentials at the `/.sts` endpoint — the same way OIDC tokens are exchanged today. This keeps the proxy's request-time verification uniform: only short-lived STS credentials are accepted on S3 API calls. No second authorization path is needed.
+> **Not included in the initial implementation.** The proxy supports only STS-issued session credentials and anonymous access. See ADR-008 for the API key design: long-lived JWTs signed by the proxy's own OIDC issuer, exchanged at `/.sts` for short-lived STS credentials like any other token. Covers environments without ambient OIDC tokens or browser access (university HPC clusters, on-premises instruments, legacy ETL systems).
 
 ---
 
