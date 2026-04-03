@@ -41,6 +41,8 @@ on:
         required: true
       CLOUDFLARE_ACCOUNT_ID:
         required: true
+      OIDC_PROVIDER_KEY:
+        required: true
 
 jobs:
   deploy:
@@ -87,6 +89,17 @@ jobs:
             EXTRA_ARGS="$EXTRA_ARGS --var $var"
           done
           npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS
+
+      - name: Upload worker secrets
+        run: |
+          WORKER_ARGS=""
+          if [ -n "${{ inputs.wrangler_env }}" ]; then
+            WORKER_ARGS="--env ${{ inputs.wrangler_env }}"
+          fi
+          if [ -n "${{ inputs.worker_name }}" ]; then
+            WORKER_ARGS="--name ${{ inputs.worker_name }}"
+          fi
+          echo '{"OIDC_PROVIDER_KEY": ${{ toJSON(secrets.OIDC_PROVIDER_KEY) }}}' | npx wrangler@3 secret bulk $WORKER_ARGS
 
       - name: Get deploy URL
         id: url
