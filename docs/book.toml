@@ -1,9 +1,0 @@
-[book]
-title = "Source Cooperative Data Proxy"
-authors = ["Source Cooperative"]
-language = "en"
-src = "src"
-
-[output.html]
-git-repository-url = "https://github.com/source-cooperative/data.source.coop"
-edit-url-template = "https://github.com/source-cooperative/data.source.coop/edit/main/docs/{path}"

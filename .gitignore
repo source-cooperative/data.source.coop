@@ -4,4 +4,6 @@
 .wrangler
 node_modules
 docs/plans
-docs/book
+docs/.vitepress/dist
+docs/.vitepress/cache
+docs/node_modules
