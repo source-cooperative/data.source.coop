@@ -24,23 +24,19 @@ pub fn load_config(env: &Env) -> AppConfig {
             .expect("failed to create JwtSigner from OIDC_PROVIDER_KEY");
 
         // Optional previous key for rotation
-        let previous_signer = {
-            let prev_pem = env
-                .secret("OIDC_PROVIDER_KEY_PREVIOUS")
-                .expect("OIDC_PROVIDER_KEY_PREVIOUS must be set")
-                .to_string();
-            let prev_kid = env
-                .var("OIDC_PROVIDER_KID_PREVIOUS")
-                .expect("OIDC_PROVIDER_KID_PREVIOUS must be set")
-                .to_string();
-            match JwtSigner::from_pem(&prev_pem, prev_kid, 60) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::warn!("failed to load previous OIDC key: {}", e);
-                    None
+        let previous_signer = env
+            .secret("OIDC_PROVIDER_KEY_PREVIOUS")
+            .ok()
+            .and_then(|prev_pem| {
+                let prev_kid = env.var("OIDC_PROVIDER_KID_PREVIOUS").ok()?.to_string();
+                match JwtSigner::from_pem(&prev_pem.to_string(), prev_kid, 60) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        tracing::warn!("failed to load previous OIDC key: {}", e);
+                        None
+                    }
                 }
-            }
-        };
+            });
 
         OidcConfig {
             signer,
