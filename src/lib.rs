@@ -76,7 +76,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
+    let (rewritten_path, rewritten_query) = if path.starts_with("/.well-known/") {
+        (path.clone(), query.clone())
+    } else {
+        mapping.rewrite_request(&path, query.as_deref())
+    };
 
     // ── Build API auth ─────────────────────────────────────────────
     let api_auth = ApiAuth {
@@ -100,7 +104,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     )
     .with_router(
         Router::new()
-            // OIDC discovery routes (served from this proxy)
             .with_oidc_discovery(
                 config.oidc.issuer.clone(),
                 std::iter::once(config.oidc.signer.clone())
