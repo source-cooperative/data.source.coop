@@ -20,9 +20,9 @@ path = "tests/pagination.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.3.1", features = ["azure"] }
-multistore-oidc-provider = "0.3.1"
-multistore-path-mapping = "0.3.1"
+multistore = { git = "https://github.com/alukach/multistore.git", branch = "feat/oidc/support-multiple-signing-keys", features = ["azure"] }
+multistore-oidc-provider = { git = "https://github.com/alukach/multistore.git", branch = "feat/oidc/support-multiple-signing-keys" }
+multistore-path-mapping = { git = "https://github.com/alukach/multistore.git", branch = "feat/oidc/support-multiple-signing-keys" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -37,7 +37,7 @@ tracing = "0.1"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-multistore-cf-workers = { version = "0.3.1", features = ["azure"] }
+multistore-cf-workers = { git = "https://github.com/alukach/multistore.git", branch = "feat/oidc/support-multiple-signing-keys", features = ["azure"] }
 futures = "0.3"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"

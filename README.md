@@ -75,28 +75,28 @@ Client Request: GET /{account}/{product}/{key}
 
 ### Modules
 
-| Module | Purpose |
-|---|---|
-| `src/lib.rs` | Fetch handler, OIDC discovery endpoints, request routing, CORS |
-| `src/routing.rs` | Request classification and path rewriting |
-| `src/registry.rs` | Source Cooperative API client and backend resolution |
-| `src/cache.rs` | Cloudflare Cache API wrapper with per-datatype TTLs |
-| `src/pagination.rs` | S3-compatible pagination for prefix listings |
-| `src/analytics.rs` | Cloudflare Analytics Engine request logging |
-| `src/handlers.rs` | Custom route handlers (index, account listing) |
+| Module              | Purpose                                                        |
+| ------------------- | -------------------------------------------------------------- |
+| `src/lib.rs`        | Fetch handler, OIDC discovery endpoints, request routing, CORS |
+| `src/routing.rs`    | Request classification and path rewriting                      |
+| `src/registry.rs`   | Source Cooperative API client and backend resolution           |
+| `src/cache.rs`      | Cloudflare Cache API wrapper with per-datatype TTLs            |
+| `src/pagination.rs` | S3-compatible pagination for prefix listings                   |
+| `src/analytics.rs`  | Cloudflare Analytics Engine request logging                    |
+| `src/handlers.rs`   | Custom route handlers (index, account listing)                 |
 
 ### Supported Operations
 
-| Operation | Description |
-|---|---|
-| `GET /` | Version info |
-| `GET /{account}?list-type=2` | List products for an account |
-| `GET /{account}/{product}?list-type=2` | List objects in a product (S3-compatible, with pagination) |
-| `GET /{account}/{product}/{key}` | Download an object (supports range requests) |
-| `HEAD /{account}/{product}/{key}` | Get object metadata |
-| `OPTIONS *` | CORS preflight |
-| `GET /.well-known/openid-configuration` | OIDC discovery document |
-| `GET /.well-known/jwks.json` | JSON Web Key Set for JWT verification |
+| Operation                               | Description                                                |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `GET /`                                 | Version info                                               |
+| `GET /{account}?list-type=2`            | List products for an account                               |
+| `GET /{account}/{product}?list-type=2`  | List objects in a product (S3-compatible, with pagination) |
+| `GET /{account}/{product}/{key}`        | Download an object (supports range requests)               |
+| `HEAD /{account}/{product}/{key}`       | Get object metadata                                        |
+| `OPTIONS *`                             | CORS preflight                                             |
+| `GET /.well-known/openid-configuration` | OIDC discovery document                                    |
+| `GET /.well-known/jwks.json`            | JSON Web Key Set for JWT verification                      |
 
 Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.
 
@@ -106,31 +106,26 @@ Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allow
 
 Set in `wrangler.toml` or via the Cloudflare dashboard:
 
-| Variable | Default | Description |
-|---|---|---|
-| `SOURCE_API_URL` | `https://source.coop` | Source Cooperative API base URL |
-| `LOG_LEVEL` | `WARN` | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`) |
-| `OIDC_PROVIDER_ISSUER` | `https://data.source.coop` | Issuer URL for minted JWTs and OIDC discovery |
-| `OIDC_PROVIDER_KID` | `data-proxy-1` | Key ID for the active signing key |
-| `OIDC_PROVIDER_KID_PREVIOUS` | — | Key ID for the previous key (during rotation) |
+| Variable                     | Default                    | Description                                               |
+| ---------------------------- | -------------------------- | --------------------------------------------------------- |
+| `SOURCE_API_URL`             | `https://source.coop`      | Source Cooperative API base URL                           |
+| `LOG_LEVEL`                  | `WARN`                     | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop` | Issuer URL for minted JWTs and OIDC discovery             |
+| `OIDC_PROVIDER_KID`          | `data-proxy-1`             | Key ID for the active signing key                         |
+| `OIDC_PROVIDER_KID_PREVIOUS` | —                          | Key ID for the previous key (during rotation)             |
 
 ### Secrets
 
 Set via `wrangler secret put`:
 
-| Secret | Description |
-|---|---|
-| `SOURCE_API_SECRET` | Static API token (legacy fallback, used when OIDC is not configured) |
-| `OIDC_PROVIDER_KEY` | PEM-encoded PKCS#8 RSA private key for JWT signing |
-| `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation) |
+| Secret                       | Description                                        |
+| ---------------------------- | -------------------------------------------------- |
+| `OIDC_PROVIDER_KEY`          | PEM-encoded PKCS#8 RSA private key for JWT signing |
+| `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation)       |
 
 ### Authentication Priority
 
-The proxy authenticates to the Source Cooperative API in this order:
-
-1. **OIDC JWT** — if `OIDC_PROVIDER_KEY` is set, the proxy mints a short-lived JWT (60s TTL) signed with its RSA key and sends it as a `Bearer` token
-2. **Static secret** — if only `SOURCE_API_SECRET` is set, it is sent as the `Authorization` header
-3. **None** — if neither is configured, requests are unauthenticated
+The proxy authenticates to the Source Cooperative API via minting short-lived JWT (60s TTL) signed with its RSA key and sending it as a `Bearer` token
 
 ## OIDC Provider
 

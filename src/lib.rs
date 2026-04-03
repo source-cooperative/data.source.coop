@@ -1,5 +1,6 @@
 mod analytics;
 mod cache;
+mod config;
 mod handlers;
 mod pagination;
 mod registry;
@@ -14,11 +15,13 @@ use multistore_cf_workers::{
     collect_js_body, error_response, headermap_from_js, response_from_gateway, xml_response,
     JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
 };
-use multistore_oidc_provider::discovery::openid_configuration_json;
 use multistore_oidc_provider::jwt::JwtSigner;
+use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use registry::SourceCoopRegistry;
 use worker::{event, Context, Env, Result};
+
+use crate::config::load_config;
 
 /// Separator used to join account + product into a single internal bucket name.
 pub(crate) const BUCKET_SEPARATOR: &str = ":";
@@ -54,21 +57,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         return Ok(add_cors(error_response(204, "")));
     }
 
-    // ── Short-circuit: OIDC discovery endpoints ─────────────────
-    if let Some(ref oidc) = config.oidc {
-        if path == "/.well-known/openid-configuration" && method == http::Method::GET {
-            let json = openid_configuration_json(
-                &oidc.issuer,
-                &format!("{}/.well-known/jwks.json", oidc.issuer),
-            );
-            return Ok(add_cors(json_response(200, &json)));
-        }
-        if path == "/.well-known/jwks.json" && method == http::Method::GET {
-            let json = build_jwks_json(oidc);
-            return Ok(add_cors(json_response(200, &json)));
-        }
-    }
-
     // ── Short-circuit: write methods ───────────────────────────────
     if is_write_method(&method) {
         let resp = ErrorResponse {
@@ -91,14 +79,10 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
     // ── Build API auth ─────────────────────────────────────────────
-    let api_auth = match (&config.oidc, &config.api_secret) {
-        (Some(oidc), _) => ApiAuth::Oidc {
-            signer: Box::new(oidc.signer.clone()),
-            issuer: oidc.issuer.clone(),
-            audience: config.api_base_url.clone(),
-        },
-        (None, Some(secret)) => ApiAuth::Secret(secret.clone()),
-        (None, None) => ApiAuth::None,
+    let api_auth = ApiAuth {
+        signer: Box::new(config.oidc.signer.clone()),
+        issuer: config.oidc.issuer.clone(),
+        audience: config.api_base_url.clone(),
     };
 
     // ── Build gateway with route handlers ──────────────────────────
@@ -116,6 +100,13 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     )
     .with_router(
         Router::new()
+            // OIDC discovery routes (served from this proxy)
+            .with_oidc_discovery(
+                config.oidc.issuer.clone(),
+                std::iter::once(config.oidc.signer.clone())
+                    .chain(config.oidc.previous_signer.clone())
+                    .collect(),
+            )
             .route("/", IndexHandler)
             .route("/{bucket}", AccountListHandler::new(registry, &mapping)),
     )
@@ -172,101 +163,27 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-struct AppConfig {
-    api_base_url: String,
-    api_secret: Option<String>,
-    oidc: Option<OidcConfig>,
-}
-
-struct OidcConfig {
-    signer: JwtSigner,
-    issuer: String,
-    /// Previous key for rotation — served in JWKS but not used for signing.
-    previous_signer: Option<JwtSigner>,
-}
-
 /// How the proxy authenticates to the Source Cooperative API.
 #[derive(Clone)]
-pub(crate) enum ApiAuth {
-    /// OIDC JWT bearer token.
-    Oidc {
-        signer: Box<JwtSigner>,
-        issuer: String,
-        audience: String,
-    },
-    /// Static shared secret (legacy).
-    Secret(String),
-    /// No authentication.
-    None,
+pub(crate) struct ApiAuth {
+    signer: Box<JwtSigner>,
+    issuer: String,
+    audience: String,
 }
 
 impl ApiAuth {
-    /// Generate an Authorization header value.
     fn authorization_header(&self) -> Option<String> {
-        match self {
-            ApiAuth::Oidc {
-                signer,
-                issuer,
-                audience,
-            } => match signer.sign("data-proxy", issuer, audience, &[]) {
-                Ok(token) => Some(format!("Bearer {}", token)),
-                Err(e) => {
-                    tracing::error!("failed to sign API auth JWT: {}", e);
-                    None
-                }
-            },
-            ApiAuth::Secret(secret) => Some(secret.clone()),
-            ApiAuth::None => None,
-        }
-    }
-}
-
-fn load_config(env: &Env) -> AppConfig {
-    let api_base_url = env
-        .var("SOURCE_API_URL")
-        .map(|v| v.to_string())
-        .unwrap_or_else(|_| "https://source.coop".to_string());
-    let api_secret = env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok();
-    let oidc = load_oidc_config(env);
-
-    AppConfig {
-        api_base_url,
-        api_secret,
-        oidc,
-    }
-}
-
-fn load_oidc_config(env: &Env) -> Option<OidcConfig> {
-    let pem = env.secret("OIDC_PROVIDER_KEY").ok()?.to_string();
-    let kid = env.var("OIDC_PROVIDER_KID").ok()?.to_string();
-    let issuer = env.var("OIDC_PROVIDER_ISSUER").ok()?.to_string();
-
-    let signer = match JwtSigner::from_pem(&pem, kid, 60) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("failed to load OIDC provider key: {}", e);
-            return None;
-        }
-    };
-
-    // Optional previous key for rotation
-    let previous_signer = (|| {
-        let prev_pem = env.secret("OIDC_PROVIDER_KEY_PREVIOUS").ok()?.to_string();
-        let prev_kid = env.var("OIDC_PROVIDER_KID_PREVIOUS").ok()?.to_string();
-        match JwtSigner::from_pem(&prev_pem, prev_kid, 60) {
-            Ok(s) => Some(s),
+        match self
+            .signer
+            .sign("data-proxy", &self.issuer, &self.audience, &[])
+        {
+            Ok(token) => Some(format!("Bearer {}", token)),
             Err(e) => {
-                tracing::warn!("failed to load previous OIDC key: {}", e);
+                tracing::error!("failed to sign API auth JWT: {}", e);
                 None
             }
         }
-    })();
-
-    Some(OidcConfig {
-        signer,
-        issuer,
-        previous_signer,
-    })
+    }
 }
 
 fn init_tracing(env: &Env) -> tracing::Level {
@@ -435,53 +352,6 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             .fetch("https://public-log-stream/location", Some(init))
             .await;
     });
-}
-
-// ── OIDC helpers ────────────────────────────────────────────────────
-
-/// Build JWKS JSON containing the active key and optionally the previous key.
-fn build_jwks_json(oidc: &OidcConfig) -> String {
-    use multistore_oidc_provider::jwks::jwks_json as single_jwks_json;
-
-    if oidc.previous_signer.is_none() {
-        return single_jwks_json(oidc.signer.public_key(), oidc.signer.kid());
-    }
-
-    // Parse both single-key JWKS and merge their "keys" arrays
-    let active: serde_json::Value = serde_json::from_str(&single_jwks_json(
-        oidc.signer.public_key(),
-        oidc.signer.kid(),
-    ))
-    .expect("active JWKS from library should be valid JSON");
-    let previous_signer = oidc.previous_signer.as_ref().expect("checked above");
-    let previous: serde_json::Value = serde_json::from_str(&single_jwks_json(
-        previous_signer.public_key(),
-        previous_signer.kid(),
-    ))
-    .expect("previous JWKS from library should be valid JSON");
-
-    let mut keys = active["keys"]
-        .as_array()
-        .expect("JWKS has keys array")
-        .clone();
-    keys.extend(
-        previous["keys"]
-            .as_array()
-            .expect("JWKS has keys array")
-            .iter()
-            .cloned(),
-    );
-
-    serde_json::json!({ "keys": keys }).to_string()
-}
-
-fn json_response(status: u16, body: &str) -> web_sys::Response {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    let headers = web_sys::Headers::new().unwrap();
-    let _ = headers.set("content-type", "application/json");
-    init.set_headers(&headers);
-    web_sys::Response::new_with_opt_str_and_init(Some(body), &init).unwrap()
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

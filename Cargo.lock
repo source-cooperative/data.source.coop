@@ -820,8 +820,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0b8ee9b42e77900a5378712d1e4f295e89fb30135d2a65426d29ac6ddd50c66"
+source = "git+https://github.com/alukach/multistore.git?branch=feat%2Foidc%2Fsupport-multiple-signing-keys#42dd5965203d69c5199e21ecc6f70ac8a5bb89f4"
 dependencies = [
  "async-trait",
  "base64",
@@ -847,8 +846,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2c455b78a8d5591d0f28e4968b718c419324a0e32d4081322dec8d7b378bb"
+source = "git+https://github.com/alukach/multistore.git?branch=feat%2Foidc%2Fsupport-multiple-signing-keys#42dd5965203d69c5199e21ecc6f70ac8a5bb89f4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -871,8 +869,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef9d04c6333a0643ffa46470fba8eb1ae4d53667cbe241c8cdb3921d063c6ec6"
+source = "git+https://github.com/alukach/multistore.git?branch=feat%2Foidc%2Fsupport-multiple-signing-keys#42dd5965203d69c5199e21ecc6f70ac8a5bb89f4"
 dependencies = [
  "async-trait",
  "base64",
@@ -890,8 +887,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc12426dcc148af09dcb4fed8ccae767c8841f6d8a381201ae737bb359450f68"
+source = "git+https://github.com/alukach/multistore.git?branch=feat%2Foidc%2Fsupport-multiple-signing-keys#42dd5965203d69c5199e21ecc6f70ac8a5bb89f4"
 dependencies = [
  "multistore",
  "percent-encoding",
