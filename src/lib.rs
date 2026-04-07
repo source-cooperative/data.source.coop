@@ -64,9 +64,13 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let (rewritten_path, rewritten_query) = if path.starts_with("/.well-known/") || path == "/.sts"
-    {
-        (path.clone(), query.clone())
+    let rewrite = if path.starts_with("/.well-known/") || path == "/.sts" {
+        multistore_path_mapping::RewriteResult {
+            path: path.clone(),
+            query: query.clone(),
+            signing_path: path.clone(),
+            signing_query: query.clone(),
+        }
     } else {
         mapping.rewrite_request(&path, query.as_deref())
     };
@@ -127,12 +131,13 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let req_info = RequestInfo::new(
         &method,
-        &rewritten_path,
-        rewritten_query.as_deref(),
+        &rewrite.path,
+        rewrite.query.as_deref(),
         &headers,
         None,
     )
-    .with_signing_path(&path);
+    .with_signing_path(&rewrite.signing_path)
+    .with_signing_query(rewrite.signing_query.as_deref());
     let result = gateway
         .handle_request(&req_info, js_body, collect_js_body)
         .await;
