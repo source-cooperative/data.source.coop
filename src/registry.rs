@@ -255,11 +255,11 @@ async fn resolve_product_inner(
 
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum DataMode {
+pub enum Visibility {
     #[default]
-    Open,
-    Subscription,
-    Private,
+    Public,
+    Unlisted,
+    Restricted,
     #[serde(other)]
     Unknown,
 }
@@ -270,13 +270,13 @@ pub struct SourceProduct {
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
-    pub data_mode: DataMode,
+    pub visibility: Visibility,
     pub metadata: SourceProductMetadata,
 }
 
 impl SourceProduct {
     pub fn is_public(&self) -> bool {
-        !self.disabled && self.data_mode == DataMode::Open
+        !self.disabled && self.visibility == Visibility::Public
     }
 }
 
