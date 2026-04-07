@@ -5,21 +5,24 @@ mod config;
 mod handlers;
 mod pagination;
 mod registry;
+mod sts;
 
 use crate::auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
-use multistore::api::response::ErrorResponse;
 use multistore::proxy::ProxyGateway;
 use multistore::route_handler::RequestInfo;
 use multistore::router::Router;
 use multistore_cf_workers::{
-    collect_js_body, error_response, headermap_from_js, response_from_gateway, xml_response,
-    JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
+    collect_js_body, error_response, headermap_from_js, response_from_gateway, JsBody,
+    NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
 };
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_path_mapping::{MappedRegistry, PathMapping};
+use multistore_sts::jwks::JwksCache;
+use multistore_sts::route_handler::StsRouterExt;
 use registry::SourceCoopRegistry;
+use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
 
 use crate::config::load_config;
@@ -44,29 +47,13 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .decode_utf8_lossy()
         .to_string();
     let query = uri.query().map(|q| q.to_string());
-    let mut headers = headermap_from_js(&req.headers());
-
-    // Strip AWS auth headers — this proxy is anonymous-only.
-    headers.remove(http::header::AUTHORIZATION);
-    headers.remove("x-amz-security-token");
-    headers.remove("x-amz-content-sha256");
+    let headers = headermap_from_js(&req.headers());
 
     let request_id = extract_request_id(&headers);
 
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if method == http::Method::OPTIONS {
         return Ok(add_cors(error_response(204, "")));
-    }
-
-    // ── Short-circuit: write methods ───────────────────────────────
-    if is_write_method(&method) {
-        let resp = ErrorResponse {
-            code: "MethodNotAllowed".to_string(),
-            message: "Method Not Allowed".to_string(),
-            resource: String::new(),
-            request_id: request_id.to_string(),
-        };
-        return Ok(add_cors(xml_response(405, &resp.to_xml())));
     }
 
     // ── Path rewriting ─────────────────────────────────────────────
@@ -77,7 +64,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let (rewritten_path, rewritten_query) = if path.starts_with("/.well-known/") {
+    let (rewritten_path, rewritten_query) = if path.starts_with("/.well-known/") || path == "/.sts"
+    {
         (path.clone(), query.clone())
     } else {
         mapping.rewrite_request(&path, query.as_deref())
@@ -97,24 +85,41 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         request_id.clone(),
     );
 
+    // ── Build STS components ─────────────────────────────────────
+    let sts_registry = StsCredentialRegistry::new(config.auth_issuer.clone());
+    let jwks_cache = JwksCache::new(reqwest::Client::new(), std::time::Duration::from_secs(900));
+
+    let router = Router::new()
+        .with_oidc_discovery(
+            config.oidc.issuer.clone(),
+            std::iter::once(config.oidc.signer.clone())
+                .chain(config.oidc.previous_signer.clone())
+                .collect(),
+        )
+        .with_sts(
+            "/.sts",
+            sts_registry.clone(),
+            jwks_cache,
+            Some(config.session_token_key.clone()),
+        )
+        .route("/", IndexHandler)
+        .route(
+            "/{bucket}",
+            AccountListHandler::new(registry.clone(), &mapping),
+        );
+
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        MappedRegistry::new(registry.clone(), mapping.clone()),
+        MappedRegistry::new(registry, mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
-    .with_router(
-        Router::new()
-            .with_oidc_discovery(
-                config.oidc.issuer.clone(),
-                std::iter::once(config.oidc.signer.clone())
-                    .chain(config.oidc.previous_signer.clone())
-                    .collect(),
-            )
-            .route("/", IndexHandler)
-            .route("/{bucket}", AccountListHandler::new(registry, &mapping)),
-    )
+    .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG);
+
+    // Register the token key as credential resolver so sealed STS tokens
+    // can be verified on subsequent authenticated requests.
+    let gateway = gateway.with_credential_resolver(config.session_token_key.clone());
 
     // ── Dispatch through gateway ──────────────────────────────────
     let span = tracing::info_span!("request", %request_id, %method, %path);
@@ -191,13 +196,6 @@ fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-}
-
-fn is_write_method(method: &http::Method) -> bool {
-    matches!(
-        *method,
-        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
-    )
 }
 
 // ── Analytics ──────────────────────────────────────────────────────
@@ -308,6 +306,7 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             &event.product,
             &event.api_auth,
             "",
+            None,
         )
         .await
         .map(|p| p.is_public())
@@ -341,7 +340,10 @@ fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     let h = resp.headers();
     for (name, value) in [
         ("access-control-allow-origin", "*"),
-        ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
+        (
+            "access-control-allow-methods",
+            "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+        ),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
     ] {

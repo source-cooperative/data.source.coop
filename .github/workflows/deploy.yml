@@ -43,6 +43,8 @@ on:
         required: true
       OIDC_PROVIDER_KEY:
         required: true
+      SESSION_TOKEN_KEY:
+        required: false
 
 jobs:
   deploy:
@@ -99,7 +101,11 @@ jobs:
           if [ -n "${{ inputs.worker_name }}" ]; then
             WORKER_ARGS="--name ${{ inputs.worker_name }}"
           fi
-          echo '{"OIDC_PROVIDER_KEY": ${{ toJSON(secrets.OIDC_PROVIDER_KEY) }}}' | npx wrangler@3 secret bulk $WORKER_ARGS
+          SECRETS='{"OIDC_PROVIDER_KEY": ${{ toJSON(secrets.OIDC_PROVIDER_KEY) }}}'
+          if [ -n "${{ secrets.SESSION_TOKEN_KEY }}" ]; then
+            SECRETS=$(echo "$SECRETS" | jq --arg key "${{ secrets.SESSION_TOKEN_KEY }}" '. + {SESSION_TOKEN_KEY: $key}')
+          fi
+          echo "$SECRETS" | npx wrangler@3 secret bulk $WORKER_ARGS
 
       - name: Get deploy URL
         id: url

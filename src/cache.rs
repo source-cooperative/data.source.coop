@@ -27,9 +27,18 @@ pub async fn get_or_fetch_product(
     product: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<SourceProduct, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
-    cached_fetch(&api_url, &api_url, PRODUCT_CACHE_SECS, api_auth, request_id).await
+    cached_fetch(
+        &api_url,
+        &api_url,
+        PRODUCT_CACHE_SECS,
+        api_auth,
+        request_id,
+        subject,
+    )
+    .await
 }
 
 /// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
@@ -37,6 +46,7 @@ pub async fn get_or_fetch_data_connections(
     api_base_url: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
     cached_fetch(
@@ -45,6 +55,7 @@ pub async fn get_or_fetch_data_connections(
         DATA_CONNECTIONS_CACHE_SECS,
         api_auth,
         request_id,
+        subject,
     )
     .await
 }
@@ -55,6 +66,7 @@ pub async fn get_or_fetch_product_list(
     account: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
     cached_fetch(
@@ -63,6 +75,7 @@ pub async fn get_or_fetch_product_list(
         PRODUCT_LIST_CACHE_SECS,
         api_auth,
         request_id,
+        subject,
     )
     .await
 }
@@ -78,6 +91,7 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     ttl_secs: u32,
     api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<T, ProxyError> {
     let span = tracing::info_span!(
         "cached_fetch",
@@ -110,10 +124,14 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     init.set_method("GET");
     let req_headers = web_sys::Headers::new()
         .map_err(|e| ProxyError::Internal(format!("headers build failed: {:?}", e)))?;
-    if let Some(auth_value) = api_auth.authorization_header() {
-        req_headers
-            .set("Authorization", &auth_value)
-            .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+    // Only authenticate to the API when we have an identified caller.
+    // Anonymous proxy requests hit the API without credentials.
+    if let Some(subj) = subject {
+        if let Some(auth_value) = api_auth.authorization_header(subj) {
+            req_headers
+                .set("Authorization", &auth_value)
+                .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+        }
     }
     if !request_id.is_empty() {
         let _ = req_headers.set("x-request-id", request_id);

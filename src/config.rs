@@ -1,4 +1,5 @@
 use multistore_oidc_provider::jwt::JwtSigner;
+use multistore_sts::sealed_token::TokenKey;
 use worker::Env;
 
 pub fn load_config(env: &Env) -> AppConfig {
@@ -45,12 +46,33 @@ pub fn load_config(env: &Env) -> AppConfig {
         }
     };
 
-    AppConfig { api_base_url, oidc }
+    let session_token_key = TokenKey::from_base64(
+        &env.secret("SESSION_TOKEN_KEY")
+            .expect("SESSION_TOKEN_KEY must be set")
+            .to_string(),
+    )
+    .expect("SESSION_TOKEN_KEY must be valid base64-encoded 32-byte key");
+
+    let auth_issuer = env
+        .var("AUTH_ISSUER")
+        .map(|v| v.to_string())
+        .expect("AUTH_ISSUER must be set");
+
+    AppConfig {
+        api_base_url,
+        oidc,
+        session_token_key,
+        auth_issuer,
+    }
 }
 
 pub struct AppConfig {
     pub api_base_url: String,
     pub oidc: OidcConfig,
+    /// AES key for sealing/unsealing STS session tokens.
+    pub session_token_key: TokenKey,
+    /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
+    pub auth_issuer: String,
 }
 
 pub struct OidcConfig {
