@@ -895,7 +895,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=main#ff12fe37ea38f1da9d96d98e7412cc46ffbecef8"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#22d606b3e6fa03bea67642f4bcaf9a818c36165d"
 dependencies = [
  "async-trait",
  "base64",
@@ -921,7 +921,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=main#ff12fe37ea38f1da9d96d98e7412cc46ffbecef8"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#22d606b3e6fa03bea67642f4bcaf9a818c36165d"
 dependencies = [
  "async-trait",
  "bytes",
@@ -944,7 +944,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=main#ff12fe37ea38f1da9d96d98e7412cc46ffbecef8"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#22d606b3e6fa03bea67642f4bcaf9a818c36165d"
 dependencies = [
  "async-trait",
  "base64",
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=main#ff12fe37ea38f1da9d96d98e7412cc46ffbecef8"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#22d606b3e6fa03bea67642f4bcaf9a818c36165d"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -972,7 +972,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=main#ff12fe37ea38f1da9d96d98e7412cc46ffbecef8"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#22d606b3e6fa03bea67642f4bcaf9a818c36165d"
 dependencies = [
  "aes-gcm",
  "async-trait",

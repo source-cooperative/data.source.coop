@@ -131,7 +131,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         rewritten_query.as_deref(),
         &headers,
         None,
-    );
+    )
+    .with_signing_path(&path);
     let result = gateway
         .handle_request(&req_info, js_body, collect_js_body)
         .await;
