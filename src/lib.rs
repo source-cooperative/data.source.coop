@@ -1,10 +1,12 @@
 mod analytics;
+mod auth;
 mod cache;
 mod config;
 mod handlers;
 mod pagination;
 mod registry;
 
+use crate::auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
@@ -15,7 +17,6 @@ use multistore_cf_workers::{
     collect_js_body, error_response, headermap_from_js, response_from_gateway, xml_response,
     JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
 };
-use multistore_oidc_provider::jwt::JwtSigner;
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use registry::SourceCoopRegistry;
@@ -83,11 +84,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     };
 
     // ── Build API auth ─────────────────────────────────────────────
-    let api_auth = ApiAuth {
-        signer: Box::new(config.oidc.signer.clone()),
-        issuer: config.oidc.issuer.clone(),
-        audience: config.api_base_url.clone(),
-    };
+    let api_auth = ApiAuth::new(
+        config.oidc.signer.clone(),
+        config.oidc.issuer.clone(),
+        config.api_base_url.clone(),
+    );
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
@@ -165,29 +166,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-/// How the proxy authenticates to the Source Cooperative API.
-#[derive(Clone)]
-pub(crate) struct ApiAuth {
-    signer: Box<JwtSigner>,
-    issuer: String,
-    audience: String,
-}
-
-impl ApiAuth {
-    fn authorization_header(&self) -> Option<String> {
-        match self
-            .signer
-            .sign("data-proxy", &self.issuer, &self.audience, &[])
-        {
-            Ok(token) => Some(format!("Bearer {}", token)),
-            Err(e) => {
-                tracing::error!("failed to sign API auth JWT: {}", e);
-                None
-            }
-        }
-    }
-}
 
 fn init_tracing(env: &Env) -> tracing::Level {
     let max_level = env
