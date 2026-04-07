@@ -82,6 +82,93 @@ For non-public resources or write operations:
 
 The proxy does not evaluate org membership or permission inheritance logic — the API resolves these internally. When a user belongs to an organisation, the API includes permissions inherited through that membership in the account's resolved grants. The proxy treats the API response as the authoritative set of permissions for the account.
 
+### Proxy-to-API Authentication
+
+The proxy authenticates its policy store lookups by presenting itself as
+the account whose permissions it needs. This avoids a separate
+"service account" code path in the API — the same authorization logic
+that serves the frontend serves the proxy.
+
+#### How `account_id` Flows into Proxy-to-API Requests
+
+The `account_id` that the proxy uses as `sub` originates from the Role
+and travels through the credential chain:
+
+1. **Role lookup.** A caller presents an OIDC token to `/.sts` and
+   requests a specific Role. The Role is owned by an account — this
+   could be a **user account** or an **organisation account**. The
+   owning account's ID becomes the `account_id`.
+
+2. **SessionToken minting.** The proxy mints a SessionToken JWT
+   containing `account_id`, `role_name`, `permissions` (the Role's
+   ceiling), and `assumed_by` (the caller's original IdP subject).
+
+3. **STS credential issuance.** The SessionToken is encoded into STS
+   credentials returned to the caller. The `account_id` is embedded in
+   the `AccessKeyId` (used to derive the signing key) and the
+   SessionToken JWT is returned as the `SessionToken`.
+
+4. **Request-time decoding.** When the proxy receives an S3 request
+   signed with these credentials, it verifies the SigV4 signature,
+   decodes the SessionToken, and extracts `account_id`.
+
+5. **Policy store lookup.** The proxy mints a new short-lived JWT with
+   `sub: account_id` and sends it to the Source Cooperative API to
+   fetch that account's permissions.
+
+#### The `sub` Claim Represents an Account, Not Necessarily a User
+
+The `sub` claim in the proxy-to-API JWT is an **account ID**, which may
+identify either a user or an organisation:
+
+- **User account.** A user authenticates via the frontend or an IdP and
+  assumes their own `_default` Role. `sub` = the user's account ID. The
+  API returns that user's permissions — identical to a direct frontend
+  request.
+
+- **Organisation account.** A CI workflow authenticates via GitHub OIDC
+  and assumes a Role owned by `my-org`. `sub` = `my-org` (the org's
+  account ID). The API returns my-org's full permissions — including
+  grants on products owned by other accounts that my-org has access to.
+  The Role ceiling (evaluated locally by the proxy) constrains what the
+  CI workflow can actually do within those permissions.
+
+The API does not need to distinguish between these cases. In both, it
+receives an account ID and returns that account's resolved permissions.
+The proxy handles the Role ceiling intersection locally.
+
+#### JWT Claims
+
+For each policy store request, the proxy mints a short-lived JWT signed
+with its private key:
+
+| Claim | Value | Purpose |
+|-------|-------|---------|
+| `sub` | `account_id` from the SessionToken | Tells the API whose permissions to return. May be a user ID or an org ID. |
+| `iss` | The proxy's OIDC issuer URL | The API verifies the signature against the proxy's `/.well-known/jwks.json`. |
+| `aud` | The API's base URL | Scopes the token to the policy store API. |
+| `role` | `role_name` from the SessionToken | Informational — for audit logging. Does not affect the API's response. |
+| `assumed_by` | `assumed_by` from the SessionToken | The original IdP subject, for audit trail. |
+| `exp` | Short-lived (≤ 60s) | Limits replay window. |
+
+#### Trust Model
+
+The API trusts the proxy to assert any `sub` value. This trust is
+established by the API verifying the JWT signature against the proxy's
+published OIDC discovery document. Only the proxy holds the signing key.
+This is analogous to how an AWS service uses IAM role assumption — the
+service is trusted to act on behalf of the principal.
+
+#### Why `sub` = `account_id`, Not `assumed_by`
+
+The API's permission model is account-centric. Grants are assigned to
+Source Cooperative accounts (users and organisations), not to external
+IdP subjects. When a GitHub Actions workflow assumes an org's Role, the
+relevant permissions are the org's — not the workflow's. The Role
+ceiling (evaluated locally by the proxy) constrains what the workflow
+can do within those permissions. The `assumed_by` claim preserves
+attribution for audit without affecting authorization.
+
 **Step 6 — Prefix enforcement**
 
 If the Role's permission statement includes a prefix constraint (e.g., `sc::my-org::product/my-dataset/uploads/*`), verify the object key falls within that prefix. This enforcement is part of Step 2 and Step 5 — the prefix is evaluated when matching the resource pattern.
