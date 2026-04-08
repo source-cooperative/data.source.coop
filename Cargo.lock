@@ -895,7 +895,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#719f7c82dd0ce4154b548f25307d69314ba4509b"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
 dependencies = [
  "async-trait",
  "base64",
@@ -921,7 +921,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#719f7c82dd0ce4154b548f25307d69314ba4509b"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
 dependencies = [
  "async-trait",
  "bytes",
@@ -944,7 +944,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#719f7c82dd0ce4154b548f25307d69314ba4509b"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
 dependencies = [
  "async-trait",
  "base64",
@@ -962,7 +962,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#719f7c82dd0ce4154b548f25307d69314ba4509b"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -972,7 +972,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#719f7c82dd0ce4154b548f25307d69314ba4509b"
+source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
 dependencies = [
  "aes-gcm",
  "async-trait",

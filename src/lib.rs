@@ -126,17 +126,20 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let span = tracing::info_span!("request", %request_id, %method, %path);
     let _guard = span.enter();
 
-    let req_info = RequestInfo::new(
-        &method,
-        &rewrite.path,
-        rewrite.query.as_deref(),
-        &headers,
-        None,
-    )
-    .with_signing_path(&rewrite.signing_path)
-    .with_signing_query(rewrite.signing_query.as_deref());
     let result = gateway
-        .handle_request(&req_info, js_body, collect_js_body)
+        .handle_request(
+            &RequestInfo::new(
+                &method,
+                &rewrite.path,
+                rewrite.query.as_deref(),
+                &headers,
+                None,
+            )
+            .with_signing_path(&rewrite.signing_path)
+            .with_signing_query(rewrite.signing_query.as_deref()),
+            js_body,
+            collect_js_body,
+        )
         .await;
     let response = response_from_gateway(result);
     tracing::info!(status = response.status(), "response");
