@@ -119,11 +119,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         None,
     )
     .with_router(router)
-    .with_debug_errors(max_level >= tracing::Level::DEBUG);
-
-    // Register the token key as credential resolver so sealed STS tokens
-    // can be verified on subsequent authenticated requests.
-    let gateway = gateway.with_credential_resolver(config.session_token_key.clone());
+    .with_debug_errors(max_level >= tracing::Level::DEBUG)
+    .with_credential_resolver(config.session_token_key.clone());
 
     // ── Dispatch through gateway ──────────────────────────────────
     let span = tracing::info_span!("request", %request_id, %method, %path);
