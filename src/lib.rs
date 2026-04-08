@@ -152,7 +152,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     // ── Broadcast location to WebSocket viewers ──────────────────
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
-        if response.status() < 400 {
+        if response.status() < 400 && !path.starts_with("/.") {
             maybe_broadcast_location(
                 &ctx,
                 &env,
