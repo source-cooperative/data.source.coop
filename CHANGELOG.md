@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/source-cooperative/data.source.coop/compare/v2.1.0...v2.1.1) (2026-04-02)
+
+
+### Bug Fixes
+
+* update multistore to properly recognize directory markers ([#125](https://github.com/source-cooperative/data.source.coop/issues/125)) ([25b1072](https://github.com/source-cooperative/data.source.coop/commit/25b1072ce97dc2d8880ac037b9d8796ebb0d3d8a))
+
 ## [2.1.0](https://github.com/source-cooperative/data.source.coop/compare/v2.0.0...v2.1.0) (2026-03-28)
 
 
