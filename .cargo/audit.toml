@@ -23,4 +23,27 @@ ignore = [
     # Revisit when: the `rsa` crate ships a fix, or `multistore-oidc-provider`
     # migrates to a different RSA/signing implementation (e.g. ES256).
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0097: `rand` is unsound with a custom logger using `rand::rng()`
+    #
+    # This is a soundness warning (not a vulnerability) affecting `rand` 0.8.5
+    # and 0.9.2. The unsoundness is only triggerable when a custom `log`
+    # implementation calls back into `rand::rng()` from within its `log()` method,
+    # creating reentrant access to thread-local RNG state.
+    #
+    # This does not affect us because:
+    #
+    # 1. We pull `rand` in only via transitive dependencies (`rsa`,
+    #    `num-bigint-dig`, `quinn-proto`, `object_store`) — we do not call
+    #    `rand::rng()` directly, and our logging setup does not invoke the RNG
+    #    from inside log handlers.
+    #
+    # 2. No fixed version exists in the 0.8.x or 0.9.x series. The advisory
+    #    lists no Solution; upstream has not released a patch on a compatible
+    #    semver line, and our transitive deps pin these majors.
+    #
+    # Revisit when: `rand` ships a patched 0.8.x/0.9.x release, or our
+    # transitive deps (`rsa`, `quinn-proto`, `object_store`) upgrade to
+    # `rand` 0.10+.
+    "RUSTSEC-2026-0097",
 ]
