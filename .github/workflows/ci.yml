@@ -101,13 +101,8 @@ jobs:
       - name: Start wrangler dev
         run: |
           wrangler dev --port 8787 &
-          for i in $(seq 1 60); do
-            if curl -s --max-time 2 http://localhost:8787/ > /dev/null 2>&1; then
-              echo "Server ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
+          curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
+          echo "Server ready"
       - name: Run integration tests
         run: uvx --with requests pytest tests/ -v
 
