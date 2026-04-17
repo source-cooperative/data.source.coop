@@ -65,6 +65,12 @@ jobs:
         run: cargo install worker-build@0.7.5
       - name: Build WASM worker
         run: worker-build --release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-build
+          path: build/
+          retention-days: 1
 
   integration:
     name: Integration Tests
@@ -72,18 +78,16 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
         with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+          name: worker-build
+          path: build/
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@v5
       - name: Install wrangler
         run: npm install -g wrangler@3
-      - name: Install worker-build
-        run: cargo install worker-build@0.7.5
       - name: Generate test secrets
         # Required by `load_config` in src/config.rs. The actual key material
         # doesn't matter for these read-only public-data tests — we just need
@@ -100,7 +104,7 @@ jobs:
           } > .dev.vars
       - name: Start wrangler dev
         run: |
-          wrangler dev --port 8787 &
+          wrangler dev --port 8787 --no-bundle &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
       - name: Run integration tests
