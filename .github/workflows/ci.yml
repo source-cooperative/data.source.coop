@@ -104,6 +104,7 @@ jobs:
           } > .dev.vars
       - name: Start wrangler dev
         run: |
+          sed -i 's/^command = .*/command = "echo skip"/' wrangler.toml
           wrangler dev --port 8787 --no-bundle &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
