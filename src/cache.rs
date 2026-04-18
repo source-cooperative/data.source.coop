@@ -30,8 +30,9 @@ pub async fn get_or_fetch_product(
     subject: Option<&str>,
 ) -> Result<SourceProduct, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         PRODUCT_CACHE_SECS,
         api_auth,
@@ -49,8 +50,9 @@ pub async fn get_or_fetch_data_connections(
     subject: Option<&str>,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         DATA_CONNECTIONS_CACHE_SECS,
         api_auth,
@@ -69,8 +71,9 @@ pub async fn get_or_fetch_product_list(
     subject: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
     let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         PRODUCT_LIST_CACHE_SECS,
         api_auth,
@@ -80,7 +83,17 @@ pub async fn get_or_fetch_product_list(
     .await
 }
 
-// ── Internal helper ────────────────────────────────────────────────
+// ── Internal helpers ──────────────────────────────────────────────
+
+/// Build a cache key that includes the caller's identity so that
+/// responses for different users (or anonymous vs authenticated) are
+/// cached separately.
+fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
+    match subject {
+        Some(subj) => format!("{}?subject={}", api_url, subj),
+        None => api_url.to_string(),
+    }
+}
 
 /// Generic cache-or-fetch: check the Cache API, return cached JSON on hit,
 /// otherwise fetch from `api_url`, store in cache with the given TTL, and
