@@ -272,15 +272,7 @@ pub struct SourceProductMirror {
     pub storage_type: String,
     pub connection_id: String,
     pub prefix: String,
-    pub config: SourceProductMirrorConfig,
     pub is_primary: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-pub struct SourceProductMirrorConfig {
-    pub region: Option<String>,
-    pub bucket: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
