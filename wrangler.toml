@@ -4,10 +4,6 @@ name = "source-data-proxy"
 
 routes = [
   {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "a.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "b.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "c.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "d.data.source.coop/*", zone_name = "coolnewgeo.com"},
 ]
 
 [build]
