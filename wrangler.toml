@@ -13,20 +13,21 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 LOG_LEVEL = "WARN"
 SOURCE_API_URL = "https://source.coop"
 
-# TODO: Set different sampling rates for prod vs staging
 [observability]
 enabled = true
 head_sampling_rate = 1
 
 [observability.logs]
+destinations = ["axiom-logs"]
 enabled = true
-head_sampling_rate = 1
+head_sampling_rate = 0.25
 invocation_logs = true
 persist = true
 
 [observability.traces]
+destinations = ["axiom-traces"]
 enabled = true
-head_sampling_rate = 1
+head_sampling_rate = 0.25
 persist = true
 
 [[analytics_engine_datasets]]
@@ -54,3 +55,20 @@ dataset = "source_data_proxy_staging"
 [[env.staging.services]]
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.observability.logs]
+destinations = []
+enabled = true
+head_sampling_rate = 0.25
+invocation_logs = true
+persist = true
+
+[env.staging.observability.traces]
+destinations = []
+enabled = true
+head_sampling_rate = 0.25
+persist = true
