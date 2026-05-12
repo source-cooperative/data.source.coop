@@ -26,6 +26,9 @@ pub struct RequestEvent<'a> {
 ///   blob7:   content_type
 ///   double1: bytes_sent
 ///   double2: status_code
+///   TODO:
+///   + Range
+///   + Duration
 ///
 /// This function never returns an error — failures are logged and swallowed
 /// so that analytics never blocks a response.
