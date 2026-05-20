@@ -11,6 +11,8 @@ pub struct RequestEvent<'a> {
     pub content_type: &'a str,
     pub bytes_sent: f64,
     pub status_code: f64,
+    pub duration: f64,
+    pub range: Option<&'a str>,
 }
 
 /// Write a request event to the Analytics Engine dataset.
@@ -26,9 +28,6 @@ pub struct RequestEvent<'a> {
 ///   blob7:   content_type
 ///   double1: bytes_sent
 ///   double2: status_code
-///   TODO:
-///   + Range
-///   + Duration
 ///
 /// This function never returns an error — failures are logged and swallowed
 /// so that analytics never blocks a response.
@@ -55,8 +54,10 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
         .add_blob(event.user_id) // blob5
         .add_blob(event.country) // blob6
         .add_blob(event.content_type) // blob7
+        .add_blob(event.range) // blob 8
         .add_double(event.bytes_sent) // double1
         .add_double(event.status_code) // double2
+        .add_double(event.duration) // double 3
         .write_to(&dataset);
 
     if let Err(e) = result {
