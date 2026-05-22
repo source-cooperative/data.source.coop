@@ -1,8 +1,19 @@
+use std::sync::OnceLock;
+
 use multistore_oidc_provider::jwt::JwtSigner;
 use multistore_sts::sealed_token::TokenKey;
 use worker::Env;
 
-pub fn load_config(env: &Env) -> AppConfig {
+static CONFIG: OnceLock<AppConfig> = OnceLock::new();
+
+/// Return the process-wide config, parsing env/secrets the first time it's
+/// called. Subsequent calls within the same isolate are free — in particular,
+/// the RSA OIDC signing keys are parsed from PEM exactly once.
+pub fn load_config(env: &Env) -> &'static AppConfig {
+    CONFIG.get_or_init(|| build_config(env))
+}
+
+fn build_config(env: &Env) -> AppConfig {
     let api_base_url = env
         .var("SOURCE_API_URL")
         .map(|v| v.to_string())

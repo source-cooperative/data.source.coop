@@ -63,7 +63,7 @@ impl BucketRegistry for SourceCoopRegistry {
             ResolvedIdentity::Anonymous => None,
         };
 
-        let config = resolve_product_send(
+        let config = resolve_product(
             &self.api_base_url,
             account,
             product,
@@ -88,43 +88,8 @@ impl BucketRegistry for SourceCoopRegistry {
     }
 }
 
-/// Resolve a product to a BucketConfig, bridging the !Send worker::Fetch
-/// into a Send future via spawn_local + oneshot channel.
-async fn resolve_product_send(
-    api_base_url: &str,
-    account: &str,
-    product: &str,
-    api_auth: &crate::ApiAuth,
-    request_id: &str,
-    subject: Option<&str>,
-) -> Result<BucketConfig, ProxyError> {
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let api_base_url = api_base_url.to_string();
-    let account = account.to_string();
-    let product = product.to_string();
-    let api_auth = api_auth.clone();
-    let request_id = request_id.to_string();
-    let subject = subject.map(|s| s.to_string());
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = resolve_product_inner(
-            &api_base_url,
-            &account,
-            &product,
-            &api_auth,
-            &request_id,
-            subject.as_deref(),
-        )
-        .await;
-        let _ = tx.send(result);
-    });
-
-    rx.await
-        .unwrap_or_else(|_| Err(ProxyError::Internal("registry channel dropped".into())))
-}
-
-/// Inner product resolution logic (runs in spawn_local, !Send is OK).
-async fn resolve_product_inner(
+/// Resolve a product to a `BucketConfig` by querying the Source Cooperative API.
+async fn resolve_product(
     api_base_url: &str,
     account: &str,
     product: &str,

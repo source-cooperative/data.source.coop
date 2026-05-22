@@ -894,8 +894,8 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
+version = "0.4.0"
+source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
 dependencies = [
  "async-trait",
  "base64",
@@ -920,8 +920,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
+version = "0.4.0"
+source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
 dependencies = [
  "async-trait",
  "bytes",
@@ -934,6 +934,7 @@ dependencies = [
  "js-sys",
  "multistore",
  "object_store",
+ "percent-encoding",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -943,8 +944,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
+version = "0.4.0"
+source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
 dependencies = [
  "async-trait",
  "base64",
@@ -961,8 +962,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
+version = "0.4.0"
+source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -971,8 +972,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.3.1"
-source = "git+https://github.com/developmentseed/multistore.git?branch=feat%2Fauth%2Frewritten-path-support#93a678a0a527a5f6a8d95e66e4d21f8cb6c4d1c7"
+version = "0.4.0"
+source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1701,7 +1702,6 @@ name = "source-data-proxy"
 version = "2.1.0"
 dependencies = [
  "console_error_panic_hook",
- "futures",
  "http",
  "js-sys",
  "multistore",
@@ -1709,13 +1709,11 @@ dependencies = [
  "multistore-oidc-provider",
  "multistore-path-mapping",
  "multistore-sts",
- "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",
  "tracing",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "web-sys",
  "worker",
  "worker-macros",

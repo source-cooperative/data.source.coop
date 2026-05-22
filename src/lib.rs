@@ -14,14 +14,15 @@ use multistore::proxy::ProxyGateway;
 use multistore::route_handler::RequestInfo;
 use multistore::router::Router;
 use multistore_cf_workers::{
-    collect_js_body, error_response, headermap_from_js, response_from_gateway, JsBody,
-    NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
+    collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
+    WorkerSubscriber,
 };
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
 use registry::SourceCoopRegistry;
+use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
 
@@ -30,6 +31,25 @@ use crate::config::load_config;
 /// Separator used to join account + product into a single internal bucket name.
 pub(crate) const BUCKET_SEPARATOR: &str = ":";
 
+/// Shared `reqwest::Client` reused across requests within an isolate.
+/// `reqwest::Client` is `Arc`-backed so cloning out of the cell is cheap.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new).clone()
+}
+
+/// Shared `JwksCache`. Its `entries`/`failures` maps are `Arc<Mutex<_>>` so
+/// cloning the cache is cheap and shares state — the 15-minute TTL is
+/// finally effective across requests.
+static JWKS_CACHE: OnceLock<JwksCache> = OnceLock::new();
+
+fn jwks_cache() -> JwksCache {
+    JWKS_CACHE
+        .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
+        .clone()
+}
+
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
@@ -37,23 +57,14 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let config = load_config(&env);
 
     // ── Parse request ──────────────────────────────────────────────
-    let js_body = JsBody(req.body());
-    let method: http::Method = req.method().parse().unwrap_or(http::Method::GET);
-    let uri: http::Uri = req
-        .url()
-        .parse()
-        .unwrap_or_else(|_| http::Uri::from_static("/"));
-    let path = percent_encoding::percent_decode_str(uri.path())
-        .decode_utf8_lossy()
-        .to_string();
-    let query = uri.query().map(|q| q.to_string());
-    let headers = headermap_from_js(&req.headers());
+    let (parts, js_body) = RequestParts::from_web_sys(&req)
+        .map_err(|e| worker::Error::RustError(format!("invalid request: {e}")))?;
 
-    let request_id = extract_request_id(&headers);
+    let request_id = extract_request_id(&parts.headers);
 
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
-    if method == http::Method::OPTIONS {
-        return Ok(add_cors(error_response(204, "")));
+    if parts.method == http::Method::OPTIONS {
+        return Ok(add_cors(empty_response(204)));
     }
 
     // ── Path rewriting ─────────────────────────────────────────────
@@ -64,15 +75,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let rewrite = if path.starts_with("/.well-known/") || path == "/.sts" {
+    let rewrite = if parts.path.starts_with("/.well-known/") || parts.path == "/.sts" {
         multistore_path_mapping::RewriteResult {
-            path: path.clone(),
-            query: query.clone(),
-            signing_path: path.clone(),
-            signing_query: query.clone(),
+            path: parts.path.clone(),
+            query: parts.query.clone(),
+            signing_path: parts.path.clone(),
+            signing_query: parts.query.clone(),
         }
     } else {
-        mapping.rewrite_request(&path, query.as_deref())
+        mapping.rewrite_request(&parts.path, parts.query.as_deref())
     };
 
     // ── Build API auth ─────────────────────────────────────────────
@@ -91,7 +102,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     // ── Build STS components ─────────────────────────────────────
     let sts_registry = StsCredentialRegistry::new(config.auth_issuer.clone());
-    let jwks_cache = JwksCache::new(reqwest::Client::new(), std::time::Duration::from_secs(900));
+    let jwks_cache = jwks_cache();
 
     let router = Router::new()
         .with_oidc_discovery(
@@ -123,42 +134,49 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     .with_credential_resolver(config.session_token_key.clone());
 
     // ── Dispatch through gateway ──────────────────────────────────
-    let span = tracing::info_span!("request", %request_id, %method, %path);
+    let span =
+        tracing::info_span!("request", %request_id, method = %parts.method, path = %parts.path);
     let _guard = span.enter();
 
-    let result = gateway
-        .handle_request(
-            &RequestInfo::new(
-                &method,
-                &rewrite.path,
-                rewrite.query.as_deref(),
-                &headers,
-                None,
-            )
-            .with_signing_path(&rewrite.signing_path)
-            .with_signing_query(rewrite.signing_query.as_deref()),
-            js_body,
-            collect_js_body,
-        )
-        .await;
-    let response = response_from_gateway(result);
+    let request_info = RequestInfo::new(
+        &parts.method,
+        &rewrite.path,
+        rewrite.query.as_deref(),
+        &parts.headers,
+        None,
+    )
+    .with_signing_path(&rewrite.signing_path)
+    .with_signing_query(rewrite.signing_query.as_deref());
+
+    let response = gateway
+        .handle_request(&request_info, js_body, collect_js_body)
+        .await
+        .into_web_sys();
     tracing::info!(status = response.status(), "response");
 
     // ── Extract path segments (used by analytics + location broadcast) ──
-    let (account, product, key) = extract_path_segments(&path);
+    let (account, product, key) = extract_path_segments(&parts.path);
 
     // ── Analytics ───────────────────────────────────────────────
-    log_analytics(&env, &headers, &response, &method, account, product, key);
+    log_analytics(
+        &env,
+        &parts.headers,
+        &response,
+        &parts.method,
+        account,
+        product,
+        key,
+    );
 
     // ── Broadcast location to WebSocket viewers ──────────────────
-    if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
-        if response.status() < 400 && !path.starts_with("/.") {
+    if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
+        if response.status() < 400 && !parts.path.starts_with("/.") {
             maybe_broadcast_location(
                 &ctx,
                 &env,
                 LocationEvent {
                     cf: CfProperties::from_request(&req),
-                    country: header_str(&headers, "cf-ipcountry").to_string(),
+                    country: header_str(&parts.headers, "cf-ipcountry").to_string(),
                     account: acct.to_string(),
                     product: prod.to_string(),
                     key: key.unwrap_or("").to_string(),
@@ -338,6 +356,13 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             .fetch("https://public-log-stream/location", Some(init))
             .await;
     });
+}
+
+fn empty_response(status: u16) -> web_sys::Response {
+    let init = web_sys::ResponseInit::new();
+    init.set_status(status);
+    web_sys::Response::new_with_opt_str_and_init(None, &init)
+        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
