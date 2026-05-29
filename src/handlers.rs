@@ -4,10 +4,12 @@
 //! custom endpoints are checked before the S3 proxy pipeline runs.
 
 use multistore::api::list::parse_list_query_params;
-use multistore::api::response::{ListBucketResult, ListCommonPrefix};
+use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefix};
 use multistore::route_handler::{ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture};
 
+use crate::cache::ApiResponse;
 use crate::pagination::paginate_prefixes;
+use crate::redirect::{build_redirect_path, permanent_redirect_xml};
 use crate::registry::SourceCoopRegistry;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -77,8 +79,24 @@ impl RouteHandler for AccountListHandler {
 
             // List products for this account
             let account = bucket;
-            match self.registry.list_products(account).await {
-                Ok(products) => {
+            match self.registry.list_products_or_redirect(account).await {
+                Ok(ApiResponse::Redirect(info)) => {
+                    let original_path = format!("/{}", account);
+                    let location =
+                        build_redirect_path(&original_path, req.query, &info.redirect_to);
+                    let xml = permanent_redirect_xml(&info.redirect_to, &self.registry.request_id);
+                    let mut result = ProxyResult::xml(301, xml);
+                    if let Ok(value) = location.parse() {
+                        result.headers.insert(http::header::LOCATION, value);
+                    }
+                    Some(result)
+                }
+                Ok(ApiResponse::Ok(product_list)) => {
+                    let products: Vec<String> = product_list
+                        .products
+                        .into_iter()
+                        .map(|p| p.product_id)
+                        .collect();
                     let params = parse_list_query_params(req.query);
                     let all_prefixes: Vec<String> =
                         products.into_iter().map(|p| format!("{p}/")).collect();
@@ -110,7 +128,7 @@ impl RouteHandler for AccountListHandler {
                 }
                 Err(e) => {
                     tracing::error!("AccountList({}) error: {:?}", account, e);
-                    let err = multistore::api::response::ErrorResponse {
+                    let err = ErrorResponse {
                         code: "BadGateway".to_string(),
                         message: "Failed to list products from upstream API".to_string(),
                         resource: String::new(),
