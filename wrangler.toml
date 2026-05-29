@@ -6,13 +6,28 @@ routes = [
   {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
 ]
 
+[dev]
+# NOTE: Wrangler dev server overrides the host with the first route's host, so we need 
+# to set it to the same host as the first route to avoid signature mistmatch issues
+# during local development.
+host = "localhost:8787"
+
 [build]
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
 [vars]
 LOG_LEVEL = "WARN"
+OIDC_PROVIDER_ISSUER = "https://data.source.coop"
+OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://source.coop"
 
+# Required secrets (set via `wrangler secret put`):
+#   OIDC_PROVIDER_KEY          - PEM-encoded PKCS#8 RSA private key (active)
+#   OIDC_PROVIDER_KEY_PREVIOUS - PEM-encoded previous key (optional, for rotation)
+# Optional vars for key rotation:
+#   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key
+
+# TODO: Set different sampling rates for prod vs staging
 [observability]
 enabled = true
 head_sampling_rate = 1
@@ -46,6 +61,8 @@ routes = [
 
 [env.staging.vars]
 LOG_LEVEL = "DEBUG"
+OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
+OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://staging.source.coop"
 
 [[env.staging.analytics_engine_datasets]]
