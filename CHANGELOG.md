@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2](https://github.com/source-cooperative/data.source.coop/compare/v2.1.1...v2.1.2) (2026-05-29)
+
+
+### Miscellaneous Chores
+
+* deploy observabilty changes ([9ea6b77](https://github.com/source-cooperative/data.source.coop/commit/9ea6b77c2bc115d29062b6b4038f254424ca98f7))
+
 ## [2.1.1](https://github.com/source-cooperative/data.source.coop/compare/v2.1.0...v2.1.1) (2026-04-02)
 
 
