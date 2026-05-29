@@ -4,10 +4,6 @@ name = "source-data-proxy"
 
 routes = [
   {pattern = "data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "a.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "b.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "c.data.source.coop/*", zone_name = "coolnewgeo.com"},
-  {pattern = "d.data.source.coop/*", zone_name = "coolnewgeo.com"},
 ]
 
 [dev]
@@ -37,14 +33,16 @@ enabled = true
 head_sampling_rate = 1
 
 [observability.logs]
+destinations = ["axiom-logs"]
 enabled = true
-head_sampling_rate = 1
+head_sampling_rate = 0.25
 invocation_logs = true
 persist = true
 
 [observability.traces]
+destinations = ["axiom-traces"]
 enabled = true
-head_sampling_rate = 1
+head_sampling_rate = 0.25
 persist = true
 
 [[analytics_engine_datasets]]
@@ -74,3 +72,20 @@ dataset = "source_data_proxy_staging"
 [[env.staging.services]]
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.staging.observability.logs]
+destinations = []
+enabled = true
+head_sampling_rate = 0.25
+invocation_logs = true
+persist = true
+
+[env.staging.observability.traces]
+destinations = []
+enabled = true
+head_sampling_rate = 0.25
+persist = true

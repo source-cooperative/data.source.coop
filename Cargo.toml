@@ -2,7 +2,7 @@
 authors = ["Anthony Lukach <anthonylukach@gmail.com>"]
 edition = "2021"
 name = "source-data-proxy"
-version = "2.1.0"
+version = "2.1.1"
 
 [lib]
 crate-type = ["cdylib"]
@@ -37,6 +37,9 @@ tracing = "0.1"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# Pulled in transitively via object_store -> rand. getrandom doesn't support
+# wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
+getrandom = { version = "0.4", features = ["wasm_js"] }
 multistore-cf-workers = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0", features = ["azure"] }
 reqwest = { version = "0.12", default-features = false }
 console_error_panic_hook = "0.1"
