@@ -11,8 +11,8 @@ use crate::auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
-use multistore::proxy::ProxyGateway;
-use multistore::route_handler::RequestInfo;
+use multistore::proxy::{GatewayResponse, ProxyGateway};
+use multistore::route_handler::{ProxyResult, RequestInfo};
 use multistore::router::Router;
 use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
@@ -83,7 +83,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             resource: String::new(),
             request_id: request_id.clone(),
         };
-        return Ok(add_cors(xml_response(405, &resp.to_xml())));
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(405, resp.to_xml())).into_web_sys(),
+        ));
     }
 
     // ── Path rewriting ─────────────────────────────────────────────
@@ -389,18 +391,6 @@ fn empty_response(status: u16) -> web_sys::Response {
     init.set_status(status);
     web_sys::Response::new_with_opt_str_and_init(None, &init)
         .unwrap_or_else(|_| web_sys::Response::new().unwrap())
-}
-
-/// Build an `application/xml` response from a body string (e.g. an S3-style error).
-fn xml_response(status: u16, body: &str) -> web_sys::Response {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    let resp = web_sys::Response::new_with_opt_str_and_init(Some(body), &init)
-        .unwrap_or_else(|_| empty_response(status));
-    if let Err(e) = resp.headers().set("content-type", "application/xml") {
-        tracing::warn!("failed to set content-type on xml response: {:?}", e);
-    }
-    resp
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
