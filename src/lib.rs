@@ -10,6 +10,7 @@ mod sts;
 use crate::auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
+use multistore::api::response::ErrorResponse;
 use multistore::proxy::ProxyGateway;
 use multistore::route_handler::RequestInfo;
 use multistore::router::Router;
@@ -67,6 +68,24 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         return Ok(add_cors(empty_response(204)));
     }
 
+    // Special endpoints (OIDC discovery, STS token exchange) manage their own
+    // methods and bypass the S3 object/bucket path mapping below.
+    let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
+
+    // ── Short-circuit: write methods ────────────────────────────────
+    // The proxy is read-only for object/bucket paths, so writes get an
+    // S3-style 405 rather than falling through to bucket resolution (which
+    // would misleadingly 404). Special endpoints are exempt.
+    if !is_special_path && is_write_method(&parts.method) {
+        let resp = ErrorResponse {
+            code: "MethodNotAllowed".to_string(),
+            message: "Method Not Allowed".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(xml_response(405, &resp.to_xml())));
+    }
+
     // ── Path rewriting ─────────────────────────────────────────────
     // Source Cooperative path mapping: `/{account}/{product}/{key}`
     // → internal bucket `account:product`, display name shows just `account`.
@@ -75,7 +94,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let rewrite = if parts.path.starts_with("/.well-known/") || parts.path == "/.sts" {
+    let rewrite = if is_special_path {
         multistore_path_mapping::RewriteResult {
             path: parts.path.clone(),
             query: parts.query.clone(),
@@ -205,6 +224,13 @@ fn init_tracing(env: &Env) -> tracing::Level {
         .unwrap_or(tracing::Level::WARN);
     tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
     max_level
+}
+
+fn is_write_method(method: &http::Method) -> bool {
+    matches!(
+        *method,
+        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
+    )
 }
 
 fn extract_request_id(headers: &http::HeaderMap) -> String {
@@ -363,6 +389,18 @@ fn empty_response(status: u16) -> web_sys::Response {
     init.set_status(status);
     web_sys::Response::new_with_opt_str_and_init(None, &init)
         .unwrap_or_else(|_| web_sys::Response::new().unwrap())
+}
+
+/// Build an `application/xml` response from a body string (e.g. an S3-style error).
+fn xml_response(status: u16, body: &str) -> web_sys::Response {
+    let init = web_sys::ResponseInit::new();
+    init.set_status(status);
+    let resp = web_sys::Response::new_with_opt_str_and_init(Some(body), &init)
+        .unwrap_or_else(|_| empty_response(status));
+    if let Err(e) = resp.headers().set("content-type", "application/xml") {
+        tracing::warn!("failed to set content-type on xml response: {:?}", e);
+    }
+    resp
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

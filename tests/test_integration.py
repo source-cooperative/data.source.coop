@@ -24,7 +24,7 @@ def test_index():
 
 def test_write_rejected():
     resp = requests.put(f"{PROXY_URL}/test/test/file.txt")
-    assert resp.status_code == 404
+    assert resp.status_code == 405
 
 
 def test_options_cors():
