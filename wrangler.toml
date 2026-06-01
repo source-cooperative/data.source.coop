@@ -17,6 +17,7 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
 [vars]
 LOG_LEVEL = "WARN"
+AUTH_ISSUER = "https://auth.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://source.coop"
@@ -61,6 +62,7 @@ routes = [
 
 [env.staging.vars]
 LOG_LEVEL = "DEBUG"
+AUTH_ISSUER = "https://auth.staging.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://staging.source.coop"
