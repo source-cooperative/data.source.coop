@@ -167,14 +167,19 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
 
     let status = resp.status_code();
     span.record("api_status", status);
-    if status == 404 {
-        return Err(ProxyError::BucketNotFound("not found".into()));
-    }
-    if status != 200 {
-        return Err(ProxyError::Internal(format!(
-            "API returned {} for {}",
-            status, api_url
-        )));
+    match status {
+        200 => {}
+        404 => return Err(ProxyError::BucketNotFound("not found".into())),
+        // Upstream rejected our credentials (or the resource requires auth we
+        // don't have). Surface this as an S3 permissions error rather than a
+        // server fault.
+        401 | 403 => return Err(ProxyError::AccessDenied),
+        _ => {
+            return Err(ProxyError::Internal(format!(
+                "API returned {} for {}",
+                status, api_url
+            )))
+        }
     }
 
     let text = resp
