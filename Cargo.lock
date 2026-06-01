@@ -909,7 +909,8 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfdf7fb1fa70d7a75a57e322825fa61da83bfaef5a6e705ad871b8bad46db55b"
 dependencies = [
  "async-trait",
  "base64",
@@ -935,7 +936,8 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941b094b16c87594cdda4952e52c1a70bc19ca8a89985fc8d63a82b9b7feb6a9"
 dependencies = [
  "async-trait",
  "bytes",
@@ -959,7 +961,8 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "249fb5386150184f591170ddfb0916ae9fe1861c3523d8ae84b638cad22f5e76"
 dependencies = [
  "async-trait",
  "base64",
@@ -977,7 +980,8 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa1f27fa70820affb7056520372cbf337fa7739056bf6f0e63b4b5870aeb5a8e"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -987,7 +991,8 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore.git?tag=v0.4.0#0e38dca4bc62816a888cc132bc0b05093b8d1c91"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d147130ee410a7f429ab4d8fa1be0f391be43682d3582bf0393e184d705a722a"
 dependencies = [
  "aes-gcm",
  "async-trait",

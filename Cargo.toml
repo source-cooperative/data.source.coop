@@ -20,10 +20,10 @@ path = "tests/pagination.rs"
 
 [dependencies]
 # Multistore
-multistore = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0", features = ["azure"] }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0" }
+multistore = { version = "0.4.0", features = ["azure"] }
+multistore-oidc-provider = { version = "0.4.0" }
+multistore-path-mapping = { version = "0.4.0" }
+multistore-sts = { version = "0.4.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -40,7 +40,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore.git", tag = "v0.4.0", features = ["azure"] }
+multistore-cf-workers = { version = "0.4.0", features = ["azure"] }
 reqwest = { version = "0.12", default-features = false }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
