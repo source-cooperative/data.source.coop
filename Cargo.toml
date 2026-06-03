@@ -42,6 +42,11 @@ tracing = "0.1"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 multistore-cf-workers = { version = "0.4.0", features = ["azure"] }
 reqwest = { version = "0.12", default-features = false }
+# Federation spike (`/_test`, src/federation_test.rs) — SigV4 signing. Remove with the spike.
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+percent-encoding = "2"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2"

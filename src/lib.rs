@@ -2,6 +2,7 @@ mod analytics;
 mod auth;
 mod cache;
 mod config;
+mod federation_test;
 mod handlers;
 mod pagination;
 mod registry;
@@ -66,6 +67,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
         return Ok(add_cors(empty_response(204)));
+    }
+
+    // ── Short-circuit: TEMPORARY federation spike (remove before merge) ──
+    if parts.path == "/_test" {
+        return Ok(add_cors(federation_test::handle(config).await));
     }
 
     // Special endpoints (OIDC discovery, STS token exchange) manage their own
