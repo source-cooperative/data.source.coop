@@ -35,7 +35,7 @@ use sha2::{Digest, Sha256};
 // ── Hardcoded spike configuration — EDIT THESE ──────────────────────────────
 
 /// IAM role to assume. Its trust policy must allow the proxy's OIDC issuer.
-const TEST_ROLE_ARN: &str = "arn:aws:iam::000000000000:role/source-coop-federation-spike";
+const TEST_ROLE_ARN: &str = "arn:aws:iam::470592060578:role/test-data-source-coop-oidc";
 /// Bucket to list with the assumed-role credentials.
 const TEST_BUCKET: &str = "alukach-demo-bucket";
 /// Region of the bucket / the STS endpoint to call.
