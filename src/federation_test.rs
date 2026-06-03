@@ -37,9 +37,9 @@ use sha2::{Digest, Sha256};
 /// IAM role to assume. Its trust policy must allow the proxy's OIDC issuer.
 const TEST_ROLE_ARN: &str = "arn:aws:iam::000000000000:role/source-coop-federation-spike";
 /// Bucket to list with the assumed-role credentials.
-const TEST_BUCKET: &str = "some-test-bucket";
+const TEST_BUCKET: &str = "alukach-demo-bucket";
 /// Region of the bucket / the STS endpoint to call.
-const TEST_REGION: &str = "us-east-1";
+const TEST_REGION: &str = "us-west-2";
 /// Audience claim in the minted token. Must match the role's trust-policy `aud`.
 const TEST_AUDIENCE: &str = "source-coop-data-proxy";
 /// Subject claim. Optionally matched by a `sub` condition in the trust policy.
