@@ -182,10 +182,14 @@ async fn resolve_product(
         _ => {}
     }
 
-    // TODO: For authenticated users, provide real backend credentials so that
-    // write operations can be forwarded to the storage backend. Currently all
-    // requests use anonymous/unsigned access, so writes will fail at the backend.
-    backend_options.insert("skip_signature".to_string(), "true".to_string());
+    // Backend authentication: unsigned (public) by default, or federate the
+    // proxy's OIDC identity into the connection's role. Connections omit
+    // `authentication` until a role is configured, so this stays unsigned today.
+    apply_backend_auth(
+        &connection.details.authentication,
+        &connection.data_connection_id,
+        &mut backend_options,
+    );
 
     // 5. Build prefix: connection.base_prefix + mirror.prefix
     let base_prefix = connection.details.base_prefix.as_deref().unwrap_or("");
@@ -214,6 +218,40 @@ async fn resolve_product(
     );
 
     Ok(config)
+}
+
+/// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
+///
+/// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy
+///   issues an unsigned request to a public bucket.
+/// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN and
+///   a per-connection subject (`scv1:conn:{id}`) to multistore's OIDC backend-auth
+///   middleware, which mints the assertion, exchanges it at AWS STS, and injects
+///   the temporary credentials — clearing `skip_signature` so the request is
+///   signed.
+///
+/// NOTE: the federated path only takes effect once the `MaybeOidcAuth` middleware
+/// is wired into dispatch (next step). Until then the Source API sends no
+/// `authentication`, so every connection takes the `Unsigned` branch and behavior
+/// is unchanged.
+fn apply_backend_auth(
+    auth: &BackendAuth,
+    connection_id: &str,
+    options: &mut HashMap<String, String>,
+) {
+    match auth {
+        BackendAuth::Unsigned => {
+            options.insert("skip_signature".to_string(), "true".to_string());
+        }
+        BackendAuth::S3WebIdentityRole { role_arn } => {
+            options.insert("auth_type".to_string(), "oidc".to_string());
+            options.insert("oidc_role_arn".to_string(), role_arn.clone());
+            options.insert(
+                "oidc_subject".to_string(),
+                format!("scv1:conn:{connection_id}"),
+            );
+        }
+    }
 }
 
 // ── API response types ─────────────────────────────────────────────
@@ -278,6 +316,35 @@ pub struct DataConnectionDetails {
     pub base_prefix: Option<String>,
     pub account_name: Option<String>,
     pub container_name: Option<String>,
+    /// How the proxy authenticates to this connection's backend. Absent in the
+    /// API response → [`BackendAuth::Unsigned`] (public bucket), preserving the
+    /// pre-federation behavior for every connection that hasn't opted in.
+    #[serde(default)]
+    pub authentication: BackendAuth,
+}
+
+/// Per-connection backend authentication, as reported by the Source API.
+///
+/// Internally tagged on `type`; defaults to [`Unsigned`](BackendAuth::Unsigned)
+/// when the field is omitted, so existing connections keep issuing unsigned
+/// requests until a role is configured for them.
+///
+/// The federated variant intentionally carries only `role_arn` for now; the
+/// rest of the role contract (audience, session duration, subject scope) will be
+/// added here as the backend-auth middleware that consumes them is wired in.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BackendAuth {
+    /// Public bucket — issue unsigned requests, no backend credentials.
+    #[default]
+    Unsigned,
+    /// Federate the proxy's OIDC identity into a customer-owned AWS role via
+    /// `AssumeRoleWithWebIdentity`, signing backend requests with the resulting
+    /// temporary credentials. (S3 only for now.)
+    S3WebIdentityRole {
+        /// ARN of the IAM role the proxy assumes for this connection.
+        role_arn: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
