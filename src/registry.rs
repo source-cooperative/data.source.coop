@@ -186,8 +186,13 @@ async fn resolve_product(
     }
 
     // Backend authentication: unsigned (public) by default, or federate the
-    // proxy's OIDC identity into the connection's role. Connections omit
-    // `authentication` until a role is configured, so this stays unsigned today.
+    // proxy's OIDC identity into the connection's role.
+    //
+    // The confused-deputy guard is upstream: the subject-scoped Source API
+    // fetches above (get_or_fetch_product / get_or_fetch_data_connections, keyed
+    // on the caller's principal) only return products/connections this caller is
+    // authorized for — so reaching here means the caller is already cleared for
+    // this connection's backend. Federation does not re-authorize.
     span.record("auth_type", connection.authentication.kind());
     apply_backend_auth(
         &connection.authentication,
