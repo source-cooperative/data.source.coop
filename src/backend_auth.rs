@@ -49,6 +49,18 @@ pub enum BackendAuth {
     Unsupported,
 }
 
+impl BackendAuth {
+    /// Short, stable label for logs/spans (no secrets — the role ARN is not
+    /// included).
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            BackendAuth::Unsigned => "unsigned",
+            BackendAuth::S3WebIdentityRole { .. } => "s3_web_identity_role",
+            BackendAuth::Unsupported => "unsupported",
+        }
+    }
+}
+
 /// Lenient `deserialize_with` for a connection's `authentication` field.
 ///
 /// A *present* value that doesn't parse as a known [`BackendAuth`] — unknown

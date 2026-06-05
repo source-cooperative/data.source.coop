@@ -104,6 +104,7 @@ async fn resolve_product(
         account = %account,
         product = %product,
         backend_type = tracing::field::Empty,
+        auth_type = tracing::field::Empty,
     );
     let _guard = span.enter();
 
@@ -187,6 +188,7 @@ async fn resolve_product(
     // Backend authentication: unsigned (public) by default, or federate the
     // proxy's OIDC identity into the connection's role. Connections omit
     // `authentication` until a role is configured, so this stays unsigned today.
+    span.record("auth_type", connection.authentication.kind());
     apply_backend_auth(
         &connection.authentication,
         &connection.data_connection_id,
