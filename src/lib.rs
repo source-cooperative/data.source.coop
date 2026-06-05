@@ -75,6 +75,11 @@ impl HttpExchange for FetchHttpExchange {
             .send()
             .await
             .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+        // Intentionally NOT checking the HTTP status / calling
+        // `error_for_status()`: AWS STS returns its `<ErrorResponse>` XML in the
+        // body on 4xx/5xx, and multistore's `parse_response` reads the error
+        // (code + message) out of that body. Discarding it on a non-2xx would
+        // lose the diagnostic and the precise ProxyError mapping.
         resp.text()
             .await
             .map_err(|e| OidcProviderError::HttpError(e.to_string()))
