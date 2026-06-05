@@ -7,6 +7,8 @@ use multistore::types::{BucketConfig, ResolvedIdentity, S3Operation};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::backend_auth::{apply_backend_auth, BackendAuth};
+
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
 #[derive(Clone)]
@@ -220,60 +222,6 @@ async fn resolve_product(
     Ok(config)
 }
 
-/// `aud` claim for AWS `AssumeRoleWithWebIdentity` assertions. This is AWS's
-/// web-identity convention — the value the customer registers their IAM OIDC
-/// provider with and conditions the role trust policy on — so it is constant
-/// across connections rather than per-connection config.
-pub(crate) const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
-
-/// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
-///
-/// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy
-///   issues an unsigned request to a public bucket.
-/// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN and
-///   a per-connection subject (`scv1:conn:{id}`) to multistore's OIDC backend-auth
-///   middleware, which mints the assertion (the fixed AWS audience comes from the
-///   provider), exchanges it at AWS STS, and injects the temporary credentials —
-///   clearing `skip_signature` so the request is signed.
-/// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it serves
-///   unsigned (a private backend then rejects the request).
-///
-/// NOTE: the federated path only takes effect once the `MaybeOidcAuth` middleware
-/// is wired into dispatch (next step); multistore currently also takes the
-/// audience at provider construction. Until both land the federated branches are
-/// inert, but the option set is what the middleware will consume.
-fn apply_backend_auth(
-    auth: &BackendAuth,
-    connection_id: &str,
-    options: &mut HashMap<String, String>,
-) {
-    match auth {
-        BackendAuth::Unsigned => {
-            options.insert("skip_signature".to_string(), "true".to_string());
-        }
-        BackendAuth::S3WebIdentityRole { role_arn } => {
-            options.insert("auth_type".to_string(), "oidc".to_string());
-            options.insert("oidc_role_arn".to_string(), role_arn.clone());
-            options.insert(
-                "oidc_subject".to_string(),
-                format!("scv1:conn:{connection_id}"),
-            );
-        }
-        // Unknown/unsupported auth type — e.g. the app-side `gcp_workload_identity`
-        // / `azure_workload_identity` variants, which have no proxy/multistore
-        // support yet. Don't sign with a scheme we can't fulfill: serve unsigned so
-        // public buckets still work; a private backend rejects the unsigned request,
-        // surfacing the misconfiguration instead of silently mis-signing.
-        BackendAuth::Unsupported => {
-            tracing::warn!(
-                connection_id,
-                "unsupported backend authentication type; serving unsigned"
-            );
-            options.insert("skip_signature".to_string(), "true".to_string());
-        }
-    }
-}
-
 // ── API response types ─────────────────────────────────────────────
 
 /// Product visibility, mirroring `ProductVisibility` in the source.coop data
@@ -342,40 +290,6 @@ pub struct DataConnectionDetails {
     pub base_prefix: Option<String>,
     pub account_name: Option<String>,
     pub container_name: Option<String>,
-}
-
-/// Per-connection backend authentication, as reported by the Source API
-/// (a sibling of `details` on the connection).
-///
-/// Internally tagged on `type`; defaults to [`Unsigned`](BackendAuth::Unsigned)
-/// when the field is omitted, so existing connections keep issuing unsigned
-/// requests until a role is configured for them. Unknown `type`s (e.g. the
-/// app-side GCP/Azure workload-identity variants) deserialize to
-/// [`Unsupported`](BackendAuth::Unsupported) instead of failing the request.
-///
-/// The AWS variant carries only `role_arn`; the audience is a fixed constant
-/// ([`AWS_STS_AUDIENCE`]) set on the OIDC backend-auth provider, and session
-/// duration / subject scope may be added later.
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum BackendAuth {
-    /// Public bucket — issue unsigned requests, no backend credentials.
-    #[default]
-    Unsigned,
-    /// Federate the proxy's OIDC identity into a customer-owned AWS role via
-    /// `AssumeRoleWithWebIdentity`, signing backend requests with the resulting
-    /// temporary credentials. (S3 only for now.)
-    S3WebIdentityRole {
-        /// ARN of the IAM role the proxy assumes for this connection.
-        role_arn: String,
-    },
-    /// An authentication type this proxy build does not implement — e.g. the
-    /// Source API's `gcp_workload_identity` / `azure_workload_identity` variants,
-    /// scaffolded app-side but without proxy/multistore support yet. Captured via
-    /// `#[serde(other)]` so an unknown `type` deserializes gracefully; treated as
-    /// unsupported (served unsigned, with a warning).
-    #[serde(other)]
-    Unsupported,
 }
 
 #[derive(Debug, Clone, Deserialize)]

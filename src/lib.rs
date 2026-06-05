@@ -1,5 +1,6 @@
 mod analytics;
 mod auth;
+mod backend_auth;
 mod cache;
 mod config;
 mod handlers;
@@ -218,7 +219,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
                 client: http_client(),
             },
             config.oidc.issuer.clone(),
-            registry::AWS_STS_AUDIENCE.to_string(),
+            crate::backend_auth::AWS_STS_AUDIENCE.to_string(),
         ))));
 
     let gateway = ProxyGateway::new(

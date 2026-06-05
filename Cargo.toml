@@ -18,6 +18,10 @@ path = "tests/routing.rs"
 name = "pagination"
 path = "tests/pagination.rs"
 
+[[test]]
+name = "backend_auth"
+path = "tests/backend_auth.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.4.0", features = ["azure"] }
