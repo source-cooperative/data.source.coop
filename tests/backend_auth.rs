@@ -30,6 +30,54 @@ fn deserializes_web_identity_role() {
     );
 }
 
+// ── lenient field deserialization (one bad entry must not poison the list) ──
+
+#[derive(serde::Deserialize)]
+struct Wrapper {
+    #[serde(default, deserialize_with = "backend_auth::deserialize_lenient")]
+    auth: BackendAuth,
+}
+
+#[test]
+fn lenient_absent_is_unsigned() {
+    let w: Wrapper = serde_json::from_str("{}").unwrap();
+    assert_eq!(w.auth, BackendAuth::Unsigned);
+}
+
+#[test]
+fn lenient_null_is_unsigned() {
+    let w: Wrapper = serde_json::from_str(r#"{"auth":null}"#).unwrap();
+    assert_eq!(w.auth, BackendAuth::Unsigned);
+}
+
+#[test]
+fn lenient_valid_role_parses() {
+    let w: Wrapper = serde_json::from_str(
+        r#"{"auth":{"type":"s3_web_identity_role","role_arn":"arn:aws:iam::1:role/r"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        w.auth,
+        BackendAuth::S3WebIdentityRole {
+            role_arn: "arn:aws:iam::1:role/r".into()
+        }
+    );
+}
+
+#[test]
+fn lenient_malformed_becomes_unsupported_not_error() {
+    // Missing role_arn, a wrong-typed value, and an unknown type all degrade to
+    // Unsupported instead of erroring — so they can't fail the whole list parse.
+    for bad in [
+        r#"{"auth":{"type":"s3_web_identity_role"}}"#,
+        r#"{"auth":"garbage"}"#,
+        r#"{"auth":{"type":"gcp_workload_identity","workload_identity_provider":"x"}}"#,
+    ] {
+        let w: Wrapper = serde_json::from_str(bad).unwrap();
+        assert_eq!(w.auth, BackendAuth::Unsupported, "input: {bad}");
+    }
+}
+
 #[test]
 fn unknown_type_deserializes_to_unsupported() {
     // The app-side GCP/Azure variants this proxy build doesn't implement must not

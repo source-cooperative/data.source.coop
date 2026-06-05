@@ -48,6 +48,25 @@ pub enum BackendAuth {
     Unsupported,
 }
 
+/// Lenient `deserialize_with` for a connection's `authentication` field.
+///
+/// A *present* value that doesn't parse as a known [`BackendAuth`] — unknown
+/// `type`, missing `role_arn`, wrong shape — becomes [`Unsupported`], and `null`
+/// becomes [`Unsigned`]. This keeps a single malformed `authentication` from
+/// failing deserialization of the *entire* data-connection list, which the proxy
+/// parses in one `serde_json::from_str`. An *absent* field is handled by
+/// `#[serde(default)]` and never reaches this function.
+pub(crate) fn deserialize_lenient<'de, D>(deserializer: D) -> Result<BackendAuth, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Ok(BackendAuth::Unsigned);
+    }
+    Ok(serde_json::from_value(value).unwrap_or(BackendAuth::Unsupported))
+}
+
 /// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
 ///
 /// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy

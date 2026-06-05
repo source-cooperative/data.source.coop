@@ -275,10 +275,11 @@ pub struct DataConnection {
     pub data_connection_id: String,
     pub details: DataConnectionDetails,
     /// How the proxy authenticates to this connection's backend. A sibling of
-    /// `details`, matching the Source API's `DataConnection` shape. Absent in the
-    /// API response → [`BackendAuth::Unsigned`] (public bucket), preserving the
-    /// pre-federation behavior for every connection that hasn't opted in.
-    #[serde(default)]
+    /// `details`, matching the Source API's `DataConnection` shape. Absent →
+    /// [`BackendAuth::Unsigned`] (public bucket); a present-but-malformed value
+    /// becomes `Unsupported` rather than failing the whole list (see
+    /// [`deserialize_lenient`](crate::backend_auth::deserialize_lenient)).
+    #[serde(default, deserialize_with = "crate::backend_auth::deserialize_lenient")]
     pub authentication: BackendAuth,
 }
 
