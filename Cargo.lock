@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore?rev=2924c27bfeaa83507d73a6bcf8170646ab89c87a#2924c27bfeaa83507d73a6bcf8170646ab89c87a"
+source = "git+https://github.com/developmentseed/multistore?rev=81b24ec1afad4c947a972b8c7f834806d7c0205e#81b24ec1afad4c947a972b8c7f834806d7c0205e"
 dependencies = [
  "async-trait",
  "base64",
@@ -935,7 +935,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore?rev=2924c27bfeaa83507d73a6bcf8170646ab89c87a#2924c27bfeaa83507d73a6bcf8170646ab89c87a"
+source = "git+https://github.com/developmentseed/multistore?rev=81b24ec1afad4c947a972b8c7f834806d7c0205e#81b24ec1afad4c947a972b8c7f834806d7c0205e"
 dependencies = [
  "async-trait",
  "bytes",
@@ -959,7 +959,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore?rev=2924c27bfeaa83507d73a6bcf8170646ab89c87a#2924c27bfeaa83507d73a6bcf8170646ab89c87a"
+source = "git+https://github.com/developmentseed/multistore?rev=81b24ec1afad4c947a972b8c7f834806d7c0205e#81b24ec1afad4c947a972b8c7f834806d7c0205e"
 dependencies = [
  "async-trait",
  "base64",
@@ -978,7 +978,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore?rev=2924c27bfeaa83507d73a6bcf8170646ab89c87a#2924c27bfeaa83507d73a6bcf8170646ab89c87a"
+source = "git+https://github.com/developmentseed/multistore?rev=81b24ec1afad4c947a972b8c7f834806d7c0205e#81b24ec1afad4c947a972b8c7f834806d7c0205e"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -988,7 +988,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.4.0"
-source = "git+https://github.com/developmentseed/multistore?rev=2924c27bfeaa83507d73a6bcf8170646ab89c87a#2924c27bfeaa83507d73a6bcf8170646ab89c87a"
+source = "git+https://github.com/developmentseed/multistore?rev=81b24ec1afad4c947a972b8c7f834806d7c0205e#81b24ec1afad4c947a972b8c7f834806d7c0205e"
 dependencies = [
  "aes-gcm",
  "async-trait",

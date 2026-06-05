@@ -81,6 +81,13 @@ impl HttpExchange for FetchHttpExchange {
     }
 }
 
+/// Isolate-shared OIDC credential provider for backend federation. The gateway
+/// (and its middleware) are rebuilt per request, but the provider — and its
+/// credential cache — must persist so the proxy doesn't re-mint a JWT and re-run
+/// `AssumeRoleWithWebIdentity` on every request to the same role. Initialized
+/// from the first request's signing config, which is constant for the isolate.
+static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = OnceLock::new();
+
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
@@ -212,15 +219,21 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // assertion, exchange it at AWS STS (AssumeRoleWithWebIdentity) over fetch,
     // and inject the temporary credentials so the backend request is signed.
     // A no-op for connections without auth_type=oidc (i.e. unsigned/public).
-    let backend_auth =
-        MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(OidcCredentialProvider::new(
-            config.oidc.signer.clone(),
-            FetchHttpExchange {
-                client: http_client(),
-            },
-            config.oidc.issuer.clone(),
-            crate::backend_auth::AWS_STS_AUDIENCE.to_string(),
-        ))));
+    // Reuse the isolate-shared provider so its credential cache stays warm across
+    // requests; `clone()` is cheap and shares that cache.
+    let provider = OIDC_PROVIDER
+        .get_or_init(|| {
+            OidcCredentialProvider::new(
+                config.oidc.signer.clone(),
+                FetchHttpExchange {
+                    client: http_client(),
+                },
+                config.oidc.issuer.clone(),
+                crate::backend_auth::AWS_STS_AUDIENCE.to_string(),
+            )
+        })
+        .clone();
+    let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
