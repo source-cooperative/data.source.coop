@@ -60,3 +60,15 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
+
+# Track multistore while the consolidated backend-auth work (oidc-provider owning
+# the credential exchange + `BackendCredentials` in core) lands ahead of a
+# crates.io release. Pinned to an exact `rev` (not `branch = "main"`) so builds
+# are reproducible and `cargo update` can't silently float to a newer commit.
+# Drop this patch and bump the versions above once multistore ships.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", rev = "2924c27bfeaa83507d73a6bcf8170646ab89c87a" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", rev = "2924c27bfeaa83507d73a6bcf8170646ab89c87a" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", rev = "2924c27bfeaa83507d73a6bcf8170646ab89c87a" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", rev = "2924c27bfeaa83507d73a6bcf8170646ab89c87a" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", rev = "2924c27bfeaa83507d73a6bcf8170646ab89c87a" }
