@@ -191,7 +191,7 @@ async fn resolve_product(
         &connection.authentication,
         &connection.data_connection_id,
         &mut backend_options,
-    );
+    )?;
 
     // 5. Build prefix: connection.base_prefix + mirror.prefix
     let base_prefix = connection.details.base_prefix.as_deref().unwrap_or("");

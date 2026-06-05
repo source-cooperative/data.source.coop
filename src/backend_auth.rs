@@ -5,6 +5,7 @@
 //! native targets despite the crate's `[lib] test = false`. See
 //! `tests/backend_auth.rs`.
 
+use multistore::error::ProxyError;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -76,13 +77,14 @@ where
 ///   middleware (wired in `lib.rs`), which mints the assertion (with the fixed AWS
 ///   audience set on the provider), exchanges it at AWS STS, and injects the
 ///   temporary credentials — clearing `skip_signature` so the request is signed.
-/// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it serves
-///   unsigned (a private backend then rejects the request).
+/// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it **fails
+///   closed** with [`ProxyError::BackendAuthError`] rather than silently serving
+///   unsigned.
 pub(crate) fn apply_backend_auth(
     auth: &BackendAuth,
     connection_id: &str,
     options: &mut HashMap<String, String>,
-) {
+) -> Result<(), ProxyError> {
     match auth {
         BackendAuth::Unsigned => {
             options.insert("skip_signature".to_string(), "true".to_string());
@@ -95,12 +97,15 @@ pub(crate) fn apply_backend_auth(
                 format!("scv1:conn:{connection_id}"),
             );
         }
+        // Fail closed: a scheme we can't fulfill (the app-side GCP/Azure
+        // workload-identity variants, or a malformed `authentication`) must not
+        // fall back to unsigned — that could expose an anonymously-readable
+        // backend. Deny so the misconfiguration surfaces explicitly.
         BackendAuth::Unsupported => {
-            tracing::warn!(
-                connection_id,
-                "unsupported backend authentication type; serving unsigned"
-            );
-            options.insert("skip_signature".to_string(), "true".to_string());
+            return Err(ProxyError::BackendAuthError(format!(
+                "connection {connection_id}: unsupported backend authentication type"
+            )));
         }
     }
+    Ok(())
 }

@@ -94,7 +94,7 @@ fn unknown_type_deserializes_to_unsupported() {
 #[test]
 fn unsigned_sets_skip_signature() {
     let mut o = HashMap::new();
-    apply_backend_auth(&BackendAuth::Unsigned, "conn-1", &mut o);
+    apply_backend_auth(&BackendAuth::Unsigned, "conn-1", &mut o).unwrap();
     assert_eq!(o.get("skip_signature").map(String::as_str), Some("true"));
     assert!(!o.contains_key("auth_type"));
 }
@@ -108,7 +108,8 @@ fn web_identity_role_sets_oidc_options_and_keeps_signing() {
         },
         "conn-1",
         &mut o,
-    );
+    )
+    .unwrap();
     assert_eq!(o.get("auth_type").map(String::as_str), Some("oidc"));
     assert_eq!(
         o.get("oidc_role_arn").map(String::as_str),
@@ -123,8 +124,10 @@ fn web_identity_role_sets_oidc_options_and_keeps_signing() {
 }
 
 #[test]
-fn unsupported_serves_unsigned() {
+fn unsupported_fails_closed() {
     let mut o = HashMap::new();
-    apply_backend_auth(&BackendAuth::Unsupported, "conn-1", &mut o);
-    assert_eq!(o.get("skip_signature").map(String::as_str), Some("true"));
+    let result = apply_backend_auth(&BackendAuth::Unsupported, "conn-1", &mut o);
+    assert!(result.is_err());
+    // Must not have set unsigned (or any) options as a side effect.
+    assert!(o.is_empty());
 }
