@@ -224,17 +224,17 @@ async fn resolve_product(
 /// web-identity convention — the value the customer registers their IAM OIDC
 /// provider with and conditions the role trust policy on — so it is constant
 /// across connections rather than per-connection config.
-const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
+pub(crate) const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
 
 /// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
 ///
 /// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy
 ///   issues an unsigned request to a public bucket.
-/// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN, a
-///   per-connection subject (`scv1:conn:{id}`), and the fixed AWS audience to
-///   multistore's OIDC backend-auth middleware, which mints the assertion,
-///   exchanges it at AWS STS, and injects the temporary credentials — clearing
-///   `skip_signature` so the request is signed.
+/// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN and
+///   a per-connection subject (`scv1:conn:{id}`) to multistore's OIDC backend-auth
+///   middleware, which mints the assertion (the fixed AWS audience comes from the
+///   provider), exchanges it at AWS STS, and injects the temporary credentials —
+///   clearing `skip_signature` so the request is signed.
 /// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it serves
 ///   unsigned (a private backend then rejects the request).
 ///
@@ -258,10 +258,6 @@ fn apply_backend_auth(
                 "oidc_subject".to_string(),
                 format!("scv1:conn:{connection_id}"),
             );
-            // The audience is the fixed AWS web-identity value for every
-            // connection (recorded per bucket so each cloud can carry its own
-            // once multi-cloud federation lands).
-            options.insert("oidc_audience".to_string(), AWS_STS_AUDIENCE.to_string());
         }
         // Unknown/unsupported auth type — e.g. the app-side `gcp_workload_identity`
         // / `azure_workload_identity` variants, which have no proxy/multistore
@@ -358,8 +354,8 @@ pub struct DataConnectionDetails {
 /// [`Unsupported`](BackendAuth::Unsupported) instead of failing the request.
 ///
 /// The AWS variant carries only `role_arn`; the audience is a fixed constant
-/// ([`AWS_STS_AUDIENCE`]) applied in [`apply_backend_auth`], and session duration
-/// / subject scope may be added later.
+/// ([`AWS_STS_AUDIENCE`]) set on the OIDC backend-auth provider, and session
+/// duration / subject scope may be added later.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendAuth {

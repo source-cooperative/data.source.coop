@@ -18,7 +18,9 @@ use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
     WorkerSubscriber,
 };
+use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
 use multistore_oidc_provider::route_handler::OidcRouterExt;
+use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
@@ -49,6 +51,33 @@ fn jwks_cache() -> JwksCache {
     JWKS_CACHE
         .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
         .clone()
+}
+
+/// [`HttpExchange`] for outbound STS calls, backed by the shared reqwest client
+/// (reqwest wraps `web_sys::fetch` on wasm). This is what lets the OIDC
+/// backend-auth middleware POST `AssumeRoleWithWebIdentity` to AWS STS.
+#[derive(Clone)]
+struct FetchHttpExchange {
+    client: reqwest::Client,
+}
+
+impl HttpExchange for FetchHttpExchange {
+    async fn post_form(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> std::result::Result<String, OidcProviderError> {
+        let resp = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+        resp.text()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
+    }
 }
 
 #[event(fetch)]
@@ -177,12 +206,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         AccountListHandler::new(registry.clone(), &mapping),
     );
 
+    // ── Backend federation middleware ─────────────────────────────
+    // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
+    // assertion, exchange it at AWS STS (AssumeRoleWithWebIdentity) over fetch,
+    // and inject the temporary credentials so the backend request is signed.
+    // A no-op for connections without auth_type=oidc (i.e. unsigned/public).
+    let backend_auth =
+        MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(OidcCredentialProvider::new(
+            config.oidc.signer.clone(),
+            FetchHttpExchange {
+                client: http_client(),
+            },
+            config.oidc.issuer.clone(),
+            registry::AWS_STS_AUDIENCE.to_string(),
+        ))));
+
     let gateway = ProxyGateway::new(
         WorkerBackend,
         MappedRegistry::new(registry, mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
+    .with_middleware(backend_auth)
     .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG)
     .with_credential_resolver(config.session_token_key.clone());
