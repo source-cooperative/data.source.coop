@@ -233,13 +233,17 @@ async fn resolve_product_inner(
 
 // ── API response types ─────────────────────────────────────────────
 
+/// Product visibility, mirroring `ProductVisibility` in the source.coop data
+/// model. Replaced the legacy `data_mode` field in source.coop#284. Any missing
+/// or unrecognized value deserializes to `Unknown`, which is treated as
+/// non-public so we fail closed.
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum DataMode {
+pub enum Visibility {
+    Public,
+    Unlisted,
+    Restricted,
     #[default]
-    Open,
-    Subscription,
-    Private,
     #[serde(other)]
     Unknown,
 }
@@ -250,13 +254,13 @@ pub struct SourceProduct {
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
-    pub data_mode: DataMode,
+    pub visibility: Visibility,
     pub metadata: SourceProductMetadata,
 }
 
 impl SourceProduct {
     pub fn is_public(&self) -> bool {
-        !self.disabled && self.data_mode == DataMode::Open
+        !self.disabled && self.visibility == Visibility::Public
     }
 }
 
@@ -272,15 +276,7 @@ pub struct SourceProductMirror {
     pub storage_type: String,
     pub connection_id: String,
     pub prefix: String,
-    pub config: SourceProductMirrorConfig,
     pub is_primary: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-pub struct SourceProductMirrorConfig {
-    pub region: Option<String>,
-    pub bucket: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
