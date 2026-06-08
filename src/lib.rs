@@ -1,5 +1,6 @@
 mod analytics;
 mod cache;
+mod cache_control;
 mod handlers;
 mod pagination;
 mod registry;
@@ -136,6 +137,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     let response = add_cors(response);
+    let response = add_no_transform(response);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -339,6 +341,22 @@ fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     ] {
         if let Err(e) = h.set(name, value) {
             tracing::warn!("failed to set CORS header {}: {:?}", name, e);
+        }
+    }
+    resp
+}
+
+// ── Cache-Control ────────────────────────────────────────────────────
+
+/// Ensure every response carries a `Cache-Control: no-transform` directive so
+/// Cloudflare does not apply transformations that drop the `Content-Length`
+/// header on HTTP/3 HEAD requests. Existing directives are preserved.
+fn add_no_transform(resp: web_sys::Response) -> web_sys::Response {
+    let h = resp.headers();
+    let existing = h.get("cache-control").ok().flatten().unwrap_or_default();
+    if let Some(value) = cache_control::ensure_no_transform(&existing) {
+        if let Err(e) = h.set("cache-control", &value) {
+            tracing::warn!("failed to set cache-control no-transform: {:?}", e);
         }
     }
     resp
