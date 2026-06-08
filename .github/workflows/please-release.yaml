@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - main
+      # Maintenance branches for hotfixes off an older release (e.g. 2.1.x)
+      - "*.x"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,4 +25,7 @@ jobs:
       - uses: googleapis/release-please-action@078b9b8dda7799db29972b379561ff8e19b08e82 # v4
         with:
           release-type: rust
+          # Release from whichever branch triggered the run (main or a *.x
+          # maintenance branch), so hotfixes are cut off their own line.
+          target-branch: ${{ github.ref_name }}
           token: ${{ steps.app-token.outputs.token }}
