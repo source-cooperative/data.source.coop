@@ -191,15 +191,19 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let (account, product, key) = extract_path_segments(&parts.path);
 
     // ── Analytics ───────────────────────────────────────────────
-    log_analytics(
-        &env,
-        &parts.headers,
-        &response,
-        &parts.method,
-        account,
-        product,
-        key,
-    );
+    // Special endpoints (`/.well-known/*`, `/.sts`) aren't product requests;
+    // logging them would pollute the dataset with account = ".well-known".
+    if !parts.path.starts_with("/.") {
+        log_analytics(
+            &env,
+            &parts.headers,
+            &response,
+            &parts.method,
+            account,
+            product,
+            key,
+        );
+    }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
