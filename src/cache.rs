@@ -89,6 +89,12 @@ pub async fn get_or_fetch_product_list(
 /// responses for different users (or anonymous vs authenticated) are
 /// cached separately.
 fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
+    // Appending `?subject=` assumes the URL has no query string of its own —
+    // a `?` already present would silently produce a malformed key.
+    debug_assert!(
+        !api_url.contains('?'),
+        "cache_key_with_subject requires a query-free api_url, got {api_url}"
+    );
     match subject {
         // Hex-encode the subject so the cache key is always a well-formed URL.
         // Principal names can contain spaces, `&`, `#`, or non-ASCII, any of
