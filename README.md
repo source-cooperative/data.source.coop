@@ -118,12 +118,18 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 ### Secrets
 
-Set via `wrangler secret put`:
+**GitHub environment secrets are the source of truth.** The deploy workflow
+(`.github/workflows/deploy.yml`) re-uploads them via `wrangler secret bulk` on
+every deploy, so a value set directly with `wrangler secret put` is silently
+overwritten by the next deploy. Set them per GitHub environment (`preview`,
+`staging`, `production`) with `gh secret set <NAME> --env <environment>` or in
+the repository settings UI.
 
-| Secret                       | Description                                        |
-| ---------------------------- | -------------------------------------------------- |
-| `OIDC_PROVIDER_KEY`          | PEM-encoded PKCS#8 RSA private key for JWT signing |
-| `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation)       |
+| Secret                       | Description                                              |
+| ---------------------------- | -------------------------------------------------------- |
+| `OIDC_PROVIDER_KEY`          | PEM-encoded PKCS#8 RSA private key for JWT signing       |
+| `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation)             |
+| `SESSION_TOKEN_KEY`          | Base64-encoded 32-byte AES key sealing STS credentials   |
 
 ### Authentication Priority
 
@@ -142,12 +148,11 @@ These endpoints are only active when `OIDC_PROVIDER_KEY` is configured.
 
 ### Setup
 
-Generate an RSA key pair and deploy it:
+Generate an RSA key pair, store it as a GitHub environment secret, and deploy:
 
 ```sh
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out oidc-key.pem
-wrangler secret put OIDC_PROVIDER_KEY < oidc-key.pem
-wrangler deploy
+gh secret set OIDC_PROVIDER_KEY --env production < oidc-key.pem
 ```
 
 Verify the endpoints:
@@ -161,7 +166,11 @@ curl https://data.source.coop/.well-known/jwks.json
 
 The proxy supports zero-downtime key rotation by serving both active and previous public keys in the JWKS endpoint. Only the active key signs new tokens.
 
-**Rotation procedure:**
+Because CI re-uploads secrets from GitHub on every deploy, rotation happens
+through GitHub environment secrets and `wrangler.toml`, not `wrangler secret put`
+(which the next deploy would silently revert).
+
+**Rotation procedure** (repeat per environment — `preview`, `staging`, `production`):
 
 1. Generate a new RSA key with a new key ID:
 
@@ -169,30 +178,42 @@ The proxy supports zero-downtime key rotation by serving both active and previou
    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out new-key.pem
    ```
 
-2. Move the current key to the previous slot and deploy the new key:
+2. Move the current key to the previous slot and stage the new key:
 
    ```sh
-   # Copy current key to previous slot
-   wrangler secret put OIDC_PROVIDER_KEY_PREVIOUS  # paste current key PEM
+   # Copy the CURRENT key PEM into the previous slot
+   gh secret set OIDC_PROVIDER_KEY_PREVIOUS --env production < current-key.pem
+   gh secret set OIDC_PROVIDER_KEY --env production < new-key.pem
    ```
 
-   Update `OIDC_PROVIDER_KID_PREVIOUS` in `wrangler.toml` to the current `OIDC_PROVIDER_KID` value, then set the new key ID and deploy:
-
-   ```sh
-   wrangler secret put OIDC_PROVIDER_KEY < new-key.pem
-   # Update OIDC_PROVIDER_KID in wrangler.toml to the new key ID
-   wrangler deploy
-   ```
+   In `wrangler.toml`, set `OIDC_PROVIDER_KID_PREVIOUS` to the current
+   `OIDC_PROVIDER_KID` value and set `OIDC_PROVIDER_KID` to the new key ID.
+   Merge and let CI deploy.
 
 3. The JWKS endpoint now serves both keys. Wait for relying parties to refresh their JWKS cache.
 
 4. Remove the previous key:
 
    ```sh
-   # Remove OIDC_PROVIDER_KID_PREVIOUS from wrangler.toml
+   gh secret delete OIDC_PROVIDER_KEY_PREVIOUS --env production
+   # The worker-side copy isn't removed by CI, so delete it once manually:
    wrangler secret delete OIDC_PROVIDER_KEY_PREVIOUS
-   wrangler deploy
    ```
+
+   Remove `OIDC_PROVIDER_KID_PREVIOUS` from `wrangler.toml`, merge, and let CI deploy.
+
+### Rotating `SESSION_TOKEN_KEY`
+
+`SESSION_TOKEN_KEY` seals the temporary credentials issued by `/.sts`. There is
+no dual-key window: rotating it immediately invalidates every outstanding sealed
+credential (e.g. the frontend's `sc_proxy_creds` cookies), and affected clients
+must redo the token exchange. To rotate:
+
+```sh
+openssl rand -base64 32 | gh secret set SESSION_TOKEN_KEY --env production
+```
+
+The next deploy picks it up.
 
 ## Design Documents
 
