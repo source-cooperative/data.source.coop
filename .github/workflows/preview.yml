@@ -31,6 +31,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       OIDC_PROVIDER_KEY: ${{ secrets.OIDC_PROVIDER_KEY }}
       SESSION_TOKEN_KEY: ${{ secrets.SESSION_TOKEN_KEY }}
+      OIDC_PROVIDER_KEY_PREVIOUS: ${{ secrets.OIDC_PROVIDER_KEY_PREVIOUS }}
 
   deploy-public-log-stream:
     name: Deploy Public Log Stream
