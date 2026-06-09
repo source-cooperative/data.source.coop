@@ -63,14 +63,18 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let request_id = extract_request_id(&parts.headers);
 
-    // ── Short-circuit: OPTIONS preflight ────────────────────────────
-    if parts.method == http::Method::OPTIONS {
-        return Ok(add_cors(empty_response(204)));
-    }
-
     // Special endpoints (OIDC discovery, STS token exchange) manage their own
     // methods and bypass the S3 object/bucket path mapping below.
     let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
+
+    // POST is only meaningful for STS token exchange; everything else is
+    // read-only, so don't advertise write methods globally via CORS.
+    let cors_allow_post = parts.path == "/.sts";
+
+    // ── Short-circuit: OPTIONS preflight ────────────────────────────
+    if parts.method == http::Method::OPTIONS {
+        return Ok(add_cors(empty_response(204), cors_allow_post));
+    }
 
     // ── Short-circuit: write methods ────────────────────────────────
     // The proxy is read-only for object/bucket paths, so writes get an
@@ -85,6 +89,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         };
         return Ok(add_cors(
             GatewayResponse::Response(ProxyResult::xml(405, resp.to_xml())).into_web_sys(),
+            cors_allow_post,
         ));
     }
 
@@ -209,7 +214,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(response);
+    let response = add_cors(response, cors_allow_post);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -396,14 +401,17 @@ fn empty_response(status: u16) -> web_sys::Response {
 
 // ── CORS ────────────────────────────────────────────────────────────
 
-fn add_cors(resp: web_sys::Response) -> web_sys::Response {
+fn add_cors(resp: web_sys::Response, allow_post: bool) -> web_sys::Response {
     let h = resp.headers();
+    // The proxy is read-only; POST is advertised only on the STS endpoint.
+    let methods = if allow_post {
+        "GET, HEAD, POST, OPTIONS"
+    } else {
+        "GET, HEAD, OPTIONS"
+    };
     for (name, value) in [
         ("access-control-allow-origin", "*"),
-        (
-            "access-control-allow-methods",
-            "GET, HEAD, PUT, POST, DELETE, OPTIONS",
-        ),
+        ("access-control-allow-methods", methods),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
     ] {
