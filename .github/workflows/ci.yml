@@ -104,7 +104,10 @@ jobs:
           } > .dev.vars
       - name: Start wrangler dev
         run: |
-          sed -i 's/^command = .*/command = "echo skip"/' wrangler.toml
+          # Skip the build command (the artifact is prebuilt). Scope the
+          # rewrite to the [build] section so other `command =` lines that
+          # may appear later in the config are untouched.
+          sed -i '/^\[build\]/,/^\[/ s/^command = .*/command = "echo skip"/' wrangler.toml
           wrangler dev --port 8787 &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
