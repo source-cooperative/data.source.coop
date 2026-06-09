@@ -58,8 +58,14 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let config = load_config(&env);
 
     // ── Parse request ──────────────────────────────────────────────
-    let (parts, js_body) = RequestParts::from_web_sys(&req)
+    let (mut parts, js_body) = RequestParts::from_web_sys(&req)
         .map_err(|e| worker::Error::RustError(format!("invalid request: {e}")))?;
+
+    // The router matches `/.sts` exactly; a trailing-slash variant would
+    // otherwise fall through to bucket mapping and 404 confusingly.
+    if parts.path == "/.sts/" {
+        parts.path.pop();
+    }
 
     let request_id = extract_request_id(&parts.headers);
 
