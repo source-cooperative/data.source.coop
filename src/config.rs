@@ -69,11 +69,26 @@ fn build_config(env: &Env) -> AppConfig {
         .map(|v| v.to_string())
         .expect("AUTH_ISSUER must be set");
 
+    let auth_audience = env
+        .var("AUTH_AUDIENCE")
+        .map(|v| v.to_string())
+        .ok()
+        .filter(|s| !s.is_empty());
+    if auth_audience.is_none() {
+        // Without an audience restriction, an ID token minted for ANY OAuth
+        // client registered with AUTH_ISSUER can be exchanged at /.sts.
+        tracing::warn!(
+            "AUTH_AUDIENCE not set: /.sts will accept ID tokens issued to any \
+             OAuth client of AUTH_ISSUER, not just the Source Cooperative web flow"
+        );
+    }
+
     AppConfig {
         api_base_url,
         oidc,
         session_token_key,
         auth_issuer,
+        auth_audience,
     }
 }
 
@@ -84,6 +99,9 @@ pub struct AppConfig {
     pub session_token_key: TokenKey,
     /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
     pub auth_issuer: String,
+    /// OAuth client ID that subject tokens presented to `/.sts` must be
+    /// issued to (the `aud` claim). `None` disables the audience check.
+    pub auth_audience: Option<String>,
 }
 
 pub struct OidcConfig {

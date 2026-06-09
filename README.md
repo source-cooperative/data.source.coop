@@ -106,13 +106,15 @@ Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allow
 
 Set in `wrangler.toml` or via the Cloudflare dashboard:
 
-| Variable                     | Default                    | Description                                               |
-| ---------------------------- | -------------------------- | --------------------------------------------------------- |
-| `SOURCE_API_URL`             | `https://source.coop`      | Source Cooperative API base URL                           |
-| `LOG_LEVEL`                  | `WARN`                     | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`) |
-| `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop` | Issuer URL for minted JWTs and OIDC discovery             |
-| `OIDC_PROVIDER_KID`          | `data-proxy-1`             | Key ID for the active signing key                         |
-| `OIDC_PROVIDER_KID_PREVIOUS` | —                          | Key ID for the previous key (during rotation)             |
+| Variable                     | Default                     | Description                                                                                                                        |
+| ---------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `SOURCE_API_URL`             | `https://source.coop`       | Source Cooperative API base URL                                                                                                    |
+| `LOG_LEVEL`                  | `WARN`                      | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                                                          |
+| `AUTH_ISSUER`                | `https://auth.source.coop`  | OIDC issuer trusted for `/.sts` token exchange                                                                                     |
+| `AUTH_AUDIENCE`              | —                           | OAuth client ID that `/.sts` subject tokens must be issued to (`aud` claim). Unset = tokens for any client of `AUTH_ISSUER` work |
+| `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
+| `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
+| `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
 
 ### Secrets
 

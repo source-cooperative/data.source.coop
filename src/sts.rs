@@ -19,13 +19,18 @@ pub struct StsCredentialRegistry {
 
 impl StsCredentialRegistry {
     /// Create a new registry whose `_default` role trusts the given auth issuer.
-    pub fn new(oidc_issuer: String) -> Self {
+    ///
+    /// `required_audience` restricts token exchange to subject tokens minted
+    /// for a specific OAuth client (the `aud` claim). Without it, an ID token
+    /// a user granted to any third-party client registered with the issuer
+    /// could be exchanged for that user's proxy credentials.
+    pub fn new(oidc_issuer: String, required_audience: Option<String>) -> Self {
         Self {
             default_role: RoleConfig {
                 role_id: "_default".to_string(),
                 name: "Default".to_string(),
                 trusted_oidc_issuers: vec![oidc_issuer],
-                required_audience: None,
+                required_audience,
                 subject_conditions: vec![],
                 allowed_scopes: vec![], // unlimited
                 max_session_duration_secs: 3600,

@@ -122,7 +122,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     );
 
     // ── Build STS components ─────────────────────────────────────
-    let sts_registry = StsCredentialRegistry::new(config.auth_issuer.clone());
+    let sts_registry =
+        StsCredentialRegistry::new(config.auth_issuer.clone(), config.auth_audience.clone());
     let jwks_cache = jwks_cache();
 
     let router = Router::new()
