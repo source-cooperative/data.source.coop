@@ -1742,6 +1742,7 @@ dependencies = [
  "multistore-oidc-provider",
  "multistore-path-mapping",
  "multistore-sts",
+ "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",

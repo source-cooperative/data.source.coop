@@ -5,6 +5,19 @@
 
 use crate::registry::{DataConnection, SourceProduct, SourceProductList};
 use multistore::error::ProxyError;
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+
+/// Percent-encode set for a single URL path segment: everything except the
+/// RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`). Ordinary
+/// account/product slugs pass through byte-identical, while a decoded `?`,
+/// `#`, `&`, `/`, or space — which the request path is decoded into before
+/// segmentation — is encoded so it cannot inject into the upstream API URL or
+/// forge a colliding cache key.
+const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 // ── Per-datatype TTLs ──────────────────────────────────────────────
 // Tune these to control how long each API response is cached at the edge.
@@ -29,7 +42,12 @@ pub async fn get_or_fetch_product(
     request_id: &str,
     subject: Option<&str>,
 ) -> Result<SourceProduct, ProxyError> {
-    let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
+    let api_url = format!(
+        "{}/api/v1/products/{}/{}",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+        utf8_percent_encode(product, PATH_SEGMENT),
+    );
     let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
         &cache_key,
@@ -70,7 +88,11 @@ pub async fn get_or_fetch_product_list(
     request_id: &str,
     subject: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
-    let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
+    let api_url = format!(
+        "{}/api/v1/products/{}",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+    );
     let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
         &cache_key,
@@ -89,12 +111,6 @@ pub async fn get_or_fetch_product_list(
 /// responses for different users (or anonymous vs authenticated) are
 /// cached separately.
 fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
-    // Appending `?subject=` assumes the URL has no query string of its own —
-    // a `?` already present would silently produce a malformed key.
-    debug_assert!(
-        !api_url.contains('?'),
-        "cache_key_with_subject requires a query-free api_url, got {api_url}"
-    );
     match subject {
         // Hex-encode the subject so the cache key is always a well-formed URL.
         // Principal names can contain spaces, `&`, `#`, or non-ASCII, any of
@@ -102,7 +118,12 @@ fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
         // Hex is injective and URL-safe, so each subject maps to a unique key.
         Some(subj) => {
             let encoded: String = subj.bytes().map(|b| format!("{:02x}", b)).collect();
-            format!("{}?subject={}", api_url, encoded)
+            // Pick the query separator defensively. Callers pass query-free
+            // URLs today (path segments are percent-encoded above), but a stray
+            // `?` must never silently merge into an existing query and forge a
+            // cache key that collides with another caller's.
+            let sep = if api_url.contains('?') { '&' } else { '?' };
+            format!("{api_url}{sep}subject={encoded}")
         }
         None => api_url.to_string(),
     }
