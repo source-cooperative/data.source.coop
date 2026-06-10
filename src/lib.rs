@@ -99,6 +99,24 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         ));
     }
 
+    // ── Short-circuit: STS disabled (fail closed) ───────────────────
+    // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
+    // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
+    // be exchanged for a user's credentials. When unset, refuse the endpoint
+    // with a 501 rather than serving it unrestricted.
+    if parts.path == "/.sts" && config.auth_audience.is_none() {
+        let resp = ErrorResponse {
+            code: "NotImplemented".to_string(),
+            message: "STS token exchange is not configured".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+            cors_allow_post,
+        ));
+    }
+
     // ── Path rewriting ─────────────────────────────────────────────
     // Source Cooperative path mapping: `/{account}/{product}/{key}`
     // → internal bucket `account:product`, display name shows just `account`.
@@ -132,29 +150,32 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         request_id.clone(),
     );
 
-    // ── Build STS components ─────────────────────────────────────
-    let sts_registry =
-        StsCredentialRegistry::new(config.auth_issuer.clone(), config.auth_audience.clone());
-    let jwks_cache = jwks_cache();
+    // ── Build router ─────────────────────────────────────────────
+    let mut router = Router::new().with_oidc_discovery(
+        config.oidc.issuer.clone(),
+        std::iter::once(config.oidc.signer.clone())
+            .chain(config.oidc.previous_signer.clone())
+            .collect(),
+    );
 
-    let router = Router::new()
-        .with_oidc_discovery(
-            config.oidc.issuer.clone(),
-            std::iter::once(config.oidc.signer.clone())
-                .chain(config.oidc.previous_signer.clone())
-                .collect(),
-        )
-        .with_sts(
+    // Mount STS token exchange only when an audience restriction is configured.
+    // The unset case is refused by the fail-closed 501 short-circuit above, so
+    // an unrestricted exchanger is never registered.
+    if let Some(audience) = &config.auth_audience {
+        let sts_registry =
+            StsCredentialRegistry::new(config.auth_issuer.clone(), Some(audience.clone()));
+        router = router.with_sts(
             "/.sts",
-            sts_registry.clone(),
-            jwks_cache,
+            sts_registry,
+            jwks_cache(),
             Some(config.session_token_key.clone()),
-        )
-        .route("/", IndexHandler)
-        .route(
-            "/{bucket}",
-            AccountListHandler::new(registry.clone(), &mapping),
         );
+    }
+
+    let router = router.route("/", IndexHandler).route(
+        "/{bucket}",
+        AccountListHandler::new(registry.clone(), &mapping),
+    );
 
     let gateway = ProxyGateway::new(
         WorkerBackend,

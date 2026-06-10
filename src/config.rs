@@ -75,12 +75,10 @@ fn build_config(env: &Env) -> AppConfig {
         .ok()
         .filter(|s| !s.is_empty());
     if auth_audience.is_none() {
-        // Without an audience restriction, an ID token minted for ANY OAuth
-        // client registered with AUTH_ISSUER can be exchanged at /.sts.
-        tracing::warn!(
-            "AUTH_AUDIENCE not set: /.sts will accept ID tokens issued to any \
-             OAuth client of AUTH_ISSUER, not just the Source Cooperative web flow"
-        );
+        // Fail closed: without an audience restriction, an ID token minted for
+        // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
+        // credentials, so /.sts is disabled entirely (returns 501) until set.
+        tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
 
     AppConfig {
