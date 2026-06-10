@@ -104,6 +104,12 @@ jobs:
           SESSION_TOKEN_KEY: ${{ secrets.SESSION_TOKEN_KEY }}
           OIDC_PROVIDER_KEY_PREVIOUS: ${{ secrets.OIDC_PROVIDER_KEY_PREVIOUS }}
         run: |
+          # Fail loudly if a required secret is missing/empty in this GitHub
+          # environment. Without this, jq emits an empty value, `secret bulk`
+          # succeeds, the job goes green — and every request to the worker
+          # panics in load_config (the worker cannot boot without these).
+          [ -n "$OIDC_PROVIDER_KEY" ] || { echo "::error::OIDC_PROVIDER_KEY is not set in the '${{ inputs.environment }}' environment"; exit 1; }
+          [ -n "$SESSION_TOKEN_KEY" ] || { echo "::error::SESSION_TOKEN_KEY is not set in the '${{ inputs.environment }}' environment"; exit 1; }
           WORKER_ARGS=""
           if [ -n "${{ inputs.wrangler_env }}" ]; then
             WORKER_ARGS="--env ${{ inputs.wrangler_env }}"
@@ -121,3 +127,24 @@ jobs:
           WORKER="${{ inputs.worker_name || 'source-data-proxy' }}"
           URL="https://${WORKER}.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev"
           echo "deploy_url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test
+        # Confirm the worker actually booted. A missing/malformed secret makes
+        # load_config panic on the first request (Cloudflare 1101 → HTTP 5xx),
+        # so this turns a silently-broken deploy into a red job.
+        run: |
+          URL="${{ steps.url.outputs.deploy_url }}"
+          echo "Smoke-testing $URL"
+          for path in "/" "/.well-known/jwks.json"; do
+            ok=""
+            for attempt in 1 2 3 4 5; do
+              if code=$(curl -fsS -o /dev/null -w '%{http_code}' "$URL$path"); then
+                echo "ok: $path -> $code"
+                ok=1
+                break
+              fi
+              echo "attempt $attempt: $path not ready, retrying in 3s…"
+              sleep 3
+            done
+            [ -n "$ok" ] || { echo "::error::smoke test failed for $URL$path"; exit 1; }
+          done
