@@ -1,3 +1,4 @@
+#[cfg(target_arch = "wasm32")]
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
 /// Metadata collected from the request and response for analytics logging.
@@ -7,28 +8,61 @@ pub struct RequestEvent<'a> {
     pub file_path: &'a str,
     pub method: &'a str,
     pub user_id: &'a str,
+    pub client_ip: &'a str,
     pub country: &'a str,
     pub content_type: &'a str,
     pub bytes_sent: f64,
     pub status_code: f64,
+    pub duration_ms: f64,
+}
+
+impl RequestEvent<'_> {
+    /// Sampling index: "{account_id}/{product_id}" (sampling boundary per product).
+    pub fn index(&self) -> String {
+        format!("{}/{}", self.account_id, self.product_id)
+    }
+
+    /// Blob columns in Analytics Engine schema order (blob1..blob8).
+    ///
+    ///   blob1: account_id
+    ///   blob2: product_id
+    ///   blob3: file_path (truncated to 256 bytes)
+    ///   blob4: method
+    ///   blob5: user_id (empty for anonymous requests)
+    ///   blob6: country
+    ///   blob7: content_type
+    ///   blob8: client_ip
+    pub fn blobs(&self) -> [&str; 8] {
+        [
+            self.account_id,
+            self.product_id,
+            // Truncate file_path to 256 bytes (Analytics Engine blob limit)
+            truncate_to_byte_limit(self.file_path, 256),
+            self.method,
+            self.user_id,
+            self.country,
+            self.content_type,
+            self.client_ip,
+        ]
+    }
+
+    /// Double columns in Analytics Engine schema order (double1..double3).
+    ///
+    ///   double1: bytes_sent
+    ///   double2: status_code
+    ///   double3: duration_ms
+    pub fn doubles(&self) -> [f64; 3] {
+        [self.bytes_sent, self.status_code, self.duration_ms]
+    }
 }
 
 /// Write a request event to the Analytics Engine dataset.
 ///
-/// Schema:
-///   index1:  "{account_id}/{product_id}" (sampling boundary per product)
-///   blob1:   account_id
-///   blob2:   product_id
-///   blob3:   file_path (truncated to 256 bytes)
-///   blob4:   method
-///   blob5:   user_id
-///   blob6:   country
-///   blob7:   content_type
-///   double1: bytes_sent
-///   double2: status_code
+/// See [`RequestEvent::blobs`] and [`RequestEvent::doubles`] for the schema.
 ///
 /// This function never returns an error — failures are logged and swallowed
 /// so that analytics never blocks a response.
+#[cfg(target_arch = "wasm32")]
 pub fn log_request(env: &Env, event: &RequestEvent) {
     let dataset = match env.analytics_engine("ANALYTICS") {
         Ok(ds) => ds,
@@ -38,25 +72,16 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
         }
     };
 
-    // Truncate file_path to 256 bytes (Analytics Engine blob limit)
-    let file_path = truncate_to_byte_limit(event.file_path, 256);
+    let index = event.index();
+    let mut builder = AnalyticsEngineDataPointBuilder::new().indexes([index.as_str()]);
+    for blob in event.blobs() {
+        builder = builder.add_blob(blob);
+    }
+    for double in event.doubles() {
+        builder = builder.add_double(double);
+    }
 
-    let index = format!("{}/{}", event.account_id, event.product_id);
-
-    let result = AnalyticsEngineDataPointBuilder::new()
-        .indexes([index.as_str()])
-        .add_blob(event.account_id) // blob1
-        .add_blob(event.product_id) // blob2
-        .add_blob(file_path) // blob3
-        .add_blob(event.method) // blob4
-        .add_blob(event.user_id) // blob5
-        .add_blob(event.country) // blob6
-        .add_blob(event.content_type) // blob7
-        .add_double(event.bytes_sent) // double1
-        .add_double(event.status_code) // double2
-        .write_to(&dataset);
-
-    if let Err(e) = result {
+    if let Err(e) = builder.write_to(&dataset) {
         tracing::warn!("failed to write analytics data point: {e:?}");
     }
 }

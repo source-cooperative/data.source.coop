@@ -104,17 +104,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         &headers,
         None,
     );
+    let start_ms = js_sys::Date::now();
     let result = gateway
         .handle_request(&req_info, js_body, collect_js_body)
         .await;
+    let duration_ms = js_sys::Date::now() - start_ms;
     let response = response_from_gateway(result);
-    tracing::info!(status = response.status(), "response");
+    tracing::info!(status = response.status(), duration_ms, "response");
 
     // ── Extract path segments (used by analytics + location broadcast) ──
     let (account, product, key) = extract_path_segments(&path);
 
     // ── Analytics ───────────────────────────────────────────────
-    log_analytics(&env, &headers, &response, &method, account, product, key);
+    log_analytics(
+        &env,
+        &headers,
+        &response,
+        &method,
+        account,
+        product,
+        key,
+        duration_ms,
+    );
 
     // ── Broadcast location to WebSocket viewers ──────────────────
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
@@ -194,6 +205,7 @@ fn is_write_method(method: &http::Method) -> bool {
 
 // ── Analytics ──────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn log_analytics(
     env: &Env,
     headers: &http::HeaderMap,
@@ -202,6 +214,7 @@ fn log_analytics(
     account: Option<&str>,
     product: Option<&str>,
     key: Option<&str>,
+    duration_ms: f64,
 ) {
     let content_type = response
         .headers()
@@ -225,10 +238,12 @@ fn log_analytics(
             file_path: key.unwrap_or(""),
             method: method.as_str(),
             user_id: header_str(headers, "x-source-user-id"),
+            client_ip: header_str(headers, "cf-connecting-ip"),
             country: header_str(headers, "cf-ipcountry"),
             content_type: &content_type,
             bytes_sent,
             status_code: response.status() as f64,
+            duration_ms,
         },
     );
 }
