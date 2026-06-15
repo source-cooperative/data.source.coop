@@ -111,7 +111,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `SOURCE_API_URL`             | `https://source.coop`       | Source Cooperative API base URL                                                                                                    |
 | `LOG_LEVEL`                  | `WARN`                      | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                                                          |
 | `AUTH_ISSUER`                | `https://auth.source.coop`  | OIDC issuer trusted for `/.sts` token exchange                                                                                     |
-| `AUTH_AUDIENCE`              | —                           | OAuth client ID that `/.sts` subject tokens must be issued to (`aud` claim). Unset = tokens for any client of `AUTH_ISSUER` work |
+| `AUTH_AUDIENCE`              | —                           | OAuth client ID that `/.sts` subject tokens must be issued to (`aud` claim). Unset = `/.sts` token exchange is disabled (returns 501) |
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
