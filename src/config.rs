@@ -40,7 +40,17 @@ fn build_config(env: &Env) -> AppConfig {
             .secret("OIDC_PROVIDER_KEY_PREVIOUS")
             .ok()
             .and_then(|prev_pem| {
-                let prev_kid = env.var("OIDC_PROVIDER_KID_PREVIOUS").ok()?.to_string();
+                let prev_kid = match env.var("OIDC_PROVIDER_KID_PREVIOUS") {
+                    Ok(k) => k.to_string(),
+                    Err(_) => {
+                        tracing::warn!(
+                            "OIDC_PROVIDER_KEY_PREVIOUS is set but OIDC_PROVIDER_KID_PREVIOUS \
+                             is missing -- previous key omitted from JWKS; set \
+                             OIDC_PROVIDER_KID_PREVIOUS to complete rotation"
+                        );
+                        return None;
+                    }
+                };
                 match JwtSigner::from_pem(&prev_pem.to_string(), prev_kid, 60) {
                     Ok(s) => Some(s),
                     Err(e) => {
