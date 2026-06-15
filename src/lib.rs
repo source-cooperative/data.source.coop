@@ -2,6 +2,7 @@ mod analytics;
 mod cache;
 mod handlers;
 mod pagination;
+mod redirect;
 mod registry;
 
 use analytics::{extract_path_segments, log_request, RequestEvent};
@@ -15,6 +16,7 @@ use multistore_cf_workers::{
     JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
 };
 use multistore_path_mapping::{MappedRegistry, PathMapping};
+use redirect::{build_redirect_path, extract_redirect_segments, permanent_redirect_xml};
 use registry::SourceCoopRegistry;
 use worker::{event, Context, Env, Result};
 
@@ -73,12 +75,40 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     };
     let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
 
-    // ── Build gateway with route handlers ──────────────────────────
+    // ── Build registry (shared by redirect check + gateway) ───────
     let registry = SourceCoopRegistry::new(
         config.api_base_url.clone(),
         config.api_secret.clone(),
         request_id.clone(),
     );
+
+    // ── Short-circuit: account rename redirect ──────────────────
+    // Only check product-level requests here. Account-only requests
+    // (e.g. /{account}?list-type=2) are handled by AccountListHandler
+    // to avoid a redundant API call.
+    {
+        let (account, product) = extract_redirect_segments(&path);
+        if let (Some(account), Some(product)) = (account, product) {
+            if let Ok(cache::ApiResponse::Redirect(info)) =
+                registry.get_product_or_redirect(account, product).await
+            {
+                tracing::info!(
+                    old_account = account,
+                    new_account = %info.redirect_to,
+                    "account redirect"
+                );
+                let location = build_redirect_path(&path, query.as_deref(), &info.redirect_to);
+                let xml = permanent_redirect_xml(&info.redirect_to, &request_id);
+                let resp = xml_response(301, &xml);
+                let _ = resp.headers().set("location", &location);
+
+                let (acct, prod, key) = extract_path_segments(&path);
+                log_analytics(&env, &headers, &resp, &method, acct, prod, key);
+
+                return Ok(add_cors(resp));
+            }
+        }
+    }
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
