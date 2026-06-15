@@ -108,7 +108,8 @@ pub struct AppConfig {
     /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
     pub auth_issuer: String,
     /// OAuth client ID that subject tokens presented to `/.sts` must be
-    /// issued to (the `aud` claim). `None` disables the audience check.
+    /// issued to (the `aud` claim). Required; `None` disables the `/.sts`
+    /// endpoint entirely (returns 501) rather than accepting any audience.
     pub auth_audience: Option<String>,
 }
 

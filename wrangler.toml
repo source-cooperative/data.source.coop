@@ -30,10 +30,10 @@ SOURCE_API_URL = "https://source.coop"
 # Optional vars for key rotation:
 #   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key
 # Recommended vars:
+# Required vars (to enable /.sts token exchange):
 #   AUTH_AUDIENCE - OAuth client_id that /.sts subject tokens must be issued to
-#                   (the `aud` claim). Unset = tokens for ANY client of
-#                   AUTH_ISSUER are accepted at /.sts.
-
+#                   (the `aud` claim). Unset = /.sts is disabled (returns 501);
+#                   set to your OAuth client_id to enable it.
 # TODO: Set different sampling rates for prod vs staging
 [observability]
 enabled = true
