@@ -201,7 +201,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     )
     .with_signing_path(&rewrite.signing_path)
     .with_signing_query(rewrite.signing_query.as_deref());
-  
+
     let start_ms = js_sys::Date::now();
     let response = gateway
         .handle_request(&request_info, js_body, collect_js_body)
@@ -218,15 +218,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // logging them would pollute the dataset with account = ".well-known".
     if !parts.path.starts_with("/.") {
         log_analytics(
-          &env,
-          &parts.headers,
-          &response,
-          &parts.method,
-          account,
-          product,
-          key,
-          duration_ms,
-      );
+            &env,
+            &parts.headers,
+            &response,
+            &parts.method,
+            account,
+            product,
+            key,
+            duration_ms,
+        );
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
