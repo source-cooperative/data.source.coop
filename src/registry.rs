@@ -12,15 +12,15 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct SourceCoopRegistry {
     api_base_url: String,
-    api_secret: Option<String>,
+    api_auth: crate::ApiAuth,
     pub(crate) request_id: String,
 }
 
 impl SourceCoopRegistry {
-    pub fn new(api_base_url: String, api_secret: Option<String>, request_id: String) -> Self {
+    pub fn new(api_base_url: String, api_auth: crate::ApiAuth, request_id: String) -> Self {
         Self {
             api_base_url,
-            api_secret,
+            api_auth,
             request_id,
         }
     }
@@ -35,8 +35,9 @@ impl SourceCoopRegistry {
         let product_list = crate::cache::get_or_fetch_product_list(
             &self.api_base_url,
             account,
-            self.api_secret.as_deref(),
+            &self.api_auth,
             &self.request_id,
+            None,
         )
         .await?;
         Ok(product_list
@@ -51,18 +52,24 @@ impl BucketRegistry for SourceCoopRegistry {
     async fn get_bucket(
         &self,
         name: &str,
-        _identity: &ResolvedIdentity,
+        identity: &ResolvedIdentity,
         _operation: &S3Operation,
     ) -> Result<ResolvedBucket, ProxyError> {
         let (account, product) = Self::parse_bucket_name(name)
             .ok_or_else(|| ProxyError::BucketNotFound(name.to_string()))?;
 
-        let config = resolve_product_send(
+        let subject = match identity {
+            ResolvedIdentity::Authenticated(auth) => Some(auth.principal_name.as_str()),
+            ResolvedIdentity::Anonymous => None,
+        };
+
+        let config = resolve_product(
             &self.api_base_url,
             account,
             product,
-            self.api_secret.as_deref(),
+            &self.api_auth,
             &self.request_id,
+            subject,
         )
         .await?;
 
@@ -81,45 +88,14 @@ impl BucketRegistry for SourceCoopRegistry {
     }
 }
 
-/// Resolve a product to a BucketConfig, bridging the !Send worker::Fetch
-/// into a Send future via spawn_local + oneshot channel.
-async fn resolve_product_send(
+/// Resolve a product to a `BucketConfig` by querying the Source Cooperative API.
+async fn resolve_product(
     api_base_url: &str,
     account: &str,
     product: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
-) -> Result<BucketConfig, ProxyError> {
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let api_base_url = api_base_url.to_string();
-    let account = account.to_string();
-    let product = product.to_string();
-    let api_secret = api_secret.map(|s| s.to_string());
-    let request_id = request_id.to_string();
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = resolve_product_inner(
-            &api_base_url,
-            &account,
-            &product,
-            api_secret.as_deref(),
-            &request_id,
-        )
-        .await;
-        let _ = tx.send(result);
-    });
-
-    rx.await
-        .unwrap_or_else(|_| Err(ProxyError::Internal("registry channel dropped".into())))
-}
-
-/// Inner product resolution logic (runs in spawn_local, !Send is OK).
-async fn resolve_product_inner(
-    api_base_url: &str,
-    account: &str,
-    product: &str,
-    api_secret: Option<&str>,
-    request_id: &str,
+    subject: Option<&str>,
 ) -> Result<BucketConfig, ProxyError> {
     let span = tracing::info_span!(
         "resolve_product",
@@ -130,9 +106,15 @@ async fn resolve_product_inner(
     let _guard = span.enter();
 
     // 1. Fetch product metadata
-    let source_product =
-        crate::cache::get_or_fetch_product(api_base_url, account, product, api_secret, request_id)
-            .await?;
+    let source_product = crate::cache::get_or_fetch_product(
+        api_base_url,
+        account,
+        product,
+        api_auth,
+        request_id,
+        subject,
+    )
+    .await?;
 
     // 2. Find primary mirror
     let primary_key = &source_product.metadata.primary_mirror;
@@ -147,7 +129,8 @@ async fn resolve_product_inner(
 
     // 3. Fetch data connections to resolve the actual bucket
     let connections =
-        crate::cache::get_or_fetch_data_connections(api_base_url, api_secret, request_id).await?;
+        crate::cache::get_or_fetch_data_connections(api_base_url, api_auth, request_id, subject)
+            .await?;
 
     let connection = connections
         .iter()
@@ -199,7 +182,9 @@ async fn resolve_product_inner(
         _ => {}
     }
 
-    // Anonymous access — skip signing
+    // TODO: For authenticated users, provide real backend credentials so that
+    // write operations can be forwarded to the storage backend. Currently all
+    // requests use anonymous/unsigned access, so writes will fail at the backend.
     backend_options.insert("skip_signature".to_string(), "true".to_string());
 
     // 5. Build prefix: connection.base_prefix + mirror.prefix

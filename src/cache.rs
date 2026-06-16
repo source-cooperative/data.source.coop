@@ -5,6 +5,19 @@
 
 use crate::registry::{DataConnection, SourceProduct, SourceProductList};
 use multistore::error::ProxyError;
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+
+/// Percent-encode set for a single URL path segment: everything except the
+/// RFC 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`). Ordinary
+/// account/product slugs pass through byte-identical, while a decoded `?`,
+/// `#`, `&`, `/`, or space — which the request path is decoded into before
+/// segmentation — is encoded so it cannot inject into the upstream API URL or
+/// forge a colliding cache key.
+const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 // ── Per-datatype TTLs ──────────────────────────────────────────────
 // Tune these to control how long each API response is cached at the edge.
@@ -25,16 +38,24 @@ pub async fn get_or_fetch_product(
     api_base_url: &str,
     account: &str,
     product: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<SourceProduct, ProxyError> {
-    let api_url = format!("{}/api/v1/products/{}/{}", api_base_url, account, product);
+    let api_url = format!(
+        "{}/api/v1/products/{}/{}",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+        utf8_percent_encode(product, PATH_SEGMENT),
+    );
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         PRODUCT_CACHE_SECS,
-        api_secret,
+        api_auth,
         request_id,
+        subject,
     )
     .await
 }
@@ -42,16 +63,19 @@ pub async fn get_or_fetch_product(
 /// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
 pub async fn get_or_fetch_data_connections(
     api_base_url: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<Vec<DataConnection>, ProxyError> {
     let api_url = format!("{}/api/v1/data-connections", api_base_url);
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         DATA_CONNECTIONS_CACHE_SECS,
-        api_secret,
+        api_auth,
         request_id,
+        subject,
     )
     .await
 }
@@ -60,21 +84,50 @@ pub async fn get_or_fetch_data_connections(
 pub async fn get_or_fetch_product_list(
     api_base_url: &str,
     account: &str,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
-    let api_url = format!("{}/api/v1/products/{}", api_base_url, account);
+    let api_url = format!(
+        "{}/api/v1/products/{}",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+    );
+    let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
-        &api_url,
+        &cache_key,
         &api_url,
         PRODUCT_LIST_CACHE_SECS,
-        api_secret,
+        api_auth,
         request_id,
+        subject,
     )
     .await
 }
 
-// ── Internal helper ────────────────────────────────────────────────
+// ── Internal helpers ──────────────────────────────────────────────
+
+/// Build a cache key that includes the caller's identity so that
+/// responses for different users (or anonymous vs authenticated) are
+/// cached separately.
+fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
+    match subject {
+        // Hex-encode the subject so the cache key is always a well-formed URL.
+        // Principal names can contain spaces, `&`, `#`, or non-ASCII, any of
+        // which would otherwise corrupt the key or collide distinct subjects.
+        // Hex is injective and URL-safe, so each subject maps to a unique key.
+        Some(subj) => {
+            let encoded: String = subj.bytes().map(|b| format!("{:02x}", b)).collect();
+            // Pick the query separator defensively. Callers pass query-free
+            // URLs today (path segments are percent-encoded above), but a stray
+            // `?` must never silently merge into an existing query and forge a
+            // cache key that collides with another caller's.
+            let sep = if api_url.contains('?') { '&' } else { '?' };
+            format!("{api_url}{sep}subject={encoded}")
+        }
+        None => api_url.to_string(),
+    }
+}
 
 /// Generic cache-or-fetch: check the Cache API, return cached JSON on hit,
 /// otherwise fetch from `api_url`, store in cache with the given TTL, and
@@ -83,8 +136,9 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     cache_key: &str,
     api_url: &str,
     ttl_secs: u32,
-    api_secret: Option<&str>,
+    api_auth: &crate::ApiAuth,
     request_id: &str,
+    subject: Option<&str>,
 ) -> Result<T, ProxyError> {
     let span = tracing::info_span!(
         "cached_fetch",
@@ -117,10 +171,14 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     init.set_method("GET");
     let req_headers = web_sys::Headers::new()
         .map_err(|e| ProxyError::Internal(format!("headers build failed: {:?}", e)))?;
-    if let Some(secret) = api_secret {
-        req_headers
-            .set("Authorization", secret)
-            .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+    // Only authenticate to the API when we have an identified caller.
+    // Anonymous proxy requests hit the API without credentials.
+    if let Some(subj) = subject {
+        if let Some(auth_value) = api_auth.authorization_header(subj) {
+            req_headers
+                .set("Authorization", &auth_value)
+                .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+        }
     }
     if !request_id.is_empty() {
         let _ = req_headers.set("x-request-id", request_id);
@@ -136,14 +194,19 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
 
     let status = resp.status_code();
     span.record("api_status", status);
-    if status == 404 {
-        return Err(ProxyError::BucketNotFound("not found".into()));
-    }
-    if status != 200 {
-        return Err(ProxyError::Internal(format!(
-            "API returned {} for {}",
-            status, api_url
-        )));
+    match status {
+        200 => {}
+        404 => return Err(ProxyError::BucketNotFound("not found".into())),
+        // Upstream rejected our credentials (or the resource requires auth we
+        // don't have). Surface this as an S3 permissions error rather than a
+        // server fault.
+        401 | 403 => return Err(ProxyError::AccessDenied),
+        _ => {
+            return Err(ProxyError::Internal(format!(
+                "API returned {} for {}",
+                status, api_url
+            )))
+        }
     }
 
     let text = resp
