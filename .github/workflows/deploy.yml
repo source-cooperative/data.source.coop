@@ -92,7 +92,10 @@ jobs:
           for var in ${{ inputs.var_overrides }}; do
             EXTRA_ARGS="$EXTRA_ARGS --var $var"
           done
-          npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS
+          # Capture the deploy output so the smoke test can target whatever URL
+          # wrangler actually published, rather than a hardcoded guess.
+          npx wrangler@3 deploy --config ${{ inputs.wrangler_config }} $EXTRA_ARGS \
+            2>&1 | tee deploy.out
 
       - name: Upload worker secrets
         # GitHub environment secrets are the source of truth — anything set
@@ -124,8 +127,25 @@ jobs:
       - name: Get deploy URL
         id: url
         run: |
-          WORKER="${{ inputs.worker_name || 'source-data-proxy' }}"
-          URL="https://${WORKER}.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev"
+          # Derive the URL from what wrangler actually published instead of
+          # hardcoding it. wrangler lists the deployed triggers after a
+          # "Deployed <worker> triggers" line, one per line:
+          #   custom routes -> "data.source.coop/* (zone name: ...)"
+          #   workers.dev   -> "https://<worker>.<subdomain>.workers.dev"
+          # Take the first trigger and normalize it to an https base URL. This
+          # works for every environment (preview on workers.dev, staging and
+          # production on custom-domain routes) with no per-env configuration.
+          TRIGGER="$(sed -n '/Deployed .* triggers/,/Current Version ID/p' deploy.out \
+            | grep -oE 'https://[^ ]+|[A-Za-z0-9.-]+\.[A-Za-z]+/\*' \
+            | head -n1)"
+          if [ -z "$TRIGGER" ]; then
+            echo "::error::could not determine deploy URL from wrangler output"
+            cat deploy.out
+            exit 1
+          fi
+          URL="${TRIGGER%/\*}"                       # strip a trailing route glob
+          case "$URL" in https://*) ;; *) URL="https://$URL" ;; esac
+          echo "Resolved deploy URL: $URL"
           echo "deploy_url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test
