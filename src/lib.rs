@@ -209,7 +209,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .into_web_sys();
     let duration_ms = js_sys::Date::now() - start_ms;
     tracing::info!(status = response.status(), duration_ms, "response");
-    )
 
     // ── Extract path segments (used by analytics + location broadcast) ──
     let (account, product, key) = extract_path_segments(&parts.path);
@@ -220,9 +219,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     if !parts.path.starts_with("/.") {
         log_analytics(
           &env,
-          &headers,
+          &parts.headers,
           &response,
-          &method,
+          &parts.method,
           account,
           product,
           key,
