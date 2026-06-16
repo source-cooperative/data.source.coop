@@ -1,25 +1,55 @@
 mod analytics;
+mod auth;
 mod cache;
+mod config;
 mod handlers;
 mod pagination;
 mod registry;
+mod sts;
 
+use crate::auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
-use multistore::proxy::ProxyGateway;
-use multistore::route_handler::RequestInfo;
+use multistore::proxy::{GatewayResponse, ProxyGateway};
+use multistore::route_handler::{ProxyResult, RequestInfo};
 use multistore::router::Router;
 use multistore_cf_workers::{
-    collect_js_body, error_response, headermap_from_js, response_from_gateway, xml_response,
-    JsBody, NoopCredentialRegistry, WorkerBackend, WorkerSubscriber,
+    collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
+    WorkerSubscriber,
 };
+use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_path_mapping::{MappedRegistry, PathMapping};
+use multistore_sts::jwks::JwksCache;
+use multistore_sts::route_handler::StsRouterExt;
 use registry::SourceCoopRegistry;
+use std::sync::OnceLock;
+use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
+
+use crate::config::load_config;
 
 /// Separator used to join account + product into a single internal bucket name.
 pub(crate) const BUCKET_SEPARATOR: &str = ":";
+
+/// Shared `reqwest::Client` reused across requests within an isolate.
+/// `reqwest::Client` is `Arc`-backed so cloning out of the cell is cheap.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> reqwest::Client {
+    HTTP_CLIENT.get_or_init(reqwest::Client::new).clone()
+}
+
+/// Shared `JwksCache`. Its `entries`/`failures` maps are `Arc<Mutex<_>>` so
+/// cloning the cache is cheap and shares state — the 15-minute TTL is
+/// finally effective across requests.
+static JWKS_CACHE: OnceLock<JwksCache> = OnceLock::new();
+
+fn jwks_cache() -> JwksCache {
+    JWKS_CACHE
+        .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
+        .clone()
+}
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
@@ -28,39 +58,63 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let config = load_config(&env);
 
     // ── Parse request ──────────────────────────────────────────────
-    let js_body = JsBody(req.body());
-    let method: http::Method = req.method().parse().unwrap_or(http::Method::GET);
-    let uri: http::Uri = req
-        .url()
-        .parse()
-        .unwrap_or_else(|_| http::Uri::from_static("/"));
-    let path = percent_encoding::percent_decode_str(uri.path())
-        .decode_utf8_lossy()
-        .to_string();
-    let query = uri.query().map(|q| q.to_string());
-    let mut headers = headermap_from_js(&req.headers());
+    let (mut parts, js_body) = RequestParts::from_web_sys(&req)
+        .map_err(|e| worker::Error::RustError(format!("invalid request: {e}")))?;
 
-    // Strip AWS auth headers — this proxy is anonymous-only.
-    headers.remove(http::header::AUTHORIZATION);
-    headers.remove("x-amz-security-token");
-    headers.remove("x-amz-content-sha256");
-
-    let request_id = extract_request_id(&headers);
-
-    // ── Short-circuit: OPTIONS preflight ────────────────────────────
-    if method == http::Method::OPTIONS {
-        return Ok(add_cors(error_response(204, "")));
+    // The router matches `/.sts` exactly; a trailing-slash variant would
+    // otherwise fall through to bucket mapping and 404 confusingly.
+    if parts.path == "/.sts/" {
+        parts.path.pop();
     }
 
-    // ── Short-circuit: write methods ───────────────────────────────
-    if is_write_method(&method) {
+    let request_id = extract_request_id(&parts.headers);
+
+    // Special endpoints (OIDC discovery, STS token exchange) manage their own
+    // methods and bypass the S3 object/bucket path mapping below.
+    let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
+
+    // POST is only meaningful for STS token exchange; everything else is
+    // read-only, so don't advertise write methods globally via CORS.
+    let cors_allow_post = parts.path == "/.sts";
+
+    // ── Short-circuit: OPTIONS preflight ────────────────────────────
+    if parts.method == http::Method::OPTIONS {
+        return Ok(add_cors(empty_response(204), cors_allow_post));
+    }
+
+    // ── Short-circuit: write methods ────────────────────────────────
+    // The proxy is read-only for object/bucket paths, so writes get an
+    // S3-style 405 rather than falling through to bucket resolution (which
+    // would misleadingly 404). Special endpoints are exempt.
+    if !is_special_path && is_write_method(&parts.method) {
         let resp = ErrorResponse {
             code: "MethodNotAllowed".to_string(),
             message: "Method Not Allowed".to_string(),
             resource: String::new(),
-            request_id: request_id.to_string(),
+            request_id: request_id.clone(),
         };
-        return Ok(add_cors(xml_response(405, &resp.to_xml())));
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(405, resp.to_xml())).into_web_sys(),
+            cors_allow_post,
+        ));
+    }
+
+    // ── Short-circuit: STS disabled (fail closed) ───────────────────
+    // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
+    // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
+    // be exchanged for a user's credentials. When unset, refuse the endpoint
+    // with a 501 rather than serving it unrestricted.
+    if parts.path == "/.sts" && config.auth_audience.is_none() {
+        let resp = ErrorResponse {
+            code: "NotImplemented".to_string(),
+            message: "STS token exchange is not configured".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+            cors_allow_post,
+        ));
     }
 
     // ── Path rewriting ─────────────────────────────────────────────
@@ -71,71 +125,127 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         bucket_separator: BUCKET_SEPARATOR.to_string(),
         display_bucket_segments: 1,
     };
-    let (rewritten_path, rewritten_query) = mapping.rewrite_request(&path, query.as_deref());
+    let rewrite = if is_special_path {
+        multistore_path_mapping::RewriteResult {
+            path: parts.path.clone(),
+            query: parts.query.clone(),
+            signing_path: parts.path.clone(),
+            signing_query: parts.query.clone(),
+        }
+    } else {
+        mapping.rewrite_request(&parts.path, parts.query.as_deref())
+    };
+
+    // ── Build API auth ─────────────────────────────────────────────
+    let api_auth = ApiAuth::new(
+        config.oidc.signer.clone(),
+        config.oidc.issuer.clone(),
+        config.api_base_url.clone(),
+    );
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
         config.api_base_url.clone(),
-        config.api_secret.clone(),
+        api_auth.clone(),
         request_id.clone(),
+    );
+
+    // ── Build router ─────────────────────────────────────────────
+    let mut router = Router::new().with_oidc_discovery(
+        config.oidc.issuer.clone(),
+        std::iter::once(config.oidc.signer.clone())
+            .chain(config.oidc.previous_signer.clone())
+            .collect(),
+    );
+
+    // Mount STS token exchange only when an audience restriction is configured.
+    // The unset case is refused by the fail-closed 501 short-circuit above, so
+    // an unrestricted exchanger is never registered.
+    if let Some(audience) = &config.auth_audience {
+        let sts_registry =
+            StsCredentialRegistry::new(config.auth_issuer.clone(), Some(audience.clone()));
+        router = router.with_sts(
+            "/.sts",
+            sts_registry,
+            jwks_cache(),
+            Some(config.session_token_key.clone()),
+        );
+    }
+
+    let router = router.route("/", IndexHandler).route(
+        "/{bucket}",
+        AccountListHandler::new(registry.clone(), &mapping),
     );
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        MappedRegistry::new(registry.clone(), mapping.clone()),
+        MappedRegistry::new(registry, mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
-    .with_router(
-        Router::new()
-            .route("/", IndexHandler)
-            .route("/{bucket}", AccountListHandler::new(registry, &mapping)),
-    )
-    .with_debug_errors(max_level >= tracing::Level::DEBUG);
+    .with_router(router)
+    .with_debug_errors(max_level >= tracing::Level::DEBUG)
+    .with_credential_resolver(config.session_token_key.clone());
 
     // ── Dispatch through gateway ──────────────────────────────────
-    let span = tracing::info_span!("request", %request_id, %method, %path);
+    let span =
+        tracing::info_span!("request", %request_id, method = %parts.method, path = %parts.path);
     let _guard = span.enter();
 
-    let req_info = RequestInfo::new(
-        &method,
-        &rewritten_path,
-        rewritten_query.as_deref(),
-        &headers,
+    let request_info = RequestInfo::new(
+        &parts.method,
+        &rewrite.path,
+        rewrite.query.as_deref(),
+        &parts.headers,
         None,
-    );
-    let result = gateway
-        .handle_request(&req_info, js_body, collect_js_body)
-        .await;
-    let response = response_from_gateway(result);
+    )
+    .with_signing_path(&rewrite.signing_path)
+    .with_signing_query(rewrite.signing_query.as_deref());
+
+    let response = gateway
+        .handle_request(&request_info, js_body, collect_js_body)
+        .await
+        .into_web_sys();
     tracing::info!(status = response.status(), "response");
 
     // ── Extract path segments (used by analytics + location broadcast) ──
-    let (account, product, key) = extract_path_segments(&path);
+    let (account, product, key) = extract_path_segments(&parts.path);
 
     // ── Analytics ───────────────────────────────────────────────
-    log_analytics(&env, &headers, &response, &method, account, product, key);
+    // Special endpoints (`/.well-known/*`, `/.sts`) aren't product requests;
+    // logging them would pollute the dataset with account = ".well-known".
+    if !parts.path.starts_with("/.") {
+        log_analytics(
+            &env,
+            &parts.headers,
+            &response,
+            &parts.method,
+            account,
+            product,
+            key,
+        );
+    }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
-    if let (&http::Method::GET, Some(acct), Some(prod)) = (&method, account, product) {
-        if response.status() < 400 {
+    if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
+        if response.status() < 400 && !parts.path.starts_with("/.") {
             maybe_broadcast_location(
                 &ctx,
                 &env,
                 LocationEvent {
                     cf: CfProperties::from_request(&req),
-                    country: header_str(&headers, "cf-ipcountry").to_string(),
+                    country: header_str(&parts.headers, "cf-ipcountry").to_string(),
                     account: acct.to_string(),
                     product: prod.to_string(),
                     key: key.unwrap_or("").to_string(),
                     api_base_url: config.api_base_url.clone(),
-                    api_secret: config.api_secret.clone(),
+                    api_auth: api_auth.clone(),
                 },
             );
         }
     }
 
-    let response = add_cors(response);
+    let response = add_cors(response, cors_allow_post);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -143,21 +253,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-struct AppConfig {
-    api_base_url: String,
-    api_secret: Option<String>,
-}
-
-fn load_config(env: &Env) -> AppConfig {
-    AppConfig {
-        api_base_url: env
-            .var("SOURCE_API_URL")
-            .map(|v| v.to_string())
-            .unwrap_or_else(|_| "https://source.coop".to_string()),
-        api_secret: env.secret("SOURCE_API_SECRET").map(|v| v.to_string()).ok(),
-    }
-}
 
 fn init_tracing(env: &Env) -> tracing::Level {
     let max_level = env
@@ -168,6 +263,13 @@ fn init_tracing(env: &Env) -> tracing::Level {
         .unwrap_or(tracing::Level::WARN);
     tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
     max_level
+}
+
+fn is_write_method(method: &http::Method) -> bool {
+    matches!(
+        *method,
+        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
+    )
 }
 
 fn extract_request_id(headers: &http::HeaderMap) -> String {
@@ -183,13 +285,6 @@ fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-}
-
-fn is_write_method(method: &http::Method) -> bool {
-    matches!(
-        *method,
-        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
-    )
 }
 
 // ── Analytics ──────────────────────────────────────────────────────
@@ -276,7 +371,7 @@ struct LocationEvent {
     product: String,
     key: String,
     api_base_url: String,
-    api_secret: Option<String>,
+    api_auth: ApiAuth,
 }
 
 /// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
@@ -298,8 +393,9 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             &event.api_base_url,
             &event.account,
             &event.product,
-            event.api_secret.as_deref(),
+            &event.api_auth,
             "",
+            None,
         )
         .await
         .map(|p| p.is_public())
@@ -327,13 +423,26 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
     });
 }
 
+fn empty_response(status: u16) -> web_sys::Response {
+    let init = web_sys::ResponseInit::new();
+    init.set_status(status);
+    web_sys::Response::new_with_opt_str_and_init(None, &init)
+        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
+}
+
 // ── CORS ────────────────────────────────────────────────────────────
 
-fn add_cors(resp: web_sys::Response) -> web_sys::Response {
+fn add_cors(resp: web_sys::Response, allow_post: bool) -> web_sys::Response {
     let h = resp.headers();
+    // The proxy is read-only; POST is advertised only on the STS endpoint.
+    let methods = if allow_post {
+        "GET, HEAD, POST, OPTIONS"
+    } else {
+        "GET, HEAD, OPTIONS"
+    };
     for (name, value) in [
         ("access-control-allow-origin", "*"),
-        ("access-control-allow-methods", "GET, HEAD, OPTIONS"),
+        ("access-control-allow-methods", methods),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
     ] {

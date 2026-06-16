@@ -4,7 +4,7 @@
 //! custom endpoints are checked before the S3 proxy pipeline runs.
 
 use multistore::api::list::parse_list_query_params;
-use multistore::api::response::{ListBucketResult, ListCommonPrefix};
+use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefix};
 use multistore::route_handler::{ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture};
 
 use crate::pagination::paginate_prefixes;
@@ -110,13 +110,11 @@ impl RouteHandler for AccountListHandler {
                 }
                 Err(e) => {
                     tracing::error!("AccountList({}) error: {:?}", account, e);
-                    let err = multistore::api::response::ErrorResponse {
-                        code: "BadGateway".to_string(),
-                        message: "Failed to list products from upstream API".to_string(),
-                        resource: String::new(),
-                        request_id: self.registry.request_id.clone(),
-                    };
-                    Some(ProxyResult::xml(502, err.to_xml()))
+                    // Let the ProxyError variant drive the S3 error code and
+                    // HTTP status (e.g. AccessDenied → 403, Internal → 500).
+                    let body =
+                        ErrorResponse::from_proxy_error(&e, "", &self.registry.request_id, false);
+                    Some(ProxyResult::xml(e.status_code(), body.to_xml()))
                 }
             }
         })

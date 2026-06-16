@@ -65,6 +65,12 @@ jobs:
         run: cargo install worker-build@0.7.5
       - name: Build WASM worker
         run: worker-build --release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-build
+          path: build/
+          retention-days: 1
 
   integration:
     name: Integration Tests
@@ -72,28 +78,39 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
         with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+          name: worker-build
+          path: build/
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@v5
       - name: Install wrangler
         run: npm install -g wrangler@3
-      - name: Install worker-build
-        run: cargo install worker-build@0.7.5
+      - name: Generate test secrets
+        # Required by `load_config` in src/config.rs. The actual key material
+        # doesn't matter for these read-only public-data tests — we just need
+        # values that parse, since `JwtSigner::from_pem` and `TokenKey::from_base64`
+        # validate at startup.
+        run: |
+          openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
+          {
+            printf 'OIDC_PROVIDER_KEY="'
+            cat /tmp/oidc.pem
+            printf '"\n'
+            echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
+            echo "AUTH_ISSUER=https://auth.test.example.com"
+          } > .dev.vars
       - name: Start wrangler dev
         run: |
+          # Skip the build command (the artifact is prebuilt). Scope the
+          # rewrite to the [build] section so other `command =` lines that
+          # may appear later in the config are untouched.
+          sed -i '/^\[build\]/,/^\[/ s/^command = .*/command = "echo skip"/' wrangler.toml
           wrangler dev --port 8787 &
-          for i in $(seq 1 60); do
-            if curl -s --max-time 2 http://localhost:8787/ > /dev/null 2>&1; then
-              echo "Server ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
+          curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
+          echo "Server ready"
       - name: Run integration tests
         run: uvx --with requests pytest tests/ -v
 

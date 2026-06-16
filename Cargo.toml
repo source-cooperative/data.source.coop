@@ -6,7 +6,7 @@ version = "2.1.2"
 
 [lib]
 crate-type = ["cdylib"]
-# The cdylib depends on wasm-only crates (worker, wasm-bindgen-futures, web-sys)
+# The cdylib depends on wasm-only crates (worker, wasm-bindgen, web-sys)
 # that don't compile on native targets, so we disable `cargo test` for the lib.
 test = false
 
@@ -20,8 +20,10 @@ path = "tests/pagination.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.3.1", features = ["azure"] }
-multistore-path-mapping = "0.3.1"
+multistore = { version = "0.4.0", features = ["azure"] }
+multistore-oidc-provider = { version = "0.4.0" }
+multistore-path-mapping = { version = "0.4.0" }
+multistore-sts = { version = "0.4.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -36,9 +38,15 @@ tracing = "0.1"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-multistore-cf-workers = { version = "0.3.1", features = ["azure"] }
-futures = "0.3"
-wasm-bindgen-futures = "0.4"
+# Pulled in transitively via object_store -> rand. getrandom doesn't support
+# wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+multistore-cf-workers = { version = "0.4.0", features = ["azure"] }
+# On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
+# target arch (not a cargo feature), so the default TLS/backend features are
+# unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
+# of which are feature-gated -- so no explicit feature list is required.
+reqwest = { version = "0.12", default-features = false }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
