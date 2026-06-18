@@ -86,7 +86,12 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // The proxy is read-only for object/bucket paths, so writes get an
     // S3-style 405 rather than falling through to bucket resolution (which
     // would misleadingly 404). Special endpoints are exempt.
-    if !is_special_path && is_write_method(&parts.method) {
+    if !is_special_path
+        && matches!(
+            parts.method,
+            http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
+        )
+    {
         let resp = ErrorResponse {
             code: "MethodNotAllowed".to_string(),
             message: "Method Not Allowed".to_string(),
@@ -263,13 +268,6 @@ fn init_tracing(env: &Env) -> tracing::Level {
         .unwrap_or(tracing::Level::WARN);
     tracing::subscriber::set_global_default(WorkerSubscriber::new().with_max_level(max_level)).ok();
     max_level
-}
-
-fn is_write_method(method: &http::Method) -> bool {
-    matches!(
-        *method,
-        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
-    )
 }
 
 fn extract_request_id(headers: &http::HeaderMap) -> String {
