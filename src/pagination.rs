@@ -21,29 +21,21 @@ pub fn paginate_prefixes(mut prefixes: Vec<String>, params: &ListQueryParams) ->
         .continuation_token
         .as_deref()
         .or(params.start_after.as_deref());
-
-    let iter: Box<dyn Iterator<Item = String>> = if let Some(after) = skip_after {
-        Box::new(prefixes.into_iter().filter(move |p| p.as_str() > after))
-    } else {
-        Box::new(prefixes.into_iter())
-    };
-
-    let collected: Vec<String> = iter.take(params.max_keys + 1).collect();
-    let is_truncated = collected.len() > params.max_keys;
-
-    let mut result: Vec<String> = collected;
-    if is_truncated {
-        result.truncate(params.max_keys);
+    if let Some(after) = skip_after {
+        prefixes.retain(|p| p.as_str() > after);
     }
 
+    let is_truncated = prefixes.len() > params.max_keys;
+    prefixes.truncate(params.max_keys);
+
     let next_continuation_token = if is_truncated {
-        result.last().cloned()
+        prefixes.last().cloned()
     } else {
         None
     };
 
     PaginatedPrefixes {
-        prefixes: result,
+        prefixes,
         is_truncated,
         next_continuation_token,
     }
