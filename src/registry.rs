@@ -131,9 +131,38 @@ async fn resolve_product(
         })?;
 
     // 3. Fetch data connections to resolve the actual bucket
-    let connections =
-        crate::cache::get_or_fetch_data_connections(api_base_url, api_auth, request_id, subject)
-            .await?;
+    let mut connections = crate::cache::get_or_fetch_data_connections(
+        api_base_url,
+        api_auth,
+        request_id,
+        subject,
+        false,
+    )
+    .await?;
+
+    // A referenced connection missing from the cached list usually means it was
+    // created after the list cache was filled (up to a 30-min TTL). Treat that
+    // as a cache miss: refetch once, bypassing the cache, before giving up.
+    // ponytail: negative results aren't cached, so a product permanently
+    // referencing a bogus connection refetches the full list on every request —
+    // fine, that product is itself a misconfiguration.
+    if !connections
+        .iter()
+        .any(|c| c.data_connection_id == mirror.connection_id)
+    {
+        tracing::debug!(
+            connection_id = %mirror.connection_id,
+            "connection absent from cached list; refetching",
+        );
+        connections = crate::cache::get_or_fetch_data_connections(
+            api_base_url,
+            api_auth,
+            request_id,
+            subject,
+            true,
+        )
+        .await?;
+    }
 
     let connection = connections
         .iter()
