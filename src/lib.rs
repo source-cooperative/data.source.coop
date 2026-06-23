@@ -1,5 +1,6 @@
 mod analytics;
 mod auth;
+mod backend_auth;
 mod cache;
 mod config;
 mod handlers;
@@ -18,7 +19,9 @@ use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
     WorkerSubscriber,
 };
+use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
 use multistore_oidc_provider::route_handler::OidcRouterExt;
+use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
@@ -50,6 +53,45 @@ fn jwks_cache() -> JwksCache {
         .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
         .clone()
 }
+
+/// [`HttpExchange`] for outbound STS calls, backed by the shared reqwest client
+/// (reqwest wraps `web_sys::fetch` on wasm). This is what lets the OIDC
+/// backend-auth middleware POST `AssumeRoleWithWebIdentity` to AWS STS.
+#[derive(Clone)]
+struct FetchHttpExchange {
+    client: reqwest::Client,
+}
+
+impl HttpExchange for FetchHttpExchange {
+    async fn post_form(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> std::result::Result<String, OidcProviderError> {
+        let resp = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+        // Intentionally NOT checking the HTTP status / calling
+        // `error_for_status()`: AWS STS returns its `<ErrorResponse>` XML in the
+        // body on 4xx/5xx, and multistore's `parse_response` reads the error
+        // (code + message) out of that body. Discarding it on a non-2xx would
+        // lose the diagnostic and the precise ProxyError mapping.
+        resp.text()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
+    }
+}
+
+/// Isolate-shared OIDC credential provider for backend federation. The gateway
+/// (and its middleware) are rebuilt per request, but the provider — and its
+/// credential cache — must persist so the proxy doesn't re-mint a JWT and re-run
+/// `AssumeRoleWithWebIdentity` on every request to the same role. Initialized
+/// from the first request's signing config, which is constant for the isolate.
+static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = OnceLock::new();
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
@@ -182,12 +224,34 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         AccountListHandler::new(registry.clone(), &mapping),
     );
 
+    // ── Backend federation middleware ─────────────────────────────
+    // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
+    // assertion, exchange it at AWS STS (AssumeRoleWithWebIdentity) over fetch,
+    // and inject the temporary credentials so the backend request is signed.
+    // A no-op for connections without auth_type=oidc (i.e. unsigned/public).
+    // Reuse the isolate-shared provider so its credential cache stays warm across
+    // requests; `clone()` is cheap and shares that cache.
+    let provider = OIDC_PROVIDER
+        .get_or_init(|| {
+            OidcCredentialProvider::new(
+                config.oidc.signer.clone(),
+                FetchHttpExchange {
+                    client: http_client(),
+                },
+                config.oidc.issuer.clone(),
+                crate::backend_auth::AWS_STS_AUDIENCE.to_string(),
+            )
+        })
+        .clone();
+    let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
+
     let gateway = ProxyGateway::new(
         WorkerBackend,
         MappedRegistry::new(registry, mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
+    .with_middleware(backend_auth)
     .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG)
     .with_credential_resolver(config.session_token_key.clone());

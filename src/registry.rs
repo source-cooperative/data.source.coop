@@ -7,6 +7,8 @@ use multistore::types::{BucketConfig, ResolvedIdentity, S3Operation};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::backend_auth::{apply_backend_auth, BackendAuth};
+
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
 #[derive(Clone)]
@@ -99,6 +101,7 @@ async fn resolve_product(
         account = %account,
         product = %product,
         backend_type = tracing::field::Empty,
+        auth_type = tracing::field::Empty,
     );
     let _guard = span.enter();
 
@@ -124,20 +127,17 @@ async fn resolve_product(
             ProxyError::BucketNotFound(format!("no mirrors for {}/{}", account, product))
         })?;
 
-    // 3. Fetch data connections to resolve the actual bucket
-    let connections =
-        crate::cache::get_or_fetch_data_connections(api_base_url, api_auth, request_id, subject)
-            .await?;
-
-    let connection = connections
-        .iter()
-        .find(|c| c.data_connection_id == mirror.connection_id)
-        .ok_or_else(|| {
-            ProxyError::Internal(format!(
-                "data connection '{}' not found",
-                mirror.connection_id
-            ))
-        })?;
+    // 3. Fetch the referenced connection by id, so the subject-scoped API
+    // authorizes this exact resource (404/403 → BucketNotFound/AccessDenied)
+    // instead of the proxy resolving it out of an over-broad cached list.
+    let connection = crate::cache::get_or_fetch_data_connection(
+        api_base_url,
+        &mirror.connection_id,
+        api_auth,
+        request_id,
+        subject,
+    )
+    .await?;
 
     // 4. Build BucketConfig
     let backend_type = match connection.details.provider.as_str() {
@@ -179,10 +179,28 @@ async fn resolve_product(
         _ => {}
     }
 
-    // TODO: For authenticated users, provide real backend credentials so that
-    // write operations can be forwarded to the storage backend. Currently all
-    // requests use anonymous/unsigned access, so writes will fail at the backend.
-    backend_options.insert("skip_signature".to_string(), "true".to_string());
+    // Backend authentication: unsigned (public) by default, or federate the
+    // proxy's OIDC identity into the connection's role.
+    //
+    // The confused-deputy guard is upstream: the subject-scoped Source API
+    // fetches above (get_or_fetch_product / get_or_fetch_data_connection, keyed
+    // on the caller's principal) only return the product/connection this caller
+    // is authorized for — so reaching here means the caller is already cleared
+    // for this connection's backend. Federation does not re-authorize.
+    //
+    // This ordering is enforced by data dependency, not just statement order:
+    // apply_backend_auth needs `connection`, which only exists once the
+    // subject-scoped fetch succeeds. A 403/404 from that fetch propagates via `?`
+    // before we ever get here, so an unauthorized caller can never reach
+    // federation. Guarded end-to-end by tests/test_federation.py's
+    // test_restricted_product_denied_to_anonymous.
+    span.record("auth_type", connection.authentication.kind());
+    apply_backend_auth(
+        &connection.authentication,
+        &connection.data_connection_id,
+        &backend_type,
+        &mut backend_options,
+    )?;
 
     // 5. Build prefix: connection.base_prefix + mirror.prefix
     let base_prefix = connection.details.base_prefix.as_deref().unwrap_or("");
@@ -198,6 +216,11 @@ async fn resolve_product(
         name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
         backend_type,
         backend_prefix,
+        // Proxy-client-facing: Source Cooperative authorizes callers via its own
+        // JWT (enforced upstream at the subject-scoped fetch), not S3 request
+        // signing to the proxy — so the proxy accepts anonymous S3 requests and
+        // does its own authz. Always true, including for private/federated
+        // connections (whose backend auth is handled separately above).
         anonymous_access: true,
         allowed_roles: vec![],
         backend_options,
@@ -262,6 +285,13 @@ pub struct SourceProductMirror {
 pub struct DataConnection {
     pub data_connection_id: String,
     pub details: DataConnectionDetails,
+    /// How the proxy authenticates to this connection's backend. A sibling of
+    /// `details`, matching the Source API's `DataConnection` shape. Absent →
+    /// [`BackendAuth::Unsigned`] (public bucket); a present-but-malformed value
+    /// becomes `Unsupported` (fail closed) rather than erroring the fetch (see
+    /// [`deserialize_lenient`](crate::backend_auth::deserialize_lenient)).
+    #[serde(default, deserialize_with = "crate::backend_auth::deserialize_lenient")]
+    pub authentication: BackendAuth,
 }
 
 #[derive(Debug, Clone, Deserialize)]
