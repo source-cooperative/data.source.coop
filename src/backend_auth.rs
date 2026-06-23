@@ -21,8 +21,9 @@ pub(crate) const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
 /// Internally tagged on `type`; defaults to [`Unsigned`](BackendAuth::Unsigned)
 /// when the field is omitted, so existing connections keep issuing unsigned
 /// requests until a role is configured. Unknown `type`s (e.g. the app-side
-/// GCP/Azure workload-identity variants) deserialize to
-/// [`Unsupported`](BackendAuth::Unsupported) instead of failing the request.
+/// GCP/Azure workload-identity variants) are mapped to
+/// [`Unsupported`](BackendAuth::Unsupported) by [`deserialize_lenient`] instead
+/// of failing the request.
 ///
 /// The AWS variant carries only `role_arn`; the audience is the fixed constant
 /// [`AWS_STS_AUDIENCE`] set on the OIDC backend-auth provider, and session
@@ -42,10 +43,9 @@ pub enum BackendAuth {
     },
     /// An authentication type this proxy build does not implement — e.g. the
     /// Source API's `gcp_workload_identity` / `azure_workload_identity` variants,
-    /// scaffolded app-side but without proxy/multistore support yet. Captured via
-    /// `#[serde(other)]` so an unknown `type` deserializes gracefully; treated as
-    /// unsupported (served unsigned, with a warning).
-    #[serde(other)]
+    /// scaffolded app-side but without proxy/multistore support yet. Produced by
+    /// [`deserialize_lenient`], which maps any `authentication` that doesn't parse
+    /// as a known variant to this; `apply_backend_auth` then fails closed on it.
     Unsupported,
 }
 

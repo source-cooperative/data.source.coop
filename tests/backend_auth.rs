@@ -78,17 +78,6 @@ fn lenient_malformed_becomes_unsupported_not_error() {
     }
 }
 
-#[test]
-fn unknown_type_deserializes_to_unsupported() {
-    // The app-side GCP/Azure variants this proxy build doesn't implement must not
-    // fail deserialization — `#[serde(other)]` catches them.
-    let a: BackendAuth = serde_json::from_str(
-        r#"{"type":"gcp_workload_identity","workload_identity_provider":"x","service_account":"y"}"#,
-    )
-    .unwrap();
-    assert_eq!(a, BackendAuth::Unsupported);
-}
-
 // ── option translation ─────────────────────────────────────────────
 
 #[test]

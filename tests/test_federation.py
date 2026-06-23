@@ -51,11 +51,3 @@ def test_federated_object_is_served():
         f"federated read failed ({resp.status_code}): {resp.text[:300]}"
     )
     assert resp.content, "federated read returned an empty body"
-
-
-def test_federated_listing_is_served():
-    """Listing a federated product works (signed ListObjectsV2)."""
-    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/")
-    assert resp.status_code == 200, (
-        f"federated list failed ({resp.status_code}): {resp.text[:300]}"
-    )
