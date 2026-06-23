@@ -24,10 +24,10 @@ path = "tests/backend_auth.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.4.0", features = ["azure"] }
-multistore-oidc-provider = { version = "0.4.0" }
-multistore-path-mapping = { version = "0.4.0" }
-multistore-sts = { version = "0.4.0" }
+multistore = { version = "0.5.1", features = ["azure"] }
+multistore-oidc-provider = { version = "0.5.1" }
+multistore-path-mapping = { version = "0.5.1" }
+multistore-sts = { version = "0.5.1" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +45,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.4.0", features = ["azure"] }
+multistore-cf-workers = { version = "0.5.1", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
@@ -64,15 +64,3 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
-
-# Track multistore ahead of a crates.io release. Pinned to an exact `rev` (not a
-# branch) so builds are reproducible and `cargo update` can't float to a newer
-# commit. The rev is on the `feat/shareable-credential-cache` branch, which adds
-# `Clone` to `OidcCredentialProvider` so the worker can keep one warm credential
-# cache across requests. Drop this patch and bump the versions above once it ships.
-[patch.crates-io]
-multistore = { git = "https://github.com/developmentseed/multistore", rev = "81b24ec1afad4c947a972b8c7f834806d7c0205e" }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", rev = "81b24ec1afad4c947a972b8c7f834806d7c0205e" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", rev = "81b24ec1afad4c947a972b8c7f834806d7c0205e" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore", rev = "81b24ec1afad4c947a972b8c7f834806d7c0205e" }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", rev = "81b24ec1afad4c947a972b8c7f834806d7c0205e" }
