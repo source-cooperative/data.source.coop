@@ -27,11 +27,6 @@ impl SourceCoopRegistry {
         }
     }
 
-    /// Parse "account:product" bucket name into (account, product).
-    fn parse_bucket_name(name: &str) -> Option<(&str, &str)> {
-        name.split_once(crate::BUCKET_SEPARATOR)
-    }
-
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
         let product_list = crate::cache::get_or_fetch_product_list(
@@ -57,7 +52,9 @@ impl BucketRegistry for SourceCoopRegistry {
         identity: &ResolvedIdentity,
         _operation: &S3Operation,
     ) -> Result<ResolvedBucket, ProxyError> {
-        let (account, product) = Self::parse_bucket_name(name)
+        // Bucket names arrive pre-mapped as "account:product".
+        let (account, product) = name
+            .split_once(crate::BUCKET_SEPARATOR)
             .ok_or_else(|| ProxyError::BucketNotFound(name.to_string()))?;
 
         let subject = match identity {
@@ -298,12 +295,9 @@ pub struct SourceProductMetadata {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct SourceProductMirror {
-    pub storage_type: String,
     pub connection_id: String,
     pub prefix: String,
-    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

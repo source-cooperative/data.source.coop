@@ -121,12 +121,13 @@ pub async fn get_or_fetch_product_list(
 /// cached separately.
 fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
     match subject {
-        // Hex-encode the subject so the cache key is always a well-formed URL.
-        // Principal names can contain spaces, `&`, `#`, or non-ASCII, any of
-        // which would otherwise corrupt the key or collide distinct subjects.
-        // Hex is injective and URL-safe, so each subject maps to a unique key.
+        // Percent-encode the subject so the cache key is always a well-formed
+        // URL. Principal names can contain spaces, `&`, `#`, or non-ASCII, any
+        // of which would otherwise corrupt the key or collide distinct subjects.
+        // Percent-encoding is injective and URL-safe, so each subject maps to a
+        // unique key.
         Some(subj) => {
-            let encoded: String = subj.bytes().map(|b| format!("{:02x}", b)).collect();
+            let encoded = utf8_percent_encode(subj, PATH_SEGMENT);
             // Pick the query separator defensively. Callers pass query-free
             // URLs today (path segments are percent-encoded above), but a stray
             // `?` must never silently merge into an existing query and forge a
