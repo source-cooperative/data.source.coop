@@ -253,12 +253,9 @@ pub struct SourceProductMetadata {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct SourceProductMirror {
-    pub storage_type: String,
     pub connection_id: String,
     pub prefix: String,
-    pub is_primary: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
