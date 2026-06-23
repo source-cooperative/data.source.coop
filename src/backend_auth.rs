@@ -88,6 +88,8 @@ where
 
 /// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
 ///
+/// `provider` is the resolved backend type (`s3`/`az`/`gcs`).
+///
 /// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy
 ///   issues an unsigned request to a public bucket.
 /// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN and
@@ -95,17 +97,35 @@ where
 ///   middleware (wired in `lib.rs`), which mints the assertion (with the fixed AWS
 ///   audience set on the provider), exchanges it at AWS STS, and injects the
 ///   temporary credentials — clearing `skip_signature` so the request is signed.
+///   Restricted to `s3` providers (STS credentials only sign S3 requests).
 /// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it **fails
 ///   closed** with [`ProxyError::BackendAuthError`] rather than silently serving
 ///   unsigned.
+///
+/// On failure the error carries a short, client-safe code (`ProviderMismatch`,
+/// `UnsupportedAuthType`) — surfaced to the caller verbatim by
+/// [`ProxyError::safe_message`] — while the connection-specific detail is logged
+/// for operators rather than leaked in the response.
 pub(crate) fn apply_backend_auth(
     auth: &BackendAuth,
     connection_id: &str,
+    provider: &str,
     options: &mut HashMap<String, String>,
 ) -> Result<(), ProxyError> {
     match auth {
         BackendAuth::Unsigned => {
             options.insert("skip_signature".to_string(), "true".to_string());
+        }
+        // STS credentials only sign S3 requests. Fail clean if the API ever pairs
+        // this with a non-S3 provider, rather than injecting AWS options into an
+        // Azure/GCS request that would fail opaquely downstream.
+        BackendAuth::S3WebIdentityRole { .. } if provider != "s3" => {
+            tracing::warn!(
+                connection_id,
+                provider,
+                "s3_web_identity_role on a non-s3 connection",
+            );
+            return Err(ProxyError::BackendAuthError("ProviderMismatch".into()));
         }
         BackendAuth::S3WebIdentityRole { role_arn } => {
             options.insert("auth_type".to_string(), "oidc".to_string());
@@ -120,9 +140,8 @@ pub(crate) fn apply_backend_auth(
         // fall back to unsigned — that could expose an anonymously-readable
         // backend. Deny so the misconfiguration surfaces explicitly.
         BackendAuth::Unsupported => {
-            return Err(ProxyError::BackendAuthError(format!(
-                "connection {connection_id}: unsupported backend authentication type"
-            )));
+            tracing::warn!(connection_id, "unsupported backend authentication type");
+            return Err(ProxyError::BackendAuthError("UnsupportedAuthType".into()));
         }
     }
     Ok(())

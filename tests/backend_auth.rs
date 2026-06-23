@@ -83,7 +83,7 @@ fn lenient_malformed_becomes_unsupported_not_error() {
 #[test]
 fn unsigned_sets_skip_signature() {
     let mut o = HashMap::new();
-    apply_backend_auth(&BackendAuth::Unsigned, "conn-1", &mut o).unwrap();
+    apply_backend_auth(&BackendAuth::Unsigned, "conn-1", "s3", &mut o).unwrap();
     assert_eq!(o.get("skip_signature").map(String::as_str), Some("true"));
     assert!(!o.contains_key("auth_type"));
 }
@@ -96,6 +96,7 @@ fn web_identity_role_sets_oidc_options_and_keeps_signing() {
             role_arn: "arn:aws:iam::1:role/r".into(),
         },
         "conn-1",
+        "s3",
         &mut o,
     )
     .unwrap();
@@ -115,8 +116,24 @@ fn web_identity_role_sets_oidc_options_and_keeps_signing() {
 #[test]
 fn unsupported_fails_closed() {
     let mut o = HashMap::new();
-    let result = apply_backend_auth(&BackendAuth::Unsupported, "conn-1", &mut o);
+    let result = apply_backend_auth(&BackendAuth::Unsupported, "conn-1", "s3", &mut o);
     assert!(result.is_err());
     // Must not have set unsigned (or any) options as a side effect.
+    assert!(o.is_empty());
+}
+
+#[test]
+fn web_identity_role_on_non_s3_fails_closed() {
+    let mut o = HashMap::new();
+    let result = apply_backend_auth(
+        &BackendAuth::S3WebIdentityRole {
+            role_arn: "arn:aws:iam::1:role/r".into(),
+        },
+        "conn-1",
+        "az",
+        &mut o,
+    );
+    assert!(result.is_err());
+    // No AWS/OIDC options must leak into the non-S3 backend's option map.
     assert!(o.is_empty());
 }

@@ -198,6 +198,7 @@ async fn resolve_product(
     apply_backend_auth(
         &connection.authentication,
         &connection.data_connection_id,
+        &backend_type,
         &mut backend_options,
     )?;
 
@@ -215,6 +216,11 @@ async fn resolve_product(
         name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
         backend_type,
         backend_prefix,
+        // Proxy-client-facing: Source Cooperative authorizes callers via its own
+        // JWT (enforced upstream at the subject-scoped fetch), not S3 request
+        // signing to the proxy — so the proxy accepts anonymous S3 requests and
+        // does its own authz. Always true, including for private/federated
+        // connections (whose backend auth is handled separately above).
         anonymous_access: true,
         allowed_roles: vec![],
         backend_options,
