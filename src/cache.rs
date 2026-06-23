@@ -25,8 +25,10 @@ const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// Product metadata (`/api/v1/products/{account}/{product}`).
 const PRODUCT_CACHE_SECS: u32 = 300; // 5 minutes
 
-/// Data connections list (`/api/v1/data-connections`).
-const DATA_CONNECTIONS_CACHE_SECS: u32 = 1800; // 30 minutes
+/// A single data connection (`/api/v1/data-connections/{id}`). Short to match
+/// product metadata: a per-id response is subject-authorized, so the TTL is an
+/// authorization-revocation lag, not just a freshness knob.
+const DATA_CONNECTION_CACHE_SECS: u32 = 300; // 5 minutes
 
 /// Product list for an account (`/api/v1/products/{account}`).
 const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
@@ -56,34 +58,37 @@ pub async fn get_or_fetch_product(
         api_auth,
         request_id,
         subject,
-        false,
     )
     .await
 }
 
-/// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
+/// Fetch a single data connection by id, cached for `DATA_CONNECTION_CACHE_SECS`.
 ///
-/// Pass `force_refresh = true` to bypass the cached copy and refresh it — used
-/// when a product references a connection missing from the cached list (e.g. one
-/// created after the list cache was filled) so it resolves without waiting out
-/// the TTL.
-pub async fn get_or_fetch_data_connections(
+/// Resolving by id (rather than scanning a cached full list) lets the
+/// subject-scoped Source API authorize this exact connection: a caller not
+/// entitled to it gets 404/403, surfaced as `BucketNotFound` / `AccessDenied`.
+/// A just-created connection resolves on first reference — there is no stale
+/// list to fall behind, so no force-refresh dance is needed.
+pub async fn get_or_fetch_data_connection(
     api_base_url: &str,
+    connection_id: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
     subject: Option<&str>,
-    force_refresh: bool,
-) -> Result<Vec<DataConnection>, ProxyError> {
-    let api_url = format!("{}/api/v1/data-connections", api_base_url);
+) -> Result<DataConnection, ProxyError> {
+    let api_url = format!(
+        "{}/api/v1/data-connections/{}",
+        api_base_url,
+        utf8_percent_encode(connection_id, PATH_SEGMENT),
+    );
     let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
         &cache_key,
         &api_url,
-        DATA_CONNECTIONS_CACHE_SECS,
+        DATA_CONNECTION_CACHE_SECS,
         api_auth,
         request_id,
         subject,
-        force_refresh,
     )
     .await
 }
@@ -109,7 +114,6 @@ pub async fn get_or_fetch_product_list(
         api_auth,
         request_id,
         subject,
-        false,
     )
     .await
 }
@@ -142,9 +146,6 @@ fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
 /// Generic cache-or-fetch: check the Cache API, return cached JSON on hit,
 /// otherwise fetch from `api_url`, store in cache with the given TTL, and
 /// return the deserialized result.
-///
-/// `force_refresh` skips the cache read and forces a fresh fetch, still writing
-/// the result back so the cached copy is refreshed for later callers.
 async fn cached_fetch<T: serde::de::DeserializeOwned>(
     cache_key: &str,
     api_url: &str,
@@ -152,7 +153,6 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     api_auth: &crate::ApiAuth,
     request_id: &str,
     subject: Option<&str>,
-    force_refresh: bool,
 ) -> Result<T, ProxyError> {
     let span = tracing::info_span!(
         "cached_fetch",
@@ -165,20 +165,18 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     let cache = worker::Cache::default();
 
     // ── Cache hit ──────────────────────────────────────────────
-    if !force_refresh {
-        if let Some(mut cached_resp) = cache
-            .get(cache_key, false)
+    if let Some(mut cached_resp) = cache
+        .get(cache_key, false)
+        .await
+        .map_err(|e| ProxyError::Internal(format!("cache get failed: {}", e)))?
+    {
+        span.record("cache_hit", true);
+        let text = cached_resp
+            .text()
             .await
-            .map_err(|e| ProxyError::Internal(format!("cache get failed: {}", e)))?
-        {
-            span.record("cache_hit", true);
-            let text = cached_resp
-                .text()
-                .await
-                .map_err(|e| ProxyError::Internal(format!("cache body read failed: {}", e)))?;
-            return serde_json::from_str(&text)
-                .map_err(|e| ProxyError::Internal(format!("cache JSON parse failed: {}", e)));
-        }
+            .map_err(|e| ProxyError::Internal(format!("cache body read failed: {}", e)))?;
+        return serde_json::from_str(&text)
+            .map_err(|e| ProxyError::Internal(format!("cache JSON parse failed: {}", e)));
     }
 
     // ── Cache miss — fetch from API ────────────────────────────

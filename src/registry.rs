@@ -127,49 +127,17 @@ async fn resolve_product(
             ProxyError::BucketNotFound(format!("no mirrors for {}/{}", account, product))
         })?;
 
-    // 3. Fetch data connections to resolve the actual bucket
-    let mut connections = crate::cache::get_or_fetch_data_connections(
+    // 3. Fetch the referenced connection by id, so the subject-scoped API
+    // authorizes this exact resource (404/403 → BucketNotFound/AccessDenied)
+    // instead of the proxy resolving it out of an over-broad cached list.
+    let connection = crate::cache::get_or_fetch_data_connection(
         api_base_url,
+        &mirror.connection_id,
         api_auth,
         request_id,
         subject,
-        false,
     )
     .await?;
-
-    // A referenced connection missing from the cached list usually means it was
-    // created after the list cache was filled (up to a 30-min TTL). Treat that
-    // as a cache miss: refetch once, bypassing the cache, before giving up.
-    // Negative results aren't cached, so a product permanently referencing a bogus
-    // connection refetches the full list on every request — fine, that product is
-    // itself a misconfiguration.
-    if !connections
-        .iter()
-        .any(|c| c.data_connection_id == mirror.connection_id)
-    {
-        tracing::debug!(
-            connection_id = %mirror.connection_id,
-            "connection absent from cached list; refetching",
-        );
-        connections = crate::cache::get_or_fetch_data_connections(
-            api_base_url,
-            api_auth,
-            request_id,
-            subject,
-            true,
-        )
-        .await?;
-    }
-
-    let connection = connections
-        .iter()
-        .find(|c| c.data_connection_id == mirror.connection_id)
-        .ok_or_else(|| {
-            ProxyError::Internal(format!(
-                "data connection '{}' not found",
-                mirror.connection_id
-            ))
-        })?;
 
     // 4. Build BucketConfig
     let backend_type = match connection.details.provider.as_str() {
@@ -215,10 +183,10 @@ async fn resolve_product(
     // proxy's OIDC identity into the connection's role.
     //
     // The confused-deputy guard is upstream: the subject-scoped Source API
-    // fetches above (get_or_fetch_product / get_or_fetch_data_connections, keyed
-    // on the caller's principal) only return products/connections this caller is
-    // authorized for — so reaching here means the caller is already cleared for
-    // this connection's backend. Federation does not re-authorize.
+    // fetches above (get_or_fetch_product / get_or_fetch_data_connection, keyed
+    // on the caller's principal) only return the product/connection this caller
+    // is authorized for — so reaching here means the caller is already cleared
+    // for this connection's backend. Federation does not re-authorize.
     //
     // This ordering is enforced by data dependency, not just statement order:
     // apply_backend_auth needs `connection`, which only exists once the
@@ -314,7 +282,7 @@ pub struct DataConnection {
     /// How the proxy authenticates to this connection's backend. A sibling of
     /// `details`, matching the Source API's `DataConnection` shape. Absent →
     /// [`BackendAuth::Unsigned`] (public bucket); a present-but-malformed value
-    /// becomes `Unsupported` rather than failing the whole list (see
+    /// becomes `Unsupported` (fail closed) rather than erroring the fetch (see
     /// [`deserialize_lenient`](crate::backend_auth::deserialize_lenient)).
     #[serde(default, deserialize_with = "crate::backend_auth::deserialize_lenient")]
     pub authentication: BackendAuth,
