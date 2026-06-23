@@ -140,9 +140,9 @@ async fn resolve_product(
     // A referenced connection missing from the cached list usually means it was
     // created after the list cache was filled (up to a 30-min TTL). Treat that
     // as a cache miss: refetch once, bypassing the cache, before giving up.
-    // ponytail: negative results aren't cached, so a product permanently
-    // referencing a bogus connection refetches the full list on every request —
-    // fine, that product is itself a misconfiguration.
+    // Negative results aren't cached, so a product permanently referencing a bogus
+    // connection refetches the full list on every request — fine, that product is
+    // itself a misconfiguration.
     if !connections
         .iter()
         .any(|c| c.data_connection_id == mirror.connection_id)
@@ -219,6 +219,13 @@ async fn resolve_product(
     // on the caller's principal) only return products/connections this caller is
     // authorized for — so reaching here means the caller is already cleared for
     // this connection's backend. Federation does not re-authorize.
+    //
+    // This ordering is enforced by data dependency, not just statement order:
+    // apply_backend_auth needs `connection`, which only exists once the
+    // subject-scoped fetch succeeds. A 403/404 from that fetch propagates via `?`
+    // before we ever get here, so an unauthorized caller can never reach
+    // federation. Guarded end-to-end by tests/test_federation.py's
+    // test_restricted_product_denied_to_anonymous.
     span.record("auth_type", connection.authentication.kind());
     apply_backend_auth(
         &connection.authentication,

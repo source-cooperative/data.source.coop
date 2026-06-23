@@ -69,6 +69,12 @@ impl BackendAuth {
 /// failing deserialization of the *entire* data-connection list, which the proxy
 /// parses in one `serde_json::from_str`. An *absent* field is handled by
 /// `#[serde(default)]` and never reaches this function.
+///
+/// Deliberately JSON-only: it buffers into a `serde_json::Value` to
+/// attempt-then-degrade, which is exact for serde_json's own data model. The sole
+/// caller is the data-connection list (always JSON from the Source API). If this
+/// is ever reused with a non-JSON deserializer (TOML, etc.), the buffer round-trip
+/// could shift types; switch to a `try_from` on `BackendAuth` then.
 pub(crate) fn deserialize_lenient<'de, D>(deserializer: D) -> Result<BackendAuth, D::Error>
 where
     D: serde::Deserializer<'de>,
