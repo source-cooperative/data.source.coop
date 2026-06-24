@@ -1,7 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 /// Metadata collected from the request and response for analytics logging.
 pub struct RequestEvent<'a> {
@@ -10,7 +11,7 @@ pub struct RequestEvent<'a> {
     pub file_path: &'a str,
     pub method: &'a str,
     pub user_id: &'a str,
-    /// Salted SHA-256 of the client IP — see [`hash_ip`]. We never log the raw
+    /// HMAC-SHA256 of the client IP — see [`hash_ip`]. We never log the raw
     /// IP; this lets us count distinct clients without storing PII.
     pub client_ip_hash: &'a str,
     /// `Range` request header verbatim (e.g. `bytes=0-1023`), empty if absent.
@@ -37,7 +38,7 @@ impl RequestEvent<'_> {
     ///   blob5: user_id (empty for anonymous requests)
     ///   blob6: country
     ///   blob7: content_type
-    ///   blob8: client_ip_hash (salted SHA-256; empty when IP is unknown)
+    ///   blob8: client_ip_hash (HMAC-SHA256; empty when IP is unknown)
     ///   blob9: range (Range request header, empty if absent)
     pub fn blobs(&self) -> [&str; 9] {
         [
@@ -110,20 +111,22 @@ pub fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<
     (account, product, key)
 }
 
-/// Salted SHA-256 of a client IP, hex-encoded (64 chars).
+/// HMAC-SHA256 of a client IP keyed by `salt`, hex-encoded (64 chars).
 ///
 /// `salt` is a deployment secret; without it the small IPv4 space could be
-/// brute-forced back to raw IPs. Empty `ip` in → empty out, so anonymous or
-/// unknown clients stay empty rather than all collapsing to one hash.
+/// brute-forced back to raw IPs. HMAC (rather than a bare `SHA256(salt ‖ ip)`)
+/// is the conventional keyed-hash primitive — robust regardless of how this
+/// output is later reused. Empty `ip` in → empty out, so anonymous or unknown
+/// clients stay empty rather than all collapsing to one hash.
 pub fn hash_ip(ip: &str, salt: &str) -> String {
     if ip.is_empty() {
         return String::new();
     }
-    let mut hasher = Sha256::new();
-    hasher.update(salt.as_bytes());
-    hasher.update(ip.as_bytes());
-    hasher
-        .finalize()
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(salt.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(ip.as_bytes());
+    mac.finalize()
+        .into_bytes()
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()

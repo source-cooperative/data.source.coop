@@ -1735,6 +1735,7 @@ version = "2.1.2"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.2",
+ "hmac",
  "http",
  "js-sys",
  "multistore",
