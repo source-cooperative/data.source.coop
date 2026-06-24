@@ -5,7 +5,7 @@
 #[path = "../src/authz.rs"]
 mod authz;
 
-use authz::{authorize_write, is_write_action};
+use authz::{connection_accepts_writes, is_write_action, permits_write};
 use multistore::types::Action;
 
 fn perms(p: &[&str]) -> Vec<String> {
@@ -35,25 +35,29 @@ fn mutations_are_writes() {
     }
 }
 
-// ── authorize_write ────────────────────────────────────────────────
+// ── connection_accepts_writes ──────────────────────────────────────
 
 #[test]
-fn allowed_when_writable_signable_and_permitted() {
-    assert!(authorize_write(false, true, &perms(&["read", "write"])).is_ok());
+fn connection_accepts_writes_when_writable_and_signable() {
+    assert!(connection_accepts_writes(false, true));
 }
 
 #[test]
-fn denied_on_read_only_connection() {
-    assert!(authorize_write(true, true, &perms(&["read", "write"])).is_err());
+fn connection_rejects_read_only() {
+    assert!(!connection_accepts_writes(true, true));
 }
 
 #[test]
-fn denied_when_connection_not_signable() {
-    assert!(authorize_write(false, false, &perms(&["read", "write"])).is_err());
+fn connection_rejects_unsignable() {
+    assert!(!connection_accepts_writes(false, false));
 }
 
+// ── permits_write ──────────────────────────────────────────────────
+
 #[test]
-fn denied_without_write_permission() {
-    assert!(authorize_write(false, true, &perms(&["read"])).is_err());
-    assert!(authorize_write(false, true, &perms(&[])).is_err());
+fn permits_write_only_when_write_present() {
+    assert!(permits_write(&perms(&["read", "write"])));
+    assert!(permits_write(&perms(&["write"])));
+    assert!(!permits_write(&perms(&["read"])));
+    assert!(!permits_write(&perms(&[])));
 }

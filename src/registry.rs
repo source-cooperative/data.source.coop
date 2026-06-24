@@ -7,7 +7,7 @@ use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::authz::{authorize_write, is_write_action};
+use crate::authz::{connection_accepts_writes, is_write_action, permits_write};
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
@@ -166,6 +166,16 @@ async fn resolve_product(
         // Anonymous callers can never write (and there is no subject to query
         // permissions with).
         let subject = subject.ok_or(ProxyError::AccessDenied)?;
+        // Connection-level denials need no caller lookup — check them first so a
+        // write the connection can't accept skips the permissions API call.
+        let signable = matches!(
+            connection.authentication,
+            BackendAuth::S3WebIdentityRole { .. }
+        );
+        if !connection_accepts_writes(connection.read_only, signable) {
+            return Err(ProxyError::AccessDenied);
+        }
+        // The caller must hold the product's `write` permission.
         let permissions = crate::cache::get_or_fetch_permissions(
             api_base_url,
             account,
@@ -175,11 +185,9 @@ async fn resolve_product(
             subject,
         )
         .await?;
-        let signable = matches!(
-            connection.authentication,
-            BackendAuth::S3WebIdentityRole { .. }
-        );
-        authorize_write(connection.read_only, signable, &permissions)?;
+        if !permits_write(&permissions) {
+            return Err(ProxyError::AccessDenied);
+        }
     }
 
     // 4. Build BucketConfig
