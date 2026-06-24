@@ -7,7 +7,7 @@ use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::authz::{connection_accepts_writes, is_write_action, permits_write};
+use crate::authz::is_write_action;
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
@@ -167,12 +167,13 @@ async fn resolve_product(
         // permissions with).
         let subject = subject.ok_or(ProxyError::AccessDenied)?;
         // Connection-level denials need no caller lookup — check them first so a
-        // write the connection can't accept skips the permissions API call.
+        // write the connection can't accept skips the permissions API call. A
+        // connection can sign writes only via an S3 web-identity role.
         let signable = matches!(
             connection.authentication,
             BackendAuth::S3WebIdentityRole { .. }
         );
-        if !connection_accepts_writes(connection.read_only, signable) {
+        if connection.read_only || !signable {
             return Err(ProxyError::AccessDenied);
         }
         // The caller must hold the product's `write` permission.
@@ -185,7 +186,7 @@ async fn resolve_product(
             subject,
         )
         .await?;
-        if !permits_write(&permissions) {
+        if !permissions.iter().any(|p| p == "write") {
             return Err(ProxyError::AccessDenied);
         }
     }
@@ -332,19 +333,11 @@ pub struct SourceProductMirror {
     pub prefix: String,
 }
 
-/// Fail-closed default for [`DataConnection::read_only`]: an absent flag is
-/// treated as read-only so a malformed API response cannot open writes.
-fn read_only_fail_closed() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct DataConnection {
     pub data_connection_id: String,
-    /// Whether the connection forbids writes. The Source API always reports this;
-    /// if it is ever absent we fail closed (treat as read-only) so a malformed
-    /// response can't open writes — reads are unaffected.
-    #[serde(default = "read_only_fail_closed")]
+    /// Whether the connection forbids writes. Required (no serde default): an
+    /// absent flag fails the fetch rather than defaulting to writable.
     pub read_only: bool,
     pub details: DataConnectionDetails,
     /// How the proxy authenticates to this connection's backend. A sibling of
