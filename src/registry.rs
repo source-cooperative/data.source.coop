@@ -92,7 +92,7 @@ impl BucketRegistry for SourceCoopRegistry {
         &self,
         _name: &str,
         _identity: &ResolvedIdentity,
-        _action: Action,
+        action: Action,
         _key: &str,
     ) -> bool {
         // Per-key authorization for batch delete. Source Cooperative authorizes
@@ -100,8 +100,9 @@ impl BucketRegistry for SourceCoopRegistry {
         // write permission, the connection is writable), so every key in a batch
         // delete that reached this point is permitted. The multistore default
         // would deny every key, since callers' STS sessions carry no per-bucket
-        // scopes.
-        true
+        // scopes. Gating on a write action is defense-in-depth: this is only
+        // reached for write batch ops, and never blanket-allows a read.
+        is_write_action(action)
     }
 }
 
