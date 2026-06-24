@@ -22,12 +22,18 @@ path = "tests/pagination.rs"
 name = "backend_auth"
 path = "tests/backend_auth.rs"
 
+[[test]]
+name = "authz"
+path = "tests/authz.rs"
+
 [dependencies]
-# Multistore
-multistore = { version = "0.5.1", features = ["azure"] }
-multistore-oidc-provider = { version = "0.5.1" }
-multistore-path-mapping = { version = "0.5.1" }
-multistore-sts = { version = "0.5.1" }
+# Multistore — tracks the data-edit-operations feature branch (off 0.5.1):
+# batch delete, CopyObject rejection, wider write headers, and the
+# `BucketRegistry::authorize_key` per-key authorization hook.
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "worktree-data-edit-ops-plan", features = ["azure"] }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "worktree-data-edit-ops-plan" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "worktree-data-edit-ops-plan" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "worktree-data-edit-ops-plan" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +51,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.5.1", features = ["azure"] }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "worktree-data-edit-ops-plan", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none

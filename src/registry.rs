@@ -3,10 +3,11 @@
 use multistore::api::response::BucketEntry;
 use multistore::error::ProxyError;
 use multistore::registry::{BucketRegistry, ResolvedBucket};
-use multistore::types::{BucketConfig, ResolvedIdentity, S3Operation};
+use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::authz::{authorize_write, is_write_action};
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
@@ -50,7 +51,7 @@ impl BucketRegistry for SourceCoopRegistry {
         &self,
         name: &str,
         identity: &ResolvedIdentity,
-        _operation: &S3Operation,
+        operation: &S3Operation,
     ) -> Result<ResolvedBucket, ProxyError> {
         // Bucket names arrive pre-mapped as "account:product".
         let (account, product) = name
@@ -69,6 +70,7 @@ impl BucketRegistry for SourceCoopRegistry {
             &self.api_auth,
             &self.request_id,
             subject,
+            is_write_action(operation.action()),
         )
         .await?;
 
@@ -85,6 +87,22 @@ impl BucketRegistry for SourceCoopRegistry {
     ) -> Result<Vec<BucketEntry>, ProxyError> {
         unimplemented!("Bucket listing is not supported")
     }
+
+    async fn authorize_key(
+        &self,
+        _name: &str,
+        _identity: &ResolvedIdentity,
+        _action: Action,
+        _key: &str,
+    ) -> bool {
+        // Per-key authorization for batch delete. Source Cooperative authorizes
+        // writes at the product level in `get_bucket` (the caller holds product
+        // write permission, the connection is writable), so every key in a batch
+        // delete that reached this point is permitted. The multistore default
+        // would deny every key, since callers' STS sessions carry no per-bucket
+        // scopes.
+        true
+    }
 }
 
 /// Resolve a product to a `BucketConfig` by querying the Source Cooperative API.
@@ -95,6 +113,7 @@ async fn resolve_product(
     api_auth: &crate::ApiAuth,
     request_id: &str,
     subject: Option<&str>,
+    is_write: bool,
 ) -> Result<BucketConfig, ProxyError> {
     let span = tracing::info_span!(
         "resolve_product",
@@ -138,6 +157,30 @@ async fn resolve_product(
         subject,
     )
     .await?;
+
+    // Authorize writes. The subject-scoped fetches above already cleared the
+    // caller to *see* this product; a write additionally requires an
+    // authenticated caller who holds the product's `write` permission, a
+    // connection that is not read-only, and a connection the proxy can sign as.
+    if is_write {
+        // Anonymous callers can never write (and there is no subject to query
+        // permissions with).
+        let subject = subject.ok_or(ProxyError::AccessDenied)?;
+        let permissions = crate::cache::get_or_fetch_permissions(
+            api_base_url,
+            account,
+            product,
+            api_auth,
+            request_id,
+            subject,
+        )
+        .await?;
+        let signable = matches!(
+            connection.authentication,
+            BackendAuth::S3WebIdentityRole { .. }
+        );
+        authorize_write(connection.read_only, signable, &permissions)?;
+    }
 
     // 4. Build BucketConfig
     let backend_type = match connection.details.provider.as_str() {
@@ -281,9 +324,20 @@ pub struct SourceProductMirror {
     pub prefix: String,
 }
 
+/// Fail-closed default for [`DataConnection::read_only`]: an absent flag is
+/// treated as read-only so a malformed API response cannot open writes.
+fn read_only_fail_closed() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DataConnection {
     pub data_connection_id: String,
+    /// Whether the connection forbids writes. The Source API always reports this;
+    /// if it is ever absent we fail closed (treat as read-only) so a malformed
+    /// response can't open writes — reads are unaffected.
+    #[serde(default = "read_only_fail_closed")]
+    pub read_only: bool,
     pub details: DataConnectionDetails,
     /// How the proxy authenticates to this connection's backend. A sibling of
     /// `details`, matching the Source API's `DataConnection` shape. Absent →

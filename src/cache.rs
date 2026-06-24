@@ -33,6 +33,10 @@ const DATA_CONNECTION_CACHE_SECS: u32 = 300; // 5 minutes
 /// Product list for an account (`/api/v1/products/{account}`).
 const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
 
+/// Caller's permissions on a product (`.../permissions`). Short: it gates writes,
+/// so a revoked grant should stop taking effect quickly.
+const PERMISSIONS_CACHE_SECS: u32 = 60; // 1 minute
+
 // ── Public cache functions ─────────────────────────────────────────
 
 /// Fetch a single product's metadata, cached for `PRODUCT_CACHE_SECS`.
@@ -58,6 +62,35 @@ pub async fn get_or_fetch_product(
         api_auth,
         request_id,
         subject,
+    )
+    .await
+}
+
+/// Fetch the authenticated caller's permissions on a product, cached for
+/// `PERMISSIONS_CACHE_SECS`. Returns the permission strings the API grants for
+/// the caller (e.g. `["read", "write"]`); writes are gated on `"write"`.
+pub async fn get_or_fetch_permissions(
+    api_base_url: &str,
+    account: &str,
+    product: &str,
+    api_auth: &crate::ApiAuth,
+    request_id: &str,
+    subject: &str,
+) -> Result<Vec<String>, ProxyError> {
+    let api_url = format!(
+        "{}/api/v1/products/{}/{}/permissions",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+        utf8_percent_encode(product, PATH_SEGMENT),
+    );
+    let cache_key = cache_key_with_subject(&api_url, Some(subject));
+    cached_fetch(
+        &cache_key,
+        &api_url,
+        PERMISSIONS_CACHE_SECS,
+        api_auth,
+        request_id,
+        Some(subject),
     )
     .await
 }
