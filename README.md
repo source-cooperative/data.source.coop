@@ -130,6 +130,7 @@ the repository settings UI.
 | `OIDC_PROVIDER_KEY`          | PEM-encoded PKCS#8 RSA private key for JWT signing       |
 | `OIDC_PROVIDER_KEY_PREVIOUS` | Previous RSA key (optional, during rotation)             |
 | `SESSION_TOKEN_KEY`          | Base64-encoded 32-byte AES key sealing STS credentials   |
+| `IP_HASH_SALT`              | Salt for hashing client IPs in analytics (optional; unset = unsalted, brute-forceable) |
 
 ### Authentication Priority
 

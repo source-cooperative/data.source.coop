@@ -1,6 +1,8 @@
 #[cfg(target_arch = "wasm32")]
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
+use sha2::{Digest, Sha256};
+
 /// Metadata collected from the request and response for analytics logging.
 pub struct RequestEvent<'a> {
     pub account_id: &'a str,
@@ -8,7 +10,11 @@ pub struct RequestEvent<'a> {
     pub file_path: &'a str,
     pub method: &'a str,
     pub user_id: &'a str,
-    pub client_ip: &'a str,
+    /// Salted SHA-256 of the client IP — see [`hash_ip`]. We never log the raw
+    /// IP; this lets us count distinct clients without storing PII.
+    pub client_ip_hash: &'a str,
+    /// `Range` request header verbatim (e.g. `bytes=0-1023`), empty if absent.
+    pub range: &'a str,
     pub country: &'a str,
     pub content_type: &'a str,
     pub bytes_sent: f64,
@@ -22,7 +28,7 @@ impl RequestEvent<'_> {
         format!("{}/{}", self.account_id, self.product_id)
     }
 
-    /// Blob columns in Analytics Engine schema order (blob1..blob8).
+    /// Blob columns in Analytics Engine schema order (blob1..blob9).
     ///
     ///   blob1: account_id
     ///   blob2: product_id
@@ -31,8 +37,9 @@ impl RequestEvent<'_> {
     ///   blob5: user_id (empty for anonymous requests)
     ///   blob6: country
     ///   blob7: content_type
-    ///   blob8: client_ip
-    pub fn blobs(&self) -> [&str; 8] {
+    ///   blob8: client_ip_hash (salted SHA-256; empty when IP is unknown)
+    ///   blob9: range (Range request header, empty if absent)
+    pub fn blobs(&self) -> [&str; 9] {
         [
             self.account_id,
             self.product_id,
@@ -42,7 +49,8 @@ impl RequestEvent<'_> {
             self.user_id,
             self.country,
             self.content_type,
-            self.client_ip,
+            self.client_ip_hash,
+            self.range,
         ]
     }
 
@@ -100,6 +108,25 @@ pub fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<
     let product = parts.next();
     let key = parts.next();
     (account, product, key)
+}
+
+/// Salted SHA-256 of a client IP, hex-encoded (64 chars).
+///
+/// `salt` is a deployment secret; without it the small IPv4 space could be
+/// brute-forced back to raw IPs. Empty `ip` in → empty out, so anonymous or
+/// unknown clients stay empty rather than all collapsing to one hash.
+pub fn hash_ip(ip: &str, salt: &str) -> String {
+    if ip.is_empty() {
+        return String::new();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(ip.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Truncate a string to at most `max_bytes` bytes on a char boundary.

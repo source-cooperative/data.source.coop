@@ -8,7 +8,7 @@ mod registry;
 mod sts;
 
 use crate::auth::ApiAuth;
-use analytics::{extract_path_segments, log_request, RequestEvent};
+use analytics::{extract_path_segments, hash_ip, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
@@ -226,6 +226,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             product,
             key,
             duration_ms,
+            &config.ip_hash_salt,
         );
     }
 
@@ -302,6 +303,7 @@ fn log_analytics(
     product: Option<&str>,
     key: Option<&str>,
     duration_ms: f64,
+    ip_hash_salt: &str,
 ) {
     let content_type = response
         .headers()
@@ -317,6 +319,8 @@ fn log_analytics(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
 
+    let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
+
     log_request(
         env,
         &RequestEvent {
@@ -325,7 +329,8 @@ fn log_analytics(
             file_path: key.unwrap_or(""),
             method: method.as_str(),
             user_id: header_str(headers, "x-source-user-id"),
-            client_ip: header_str(headers, "cf-connecting-ip"),
+            client_ip_hash: &client_ip_hash,
+            range: header_str(headers, "range"),
             country: header_str(headers, "cf-ipcountry"),
             content_type: &content_type,
             bytes_sent,

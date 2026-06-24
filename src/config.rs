@@ -91,12 +91,24 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
 
+    // Salt for hashing client IPs in analytics. Optional: when unset we still
+    // hash (so raw IPs never land in the dataset), but without a secret salt the
+    // small IPv4 space is brute-forceable, so prod should set it.
+    let ip_hash_salt = env
+        .secret("IP_HASH_SALT")
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    if ip_hash_salt.is_empty() {
+        tracing::warn!("IP_HASH_SALT not set: client-IP hashes are unsalted (brute-forceable)");
+    }
+
     AppConfig {
         api_base_url,
         oidc,
         session_token_key,
         auth_issuer,
         auth_audience,
+        ip_hash_salt,
     }
 }
 
@@ -111,6 +123,9 @@ pub struct AppConfig {
     /// issued to (the `aud` claim). Required; `None` disables the `/.sts`
     /// endpoint entirely (returns 501) rather than accepting any audience.
     pub auth_audience: Option<String>,
+    /// Secret salt for hashing client IPs before they enter analytics. Empty
+    /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
+    pub ip_hash_salt: String,
 }
 
 pub struct OidcConfig {

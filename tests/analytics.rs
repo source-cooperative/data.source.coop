@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{extract_path_segments, RequestEvent};
+use analytics::{extract_path_segments, hash_ip, RequestEvent};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -10,7 +10,8 @@ fn event<'a>() -> RequestEvent<'a> {
         file_path: "countries.parquet",
         method: "GET",
         user_id: "",
-        client_ip: "203.0.113.7",
+        client_ip_hash: "deadbeef",
+        range: "bytes=0-1023",
         country: "US",
         content_type: "application/octet-stream",
         bytes_sent: 1024.0,
@@ -74,7 +75,8 @@ fn blobs_in_schema_order() {
             "",                         // blob5: user_id (anonymous)
             "US",                       // blob6: country
             "application/octet-stream", // blob7: content_type
-            "203.0.113.7",              // blob8: client_ip
+            "deadbeef",                 // blob8: client_ip_hash
+            "bytes=0-1023",             // blob9: range
         ]
     );
 }
@@ -114,4 +116,27 @@ fn file_path_truncation_respects_char_boundaries() {
     let blobs = ev.blobs();
     assert!(blobs[2].len() <= 256);
     assert!(blobs[2].chars().all(|c| c == 'é'));
+}
+
+// ── hash_ip ─────────────────────────────────────────────────────────
+
+#[test]
+fn hash_ip_is_deterministic_and_hex() {
+    let a = hash_ip("203.0.113.7", "salt");
+    assert_eq!(a, hash_ip("203.0.113.7", "salt"));
+    assert_eq!(a.len(), 64); // SHA-256 hex
+    assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn hash_ip_salt_changes_output() {
+    // Same IP, different salt → different hash (salt actually participates).
+    assert_ne!(hash_ip("203.0.113.7", "a"), hash_ip("203.0.113.7", "b"));
+}
+
+#[test]
+fn hash_ip_empty_ip_stays_empty() {
+    // Unknown client → empty, so anonymous requests don't all collapse to one
+    // hash of the empty string.
+    assert_eq!(hash_ip("", "salt"), "");
 }
