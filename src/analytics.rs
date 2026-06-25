@@ -1,3 +1,5 @@
+//! Per-request logging to the Cloudflare Analytics Engine dataset.
+
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
 use crate::header_str;

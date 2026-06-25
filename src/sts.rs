@@ -9,9 +9,9 @@ use multistore::types::{RoleConfig, StoredCredential};
 
 /// Credential registry that serves a single hardcoded `_default` role.
 ///
-/// The default role trusts the Source Cooperative auth provider with no
-/// scope restrictions, allowing any authenticated user to obtain temporary
-/// credentials.
+/// The default role trusts the Source Cooperative auth provider with no scope
+/// restrictions, so any user holding a token for one of the configured
+/// audiences (`required_audiences`) can obtain temporary credentials.
 #[derive(Clone)]
 pub struct StsCredentialRegistry {
     default_role: RoleConfig,

@@ -1,3 +1,6 @@
+//! Client-side S3-style pagination over an account's product prefixes, until
+//! the Source Cooperative API supports server-side paginated product listing.
+
 use multistore::api::list::ListQueryParams;
 
 /// Result of applying pagination to a list of prefixes.

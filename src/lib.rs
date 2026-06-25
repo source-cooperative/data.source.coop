@@ -1,3 +1,12 @@
+//! Cloudflare Worker entrypoint for the Source Cooperative data proxy.
+//!
+//! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
+//! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
+//! `account:product` bucket → dispatch through the multistore gateway → emit
+//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! client, JWKS cache, OIDC provider) initialize lazily from the first
+//! request's config.
+
 mod analytics;
 mod authz;
 mod backend_auth;
@@ -154,6 +163,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         display_bucket_segments: 1,
     };
     let rewrite = if is_special_path {
+        // Special endpoints aren't S3 paths — pass them through unrewritten.
         multistore_path_mapping::RewriteResult {
             path: parts.path.clone(),
             query: parts.query.clone(),
@@ -279,6 +289,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
+    // Only successful GET reads of a real product (not /.well-known or /.sts).
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
         if response.status() < 400 && !parts.path.starts_with("/.") {
             location::maybe_broadcast_location(
