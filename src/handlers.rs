@@ -8,7 +8,7 @@ use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefi
 use multistore::route_handler::{ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture};
 
 use crate::pagination::paginate_prefixes;
-use crate::registry::SourceCoopRegistry;
+use crate::source_api::SourceCoopRegistry;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 

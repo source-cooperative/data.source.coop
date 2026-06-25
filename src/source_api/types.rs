@@ -1,6 +1,6 @@
 //! Response types for the Source Cooperative API (`/api/v1/...`), as fetched
-//! and cached in [`crate::cache`] and resolved into multistore `BucketConfig`s
-//! by [`crate::registry`].
+//! and cached in [`super::cache`] and resolved into multistore `BucketConfig`s
+//! by [`super::registry`].
 
 use serde::Deserialize;
 use std::collections::HashMap;

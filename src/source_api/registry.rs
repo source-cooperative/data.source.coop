@@ -29,7 +29,7 @@ impl SourceCoopRegistry {
 
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
-        let product_list = crate::cache::get_or_fetch_product_list(
+        let product_list = super::cache::get_or_fetch_product_list(
             &self.api_base_url,
             account,
             &self.api_auth,
@@ -130,7 +130,7 @@ async fn resolve_product(
     let _guard = span.enter();
 
     // 1. Fetch product metadata
-    let source_product = crate::cache::get_or_fetch_product(
+    let source_product = super::cache::get_or_fetch_product(
         api_base_url,
         account,
         product,
@@ -154,7 +154,7 @@ async fn resolve_product(
     // 3. Fetch the referenced connection by id, so the subject-scoped API
     // authorizes this exact resource (404/403 → BucketNotFound/AccessDenied)
     // instead of the proxy resolving it out of an over-broad cached list.
-    let connection = crate::cache::get_or_fetch_data_connection(
+    let connection = super::cache::get_or_fetch_data_connection(
         api_base_url,
         &mirror.connection_id,
         api_auth,
@@ -182,7 +182,7 @@ async fn resolve_product(
             return Err(ProxyError::AccessDenied);
         }
         // The caller must hold the product's `write` permission.
-        let permissions = crate::cache::get_or_fetch_permissions(
+        let permissions = super::cache::get_or_fetch_permissions(
             api_base_url,
             account,
             product,

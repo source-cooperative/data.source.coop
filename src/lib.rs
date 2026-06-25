@@ -1,16 +1,13 @@
 mod analytics;
-mod api_auth;
 mod authz;
 mod backend_auth;
-mod cache;
 mod config;
 mod handlers;
 mod pagination;
-mod registry;
 mod source_api;
 mod sts;
 
-use crate::api_auth::ApiAuth;
+use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
@@ -27,7 +24,6 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use registry::SourceCoopRegistry;
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -437,7 +433,7 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
     };
 
     ctx.wait_until(async move {
-        let is_public = cache::get_or_fetch_product(
+        let is_public = source_api::cache::get_or_fetch_product(
             &event.api_base_url,
             &event.account,
             &event.product,
