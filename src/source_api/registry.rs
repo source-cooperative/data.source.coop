@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use crate::authz::is_write_action;
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
 
+use super::types::DataConnectionDetails;
+
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
 #[derive(Clone)]
@@ -197,44 +199,7 @@ async fn resolve_product(
     }
 
     // 4. Build BucketConfig
-    let backend_type = match connection.details.provider.as_str() {
-        "s3" => "s3",
-        "az" | "azure" => "az",
-        "gcs" | "gs" => "gcs",
-        other => {
-            return Err(ProxyError::Internal(format!(
-                "unsupported provider: {}",
-                other
-            )))
-        }
-    }
-    .to_string();
-
-    let mut backend_options = HashMap::new();
-
-    match backend_type.as_str() {
-        "s3" => {
-            if let Some(ref bucket) = connection.details.bucket {
-                backend_options.insert("bucket_name".to_string(), bucket.clone());
-            }
-            if let Some(ref region) = connection.details.region {
-                backend_options.insert("region".to_string(), region.clone());
-                backend_options.insert(
-                    "endpoint".to_string(),
-                    format!("https://s3.{}.amazonaws.com", region),
-                );
-            }
-        }
-        "az" => {
-            if let Some(ref account_name) = connection.details.account_name {
-                backend_options.insert("account_name".to_string(), account_name.clone());
-            }
-            if let Some(ref container) = connection.details.container_name {
-                backend_options.insert("container_name".to_string(), container.clone());
-            }
-        }
-        _ => {}
-    }
+    let (backend_type, mut backend_options) = build_backend_options(&connection.details)?;
 
     // Backend authentication: unsigned (public) by default, or federate the
     // proxy's OIDC identity into the connection's role.
@@ -291,4 +256,47 @@ async fn resolve_product(
     );
 
     Ok(config)
+}
+
+/// Map a connection's raw `provider` to its multistore `backend_type`
+/// (`s3`/`az`/`gcs`) and the provider-specific `backend_options`. Doing the
+/// provider match once keeps the type and its options in a single source of
+/// truth. (`gcs` carries no options yet.)
+fn build_backend_options(
+    details: &DataConnectionDetails,
+) -> Result<(String, HashMap<String, String>), ProxyError> {
+    let mut options = HashMap::new();
+    let backend_type = match details.provider.as_str() {
+        "s3" => {
+            if let Some(ref bucket) = details.bucket {
+                options.insert("bucket_name".to_string(), bucket.clone());
+            }
+            if let Some(ref region) = details.region {
+                options.insert("region".to_string(), region.clone());
+                options.insert(
+                    "endpoint".to_string(),
+                    format!("https://s3.{}.amazonaws.com", region),
+                );
+            }
+            "s3"
+        }
+        "az" | "azure" => {
+            if let Some(ref account_name) = details.account_name {
+                options.insert("account_name".to_string(), account_name.clone());
+            }
+            if let Some(ref container) = details.container_name {
+                options.insert("container_name".to_string(), container.clone());
+            }
+            "az"
+        }
+        "gcs" | "gs" => "gcs",
+        other => {
+            return Err(ProxyError::Internal(format!(
+                "unsupported provider: {}",
+                other
+            )))
+        }
+    }
+    .to_string();
+    Ok((backend_type, options))
 }
