@@ -79,12 +79,19 @@ fn build_config(env: &Env) -> AppConfig {
         .map(|v| v.to_string())
         .expect("AUTH_ISSUER must be set");
 
-    let auth_audience = env
+    // AUTH_AUDIENCE is a comma-separated list of OAuth client IDs whose tokens
+    // `/.sts` accepts (e.g. the web app and the CLI). A token is accepted if its
+    // `aud` matches any entry.
+    let auth_audiences: Vec<String> = env
         .var("AUTH_AUDIENCE")
         .map(|v| v.to_string())
         .ok()
-        .filter(|s| !s.is_empty());
-    if auth_audience.is_none() {
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if auth_audiences.is_empty() {
         // Fail closed: without an audience restriction, an ID token minted for
         // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
         // credentials, so /.sts is disabled entirely (returns 501) until set.
@@ -96,7 +103,7 @@ fn build_config(env: &Env) -> AppConfig {
         oidc,
         session_token_key,
         auth_issuer,
-        auth_audience,
+        auth_audiences,
     }
 }
 
@@ -107,10 +114,11 @@ pub struct AppConfig {
     pub session_token_key: TokenKey,
     /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
     pub auth_issuer: String,
-    /// OAuth client ID that subject tokens presented to `/.sts` must be
-    /// issued to (the `aud` claim). Required; `None` disables the `/.sts`
-    /// endpoint entirely (returns 501) rather than accepting any audience.
-    pub auth_audience: Option<String>,
+    /// OAuth client IDs that subject tokens presented to `/.sts` may be issued
+    /// to (the `aud` claim); a token is accepted if it matches any. Parsed from
+    /// the comma-separated `AUTH_AUDIENCE`. Empty disables `/.sts` entirely
+    /// (returns 501) rather than accepting any audience.
+    pub auth_audiences: Vec<String>,
 }
 
 pub struct OidcConfig {

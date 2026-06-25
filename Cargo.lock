@@ -909,8 +909,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4ae47947aa57e1cfefcbe1eba035abd0033154c56e95812e9a34cf4c43aad06"
+source = "git+https://github.com/developmentseed/multistore?branch=feat%2Fmulti-audience#bccb584e3504954770298609eb35b4839bb08b9a"
 dependencies = [
  "async-trait",
  "base64",
@@ -936,8 +935,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "518e3a40526f673ed6b0e032c9cec7f45c917a7a50fdf7fca375f27b16e0f253"
+source = "git+https://github.com/developmentseed/multistore?branch=feat%2Fmulti-audience#bccb584e3504954770298609eb35b4839bb08b9a"
 dependencies = [
  "async-trait",
  "bytes",
@@ -961,8 +959,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04b3ee44b4a1f68ce7b97f288cf1f105f6e5d2f073c2bb06617b9380c29235d4"
+source = "git+https://github.com/developmentseed/multistore?branch=feat%2Fmulti-audience#bccb584e3504954770298609eb35b4839bb08b9a"
 dependencies = [
  "base64",
  "chrono",
@@ -981,8 +978,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffc11cdbe2bb11e105db4ceb63cdcf0ed89155df0f2da6248bcd532666d3db27"
+source = "git+https://github.com/developmentseed/multistore?branch=feat%2Fmulti-audience#bccb584e3504954770298609eb35b4839bb08b9a"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -992,8 +988,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97639b653d38ac5a5bdc01fe400275df028a481188634bee21991a211e19b9e6"
+source = "git+https://github.com/developmentseed/multistore?branch=feat%2Fmulti-audience#bccb584e3504954770298609eb35b4839bb08b9a"
 dependencies = [
  "aes-gcm",
  "base64",

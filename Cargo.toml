@@ -64,3 +64,13 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
+
+# TEMPORARY: build against the multi-audience branch of multistore until it is
+# released. Remove this block and bump the multistore* versions above once
+# https://github.com/developmentseed/multistore/pull/90 ships a release.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "feat/multi-audience" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "feat/multi-audience" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "feat/multi-audience" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "feat/multi-audience" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "feat/multi-audience" }
