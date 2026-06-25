@@ -1,5 +1,5 @@
 mod analytics;
-mod auth;
+mod api_auth;
 mod authz;
 mod backend_auth;
 mod cache;
@@ -9,7 +9,7 @@ mod pagination;
 mod registry;
 mod sts;
 
-use crate::auth::ApiAuth;
+use crate::api_auth::ApiAuth;
 use analytics::{extract_path_segments, log_request, RequestEvent};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
