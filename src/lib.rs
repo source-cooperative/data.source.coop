@@ -7,6 +7,7 @@ mod config;
 mod handlers;
 mod pagination;
 mod registry;
+mod source_api;
 mod sts;
 
 use crate::api_auth::ApiAuth;

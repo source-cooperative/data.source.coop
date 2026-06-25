@@ -3,7 +3,7 @@
 //! Each public function caches one API call type with its own TTL.
 //! Adjust the `*_CACHE_SECS` constants to tune per-datatype expiry.
 
-use crate::registry::{DataConnection, SourceProduct, SourceProductList};
+use crate::source_api::{DataConnection, SourceProduct, SourceProductList};
 use multistore::error::ProxyError;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
