@@ -3,6 +3,19 @@ main = "build/worker/shim.mjs"
 workers_dev = true
 
 [vars]
+LOG_LEVEL = "DEBUG"
+SOURCE_API_URL = "https://staging.source.coop"
+
+# Sign the proxy's on-behalf-of API token (and AWS federation assertion) as the
+# canonical staging proxy, not this ephemeral preview hostname: staging's API and
+# AWS IAM trust only issuer https://data.staging.source.coop + kid data-proxy-1
+# and fetch its JWKS from that host (never the pr-*.workers.dev origin). Signing
+# as anything else fails JWKS verification (ERR_JWKS_NO_MATCHING_KEY), so the call
+# falls back to anonymous → 403 on restricted products. Requires the `preview`
+# environment's OIDC_PROVIDER_KEY to be the staging signing key.
+OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
+OIDC_PROVIDER_KID = "data-proxy-1"
+
 # Preview is staging-equivalent (shares staging analytics + log stream), so
 # trust the staging Ory issuer and accept the staging frontend + CLI client_ids.
 # AUTH_AUDIENCE must be set or /.sts fail-closes with 501.
