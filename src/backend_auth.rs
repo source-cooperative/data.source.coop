@@ -88,7 +88,8 @@ where
 
 /// Translate a connection's [`BackendAuth`] into multistore `backend_options`.
 ///
-/// `provider` is the resolved backend type (`s3`/`az`/`gcs`).
+/// `backend_type` is the normalized backend (`s3`/`az`/`gcs`) — not the raw
+/// `connection.details.provider` string it was mapped from.
 ///
 /// - [`Unsigned`](BackendAuth::Unsigned) sets `skip_signature` so the proxy
 ///   issues an unsigned request to a public bucket.
@@ -109,7 +110,7 @@ where
 pub(crate) fn apply_backend_auth(
     auth: &BackendAuth,
     connection_id: &str,
-    provider: &str,
+    backend_type: &str,
     options: &mut HashMap<String, String>,
 ) -> Result<(), ProxyError> {
     match auth {
@@ -119,10 +120,10 @@ pub(crate) fn apply_backend_auth(
         // STS credentials only sign S3 requests. Fail clean if the API ever pairs
         // this with a non-S3 provider, rather than injecting AWS options into an
         // Azure/GCS request that would fail opaquely downstream.
-        BackendAuth::S3WebIdentityRole { .. } if provider != "s3" => {
+        BackendAuth::S3WebIdentityRole { .. } if backend_type != "s3" => {
             tracing::warn!(
                 connection_id,
-                provider,
+                backend_type,
                 "s3_web_identity_role on a non-s3 connection",
             );
             return Err(ProxyError::BackendAuthError("ProviderMismatch".into()));
