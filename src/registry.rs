@@ -95,13 +95,18 @@ impl BucketRegistry for SourceCoopRegistry {
         action: Action,
         _key: &str,
     ) -> bool {
-        // Per-key authorization for batch delete. Source Cooperative authorizes
-        // writes at the product level in `get_bucket` (the caller holds product
-        // write permission, the connection is writable), so every key in a batch
-        // delete that reached this point is permitted. The multistore default
-        // would deny every key, since callers' STS sessions carry no per-bucket
-        // scopes. Gating on a write action is defense-in-depth: this is only
-        // reached for write batch ops, and never blanket-allows a read.
+        // Per-key authorization for batch delete. Correctness depends on
+        // `get_bucket` having already authorized this caller for `name`: Source
+        // Cooperative authorizes writes at the product level there (caller holds
+        // product write permission, connection is writable), so every key in a
+        // batch delete that reached this point is permitted. The multistore
+        // default would deny every key, since callers' STS sessions carry no
+        // per-bucket scopes. If a future multistore ever invoked `authorize_key`
+        // without a prior successful `get_bucket` for the same `name`, this gate
+        // alone would be insufficient — it only confirms the op is a write, not
+        // that the caller is entitled. Gating on a write action is thus
+        // defense-in-depth: only reached for write batch ops, never blanket-
+        // allows a read.
         is_write_action(action)
     }
 }

@@ -25,9 +25,16 @@ const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// Product metadata (`/api/v1/products/{account}/{product}`).
 const PRODUCT_CACHE_SECS: u32 = 300; // 5 minutes
 
-/// A single data connection (`/api/v1/data-connections/{id}`). Short to match
-/// product metadata: a per-id response is subject-authorized, so the TTL is an
+/// A single data connection (`/api/v1/data-connections/{id}`). Matches product
+/// metadata: a per-id response is subject-authorized, so the TTL is an
 /// authorization-revocation lag, not just a freshness knob.
+///
+/// Longer than `PERMISSIONS_CACHE_SECS` on purpose, even though `read_only`
+/// gates writes from here. This is fetched on *every* request (read and write),
+/// so a short TTL taxes the read path; flipping a connection read-only freezes
+/// *all* writers and is a deliberate admin act where ~5 min lag is acceptable.
+/// Revoking a single (e.g. compromised) account's write grant is the urgent
+/// case, and that rides the 60s permission TTL, not this one.
 const DATA_CONNECTION_CACHE_SECS: u32 = 300; // 5 minutes
 
 /// Product list for an account (`/api/v1/products/{account}`).
