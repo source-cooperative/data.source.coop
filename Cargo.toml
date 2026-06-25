@@ -27,6 +27,7 @@ name = "authz"
 path = "tests/authz.rs"
 
 [dependencies]
+# Multistore
 multistore = { version = "0.6.0", features = ["azure"] }
 multistore-oidc-provider = "0.6.0"
 multistore-path-mapping = "0.6.0"

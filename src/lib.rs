@@ -131,7 +131,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
     // be exchanged for a user's credentials. When unset, refuse the endpoint
     // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audience.is_none() {
+    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
         let resp = ErrorResponse {
             code: "NotImplemented".to_string(),
             message: "STS token exchange is not configured".to_string(),
@@ -187,9 +187,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // Mount STS token exchange only when an audience restriction is configured.
     // The unset case is refused by the fail-closed 501 short-circuit above, so
     // an unrestricted exchanger is never registered.
-    if let Some(audience) = &config.auth_audience {
+    if !config.auth_audiences.is_empty() {
         let sts_registry =
-            StsCredentialRegistry::new(config.auth_issuer.clone(), Some(audience.clone()));
+            StsCredentialRegistry::new(config.auth_issuer.clone(), config.auth_audiences.clone());
         router = router.with_sts(
             "/.sts",
             sts_registry,
