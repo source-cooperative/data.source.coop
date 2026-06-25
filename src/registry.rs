@@ -192,7 +192,7 @@ async fn resolve_product(
             subject,
         )
         .await?;
-        if !permissions.iter().any(|p| p == "write") {
+        if !permissions.iter().any(|p| p.eq_ignore_ascii_case("write")) {
             return Err(ProxyError::AccessDenied);
         }
     }
