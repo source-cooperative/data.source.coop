@@ -908,8 +908,8 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.5.1"
-source = "git+https://github.com/developmentseed/multistore?branch=worktree-data-edit-ops-plan#fe567baa41c37906abd96326847374610bed3434"
+version = "0.6.0"
+source = "git+https://github.com/developmentseed/multistore?tag=v0.6.0#b0f5b7fed72d216d3474ebffacc6de1c074e616f"
 dependencies = [
  "async-trait",
  "base64",
@@ -935,8 +935,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.5.1"
-source = "git+https://github.com/developmentseed/multistore?branch=worktree-data-edit-ops-plan#fe567baa41c37906abd96326847374610bed3434"
+version = "0.6.0"
+source = "git+https://github.com/developmentseed/multistore?tag=v0.6.0#b0f5b7fed72d216d3474ebffacc6de1c074e616f"
 dependencies = [
  "async-trait",
  "bytes",
@@ -959,8 +959,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.5.1"
-source = "git+https://github.com/developmentseed/multistore?branch=worktree-data-edit-ops-plan#fe567baa41c37906abd96326847374610bed3434"
+version = "0.6.0"
+source = "git+https://github.com/developmentseed/multistore?tag=v0.6.0#b0f5b7fed72d216d3474ebffacc6de1c074e616f"
 dependencies = [
  "base64",
  "chrono",
@@ -978,8 +978,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.5.1"
-source = "git+https://github.com/developmentseed/multistore?branch=worktree-data-edit-ops-plan#fe567baa41c37906abd96326847374610bed3434"
+version = "0.6.0"
+source = "git+https://github.com/developmentseed/multistore?tag=v0.6.0#b0f5b7fed72d216d3474ebffacc6de1c074e616f"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -988,8 +988,8 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.5.1"
-source = "git+https://github.com/developmentseed/multistore?branch=worktree-data-edit-ops-plan#fe567baa41c37906abd96326847374610bed3434"
+version = "0.6.0"
+source = "git+https://github.com/developmentseed/multistore?tag=v0.6.0#b0f5b7fed72d216d3474ebffacc6de1c074e616f"
 dependencies = [
  "aes-gcm",
  "base64",

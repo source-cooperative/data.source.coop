@@ -30,7 +30,8 @@ impl StsCredentialRegistry {
                 role_id: "_default".to_string(),
                 name: "Default".to_string(),
                 trusted_oidc_issuers: vec![oidc_issuer],
-                required_audience,
+                // None -> [] (no audience restriction), Some(x) -> [x] (require aud == x).
+                required_audiences: required_audience.into_iter().collect(),
                 subject_conditions: vec![],
                 allowed_scopes: vec![], // unlimited
                 max_session_duration_secs: 3600,
