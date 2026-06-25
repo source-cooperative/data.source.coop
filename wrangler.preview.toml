@@ -2,6 +2,13 @@ compatibility_date = "2026-03-17"
 main = "build/worker/shim.mjs"
 workers_dev = true
 
+[vars]
+# Preview is staging-equivalent (shares staging analytics + log stream), so
+# trust the staging Ory issuer and accept the staging frontend + CLI client_ids.
+# AUTH_AUDIENCE must be set or /.sts fail-closes with 501.
+AUTH_ISSUER = "https://auth.staging.source.coop"
+AUTH_AUDIENCE = "1123dfa8-469f-44fe-b9f4-9b76f06fd325,a79c9537-be78-454a-9ea1-b96a1be811cc"  # staging frontend + source-coop-cli client_ids
+
 [build]
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
