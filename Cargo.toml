@@ -24,10 +24,10 @@ path = "tests/backend_auth.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.5.1", features = ["azure"] }
-multistore-oidc-provider = { version = "0.5.1" }
-multistore-path-mapping = { version = "0.5.1" }
-multistore-sts = { version = "0.5.1" }
+multistore = { version = "0.6.0", features = ["azure"] }
+multistore-oidc-provider = { version = "0.6.0" }
+multistore-path-mapping = { version = "0.6.0" }
+multistore-sts = { version = "0.6.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -45,7 +45,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.5.1", features = ["azure"] }
+multistore-cf-workers = { version = "0.6.0", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
@@ -64,3 +64,15 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
+
+# multistore-cf-workers 0.6.0 is not on crates.io, so all multistore crates are
+# pinned to the v0.6.0 git tag to keep `multistore` single-sourced: a git
+# cf-workers alongside registry crates would pull two copies of `multistore`
+# and fail to compile. Remove this block once multistore-cf-workers 0.6.0
+# publishes and the version deps above resolve from crates.io.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
