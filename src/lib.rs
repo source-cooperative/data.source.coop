@@ -9,7 +9,7 @@ mod source_api;
 mod sts;
 
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
-use analytics::{extract_path_segments, log_analytics};
+use analytics::log_analytics;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
@@ -330,6 +330,20 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
+}
+
+/// Split `/{account}/{product}[/{key}]` into its segments; any segment not
+/// present is `None`. Used to tag the analytics event and the location broadcast.
+fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return (None, None, None);
+    }
+    let mut parts = trimmed.splitn(3, '/');
+    let account = parts.next();
+    let product = parts.next();
+    let key = parts.next();
+    (account, product, key)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
