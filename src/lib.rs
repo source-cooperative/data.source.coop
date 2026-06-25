@@ -118,7 +118,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
-        return Ok(add_cors(empty_response(204)));
+        let init = web_sys::ResponseInit::new();
+        init.set_status(204);
+        let resp = web_sys::Response::new_with_opt_str_and_init(None, &init)
+            .unwrap_or_else(|_| web_sys::Response::new().unwrap());
+        return Ok(add_cors(resp));
     }
 
     // Writes (PUT/POST/DELETE) flow through the gateway: the registry authorizes
@@ -201,10 +205,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         );
     }
 
-    let router = router.route("/", IndexHandler).route(
-        "/{bucket}",
-        AccountListHandler::new(registry.clone(), &mapping),
-    );
+    let router = router
+        .route("/", IndexHandler)
+        .route("/{bucket}", AccountListHandler::new(registry.clone()));
 
     // ── Backend federation middleware ─────────────────────────────
     // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
@@ -465,13 +468,6 @@ fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
             .fetch("https://public-log-stream/location", Some(init))
             .await;
     });
-}
-
-fn empty_response(status: u16) -> web_sys::Response {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    web_sys::Response::new_with_opt_str_and_init(None, &init)
-        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

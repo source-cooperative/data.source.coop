@@ -41,18 +41,11 @@ impl RouteHandler for IndexHandler {
 /// or when the request isn't a list operation.
 pub struct AccountListHandler {
     registry: SourceCoopRegistry,
-    bucket_separator: String,
 }
 
 impl AccountListHandler {
-    pub fn new(
-        registry: SourceCoopRegistry,
-        mapping: &multistore_path_mapping::PathMapping,
-    ) -> Self {
-        Self {
-            registry,
-            bucket_separator: mapping.bucket_separator.clone(),
-        }
+    pub fn new(registry: SourceCoopRegistry) -> Self {
+        Self { registry }
     }
 }
 
@@ -65,7 +58,7 @@ impl RouteHandler for AccountListHandler {
             };
 
             // Already rewritten (e.g. "cholmes:admin-boundaries") → fall through
-            if bucket.contains(&self.bucket_separator) {
+            if bucket.contains(crate::BUCKET_SEPARATOR) {
                 return None;
             }
 

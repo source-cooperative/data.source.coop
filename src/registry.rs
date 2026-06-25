@@ -297,15 +297,14 @@ async fn resolve_product(
 // ── API response types ─────────────────────────────────────────────
 
 /// Product visibility, mirroring `ProductVisibility` in the source.coop data
-/// model. Replaced the legacy `data_mode` field in source.coop#284. Any missing
-/// or unrecognized value deserializes to `Unknown`, which is treated as
-/// non-public so we fail closed.
+/// model. Replaced the legacy `data_mode` field in source.coop#284. Only
+/// `Public` is acted on; every other value (`unlisted`, `restricted`, missing,
+/// or unrecognized) deserializes to `Unknown` and is treated as non-public, so
+/// we fail closed.
 #[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
     Public,
-    Unlisted,
-    Restricted,
     #[default]
     #[serde(other)]
     Unknown,
