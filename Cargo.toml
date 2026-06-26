@@ -28,10 +28,10 @@ path = "tests/authz.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.6.0", features = ["azure"] }
-multistore-oidc-provider = "0.6.0"
-multistore-path-mapping = "0.6.0"
-multistore-sts = "0.6.0"
+multistore = { version = "0.6.1", features = ["azure"] }
+multistore-oidc-provider = "0.6.1"
+multistore-path-mapping = "0.6.1"
+multistore-sts = "0.6.1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -49,7 +49,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.6.0", features = ["azure"] }
+multistore-cf-workers = { version = "0.6.1", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
@@ -68,15 +68,3 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
-
-# TEMPORARY: build against the aws-chunked write-decode fix branch of multistore
-# until it ships in a release. Without this, the modern aws-cli's default
-# trailer-checksum uploads are stored as raw chunk framing (corrupted writes).
-# Remove this block and bump the multistore* deps above once
-# https://github.com/developmentseed/multistore/pull/92 is released.
-[patch.crates-io]
-multistore = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }

@@ -908,8 +908,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#35f5aad639e93707241c364febb9fd0c81406528"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30e6e4ce2238a7315cba3934bb362a435df7a6031c407f234b58c64585fe4c28"
 dependencies = [
  "async-trait",
  "base64",
@@ -935,8 +936,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#35f5aad639e93707241c364febb9fd0c81406528"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b938b67468660c53f631e40e52f090bd59732c905c0155beda02f9dc6d64d52a"
 dependencies = [
  "async-trait",
  "bytes",
@@ -959,8 +961,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#35f5aad639e93707241c364febb9fd0c81406528"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41553a965899da911d5a6b6c3be01810db8934667660a1b4ec488c307d5f361f"
 dependencies = [
  "base64",
  "chrono",
@@ -978,8 +981,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#35f5aad639e93707241c364febb9fd0c81406528"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e7a0dcfae3cebdc2a20f5be4c8d2d5633aa87ed45df6d418c2ce549d4a73eac"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -988,8 +992,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#35f5aad639e93707241c364febb9fd0c81406528"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35872fed83157576bd67a1abdc854345e19e0d96bb74f5457660839edefd502e"
 dependencies = [
  "aes-gcm",
  "base64",
