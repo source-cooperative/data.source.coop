@@ -1,3 +1,5 @@
+//! Process-wide configuration parsed once from Worker env vars + secrets.
+
 use std::sync::OnceLock;
 
 use multistore_oidc_provider::jwt::JwtSigner;

@@ -4,11 +4,12 @@ use multistore::api::response::BucketEntry;
 use multistore::error::ProxyError;
 use multistore::registry::{BucketRegistry, ResolvedBucket};
 use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
-use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::authz::is_write_action;
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
+
+use super::types::DataConnectionDetails;
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
@@ -30,7 +31,7 @@ impl SourceCoopRegistry {
 
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
-        let product_list = crate::cache::get_or_fetch_product_list(
+        let product_list = super::cache::get_or_fetch_product_list(
             &self.api_base_url,
             account,
             &self.api_auth,
@@ -131,7 +132,7 @@ async fn resolve_product(
     let _guard = span.enter();
 
     // 1. Fetch product metadata
-    let source_product = crate::cache::get_or_fetch_product(
+    let source_product = super::cache::get_or_fetch_product(
         api_base_url,
         account,
         product,
@@ -155,7 +156,7 @@ async fn resolve_product(
     // 3. Fetch the referenced connection by id, so the subject-scoped API
     // authorizes this exact resource (404/403 → BucketNotFound/AccessDenied)
     // instead of the proxy resolving it out of an over-broad cached list.
-    let connection = crate::cache::get_or_fetch_data_connection(
+    let connection = super::cache::get_or_fetch_data_connection(
         api_base_url,
         &mirror.connection_id,
         api_auth,
@@ -183,7 +184,7 @@ async fn resolve_product(
             return Err(ProxyError::AccessDenied);
         }
         // The caller must hold the product's `write` permission.
-        let permissions = crate::cache::get_or_fetch_permissions(
+        let permissions = super::cache::get_or_fetch_permissions(
             api_base_url,
             account,
             product,
@@ -198,44 +199,7 @@ async fn resolve_product(
     }
 
     // 4. Build BucketConfig
-    let backend_type = match connection.details.provider.as_str() {
-        "s3" => "s3",
-        "az" | "azure" => "az",
-        "gcs" | "gs" => "gcs",
-        other => {
-            return Err(ProxyError::Internal(format!(
-                "unsupported provider: {}",
-                other
-            )))
-        }
-    }
-    .to_string();
-
-    let mut backend_options = HashMap::new();
-
-    match backend_type.as_str() {
-        "s3" => {
-            if let Some(ref bucket) = connection.details.bucket {
-                backend_options.insert("bucket_name".to_string(), bucket.clone());
-            }
-            if let Some(ref region) = connection.details.region {
-                backend_options.insert("region".to_string(), region.clone());
-                backend_options.insert(
-                    "endpoint".to_string(),
-                    format!("https://s3.{}.amazonaws.com", region),
-                );
-            }
-        }
-        "az" => {
-            if let Some(ref account_name) = connection.details.account_name {
-                backend_options.insert("account_name".to_string(), account_name.clone());
-            }
-            if let Some(ref container) = connection.details.container_name {
-                backend_options.insert("container_name".to_string(), container.clone());
-            }
-        }
-        _ => {}
-    }
+    let (backend_type, mut backend_options) = build_backend_options(&connection.details)?;
 
     // Backend authentication: unsigned (public) by default, or federate the
     // proxy's OIDC identity into the connection's role.
@@ -294,78 +258,45 @@ async fn resolve_product(
     Ok(config)
 }
 
-// ── API response types ─────────────────────────────────────────────
-
-/// Product visibility, mirroring `ProductVisibility` in the source.coop data
-/// model. Replaced the legacy `data_mode` field in source.coop#284. Any missing
-/// or unrecognized value deserializes to `Unknown`, which is treated as
-/// non-public so we fail closed.
-#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Visibility {
-    Public,
-    Unlisted,
-    Restricted,
-    #[default]
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SourceProduct {
-    pub product_id: String,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(default)]
-    pub visibility: Visibility,
-    pub metadata: SourceProductMetadata,
-}
-
-impl SourceProduct {
-    pub fn is_public(&self) -> bool {
-        !self.disabled && self.visibility == Visibility::Public
+/// Map a connection's raw `provider` to its multistore `backend_type`
+/// (`s3`/`az`/`gcs`) and the provider-specific `backend_options`. Doing the
+/// provider match once keeps the type and its options in a single source of
+/// truth. (`gcs` carries no options yet.)
+fn build_backend_options(
+    details: &DataConnectionDetails,
+) -> Result<(String, HashMap<String, String>), ProxyError> {
+    let mut options = HashMap::new();
+    let backend_type = match details.provider.as_str() {
+        "s3" => {
+            if let Some(ref bucket) = details.bucket {
+                options.insert("bucket_name".to_string(), bucket.clone());
+            }
+            if let Some(ref region) = details.region {
+                options.insert("region".to_string(), region.clone());
+                options.insert(
+                    "endpoint".to_string(),
+                    format!("https://s3.{}.amazonaws.com", region),
+                );
+            }
+            "s3"
+        }
+        "az" | "azure" => {
+            if let Some(ref account_name) = details.account_name {
+                options.insert("account_name".to_string(), account_name.clone());
+            }
+            if let Some(ref container) = details.container_name {
+                options.insert("container_name".to_string(), container.clone());
+            }
+            "az"
+        }
+        "gcs" | "gs" => "gcs",
+        other => {
+            return Err(ProxyError::Internal(format!(
+                "unsupported provider: {}",
+                other
+            )))
+        }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SourceProductMetadata {
-    pub mirrors: HashMap<String, SourceProductMirror>,
-    pub primary_mirror: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SourceProductMirror {
-    pub connection_id: String,
-    pub prefix: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DataConnection {
-    pub data_connection_id: String,
-    /// Whether the connection forbids writes. Required (no serde default): an
-    /// absent flag fails the fetch rather than defaulting to writable.
-    pub read_only: bool,
-    pub details: DataConnectionDetails,
-    /// How the proxy authenticates to this connection's backend. A sibling of
-    /// `details`, matching the Source API's `DataConnection` shape. Absent →
-    /// [`BackendAuth::Unsigned`] (public bucket); a present-but-malformed value
-    /// becomes `Unsupported` (fail closed) rather than erroring the fetch (see
-    /// [`deserialize_lenient`](crate::backend_auth::deserialize_lenient)).
-    #[serde(default, deserialize_with = "crate::backend_auth::deserialize_lenient")]
-    pub authentication: BackendAuth,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DataConnectionDetails {
-    pub provider: String,
-    pub bucket: Option<String>,
-    pub region: Option<String>,
-    pub base_prefix: Option<String>,
-    pub account_name: Option<String>,
-    pub container_name: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SourceProductList {
-    pub products: Vec<SourceProduct>,
+    .to_string();
+    Ok((backend_type, options))
 }

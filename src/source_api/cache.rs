@@ -3,7 +3,7 @@
 //! Each public function caches one API call type with its own TTL.
 //! Adjust the `*_CACHE_SECS` constants to tune per-datatype expiry.
 
-use crate::registry::{DataConnection, SourceProduct, SourceProductList};
+use super::types::{DataConnection, SourceProduct, SourceProductList};
 use multistore::error::ProxyError;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
@@ -172,12 +172,9 @@ fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
         // unique key.
         Some(subj) => {
             let encoded = utf8_percent_encode(subj, PATH_SEGMENT);
-            // Pick the query separator defensively. Callers pass query-free
-            // URLs today (path segments are percent-encoded above), but a stray
-            // `?` must never silently merge into an existing query and forge a
-            // cache key that collides with another caller's.
-            let sep = if api_url.contains('?') { '&' } else { '?' };
-            format!("{api_url}{sep}subject={encoded}")
+            // Callers always pass query-free URLs (path segments are
+            // percent-encoded above), so `?` is the separator.
+            format!("{api_url}?subject={encoded}")
         }
         None => api_url.to_string(),
     }

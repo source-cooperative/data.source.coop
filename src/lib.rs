@@ -1,16 +1,24 @@
+//! Cloudflare Worker entrypoint for the Source Cooperative data proxy.
+//!
+//! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
+//! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
+//! `account:product` bucket → dispatch through the multistore gateway → emit
+//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! client, JWKS cache, OIDC provider) initialize lazily from the first
+//! request's config.
+
 mod analytics;
-mod auth;
 mod authz;
 mod backend_auth;
-mod cache;
 mod config;
 mod handlers;
+mod location;
 mod pagination;
-mod registry;
+mod source_api;
 mod sts;
 
-use crate::auth::ApiAuth;
-use analytics::{extract_path_segments, log_request, RequestEvent};
+use crate::source_api::{ApiAuth, SourceCoopRegistry};
+use analytics::log_analytics;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
@@ -26,7 +34,6 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use registry::SourceCoopRegistry;
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -118,7 +125,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
-        return Ok(add_cors(empty_response(204)));
+        let init = web_sys::ResponseInit::new();
+        init.set_status(204);
+        let resp = web_sys::Response::new_with_opt_str_and_init(None, &init)
+            .unwrap_or_else(|_| web_sys::Response::new().unwrap());
+        return Ok(add_cors(resp));
     }
 
     // Writes (PUT/POST/DELETE) flow through the gateway: the registry authorizes
@@ -152,6 +163,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         display_bucket_segments: 1,
     };
     let rewrite = if is_special_path {
+        // Special endpoints aren't S3 paths — pass them through unrewritten.
         multistore_path_mapping::RewriteResult {
             path: parts.path.clone(),
             query: parts.query.clone(),
@@ -201,10 +213,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         );
     }
 
-    let router = router.route("/", IndexHandler).route(
-        "/{bucket}",
-        AccountListHandler::new(registry.clone(), &mapping),
-    );
+    let router = router
+        .route("/", IndexHandler)
+        .route("/{bucket}", AccountListHandler::new(registry.clone()));
 
     // ── Backend federation middleware ─────────────────────────────
     // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
@@ -278,13 +289,14 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
+    // Only successful GET reads of a real product (not /.well-known or /.sts).
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
         if response.status() < 400 && !parts.path.starts_with("/.") {
-            maybe_broadcast_location(
+            location::maybe_broadcast_location(
                 &ctx,
                 &env,
-                LocationEvent {
-                    cf: CfProperties::from_request(&req),
+                location::LocationEvent {
+                    cf: location::CfProperties::from_request(&req),
                     country: header_str(&parts.headers, "cf-ipcountry").to_string(),
                     account: acct.to_string(),
                     product: prod.to_string(),
@@ -324,154 +336,25 @@ fn extract_request_id(headers: &http::HeaderMap) -> String {
         .to_string()
 }
 
-fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
+pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
     headers
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
 }
 
-// ── Analytics ──────────────────────────────────────────────────────
-
-fn log_analytics(
-    env: &Env,
-    headers: &http::HeaderMap,
-    response: &web_sys::Response,
-    method: &http::Method,
-    account: Option<&str>,
-    product: Option<&str>,
-    key: Option<&str>,
-) {
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let bytes_sent: f64 = response
-        .headers()
-        .get("content-length")
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.0);
-
-    log_request(
-        env,
-        &RequestEvent {
-            account_id: account.unwrap_or(""),
-            product_id: product.unwrap_or(""),
-            file_path: key.unwrap_or(""),
-            method: method.as_str(),
-            user_id: header_str(headers, "x-source-user-id"),
-            country: header_str(headers, "cf-ipcountry"),
-            content_type: &content_type,
-            bytes_sent,
-            status_code: response.status() as f64,
-        },
-    );
-}
-
-// ── Location broadcasting ──────────────────────────────────────────
-
-/// Properties extracted from the Cloudflare `request.cf` object.
-#[derive(Default)]
-struct CfProperties {
-    latitude: String,
-    longitude: String,
-    city: String,
-    colo: String,
-}
-
-impl CfProperties {
-    fn from_request(req: &web_sys::Request) -> Self {
-        let cf =
-            js_sys::Reflect::get(req, &wasm_bindgen::JsValue::from_str("cf")).unwrap_or_default();
-        if cf.is_undefined() || cf.is_null() {
-            return Self::default();
-        }
-        let get = |key: &str| -> String {
-            js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
-                .ok()
-                .map(|v| {
-                    v.as_string()
-                        .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
-                })
-                .unwrap_or_default()
-        };
-        Self {
-            latitude: get("latitude"),
-            longitude: get("longitude"),
-            city: get("city"),
-            colo: get("colo"),
-        }
+/// Split `/{account}/{product}[/{key}]` into its segments; any segment not
+/// present is `None`. Used to tag the analytics event and the location broadcast.
+fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return (None, None, None);
     }
-}
-
-struct LocationEvent {
-    cf: CfProperties,
-    country: String,
-    account: String,
-    product: String,
-    key: String,
-    api_base_url: String,
-    api_auth: ApiAuth,
-}
-
-/// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
-/// Runs entirely inside `wait_until` so it never blocks the response.
-fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
-    let (Ok(lat), Ok(lon)) = (
-        event.cf.latitude.parse::<f64>(),
-        event.cf.longitude.parse::<f64>(),
-    ) else {
-        return;
-    };
-
-    let Ok(location_ws) = env.service("PUBLIC_LOG_STREAM") else {
-        return;
-    };
-
-    ctx.wait_until(async move {
-        let is_public = cache::get_or_fetch_product(
-            &event.api_base_url,
-            &event.account,
-            &event.product,
-            &event.api_auth,
-            "",
-            None,
-        )
-        .await
-        .map(|p| p.is_public())
-        .unwrap_or(false);
-        if !is_public {
-            return;
-        }
-
-        let body = serde_json::json!({
-            "lat": lat,
-            "lon": lon,
-            "city": event.cf.city,
-            "country": event.country,
-            "colo": event.cf.colo,
-            "account_id": event.account,
-            "product_id": event.product,
-            "path": event.key,
-        });
-        let mut init = worker::RequestInit::new();
-        init.with_method(worker::Method::Post);
-        init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
-        let _ = location_ws
-            .fetch("https://public-log-stream/location", Some(init))
-            .await;
-    });
-}
-
-fn empty_response(status: u16) -> web_sys::Response {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    web_sys::Response::new_with_opt_str_and_init(None, &init)
-        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
+    let mut parts = trimmed.splitn(3, '/');
+    let account = parts.next();
+    let product = parts.next();
+    let key = parts.next();
+    (account, product, key)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

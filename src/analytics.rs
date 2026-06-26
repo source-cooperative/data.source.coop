@@ -1,7 +1,11 @@
+//! Per-request logging to the Cloudflare Analytics Engine dataset.
+
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
+use crate::header_str;
+
 /// Metadata collected from the request and response for analytics logging.
-pub struct RequestEvent<'a> {
+struct RequestEvent<'a> {
     pub account_id: &'a str,
     pub product_id: &'a str,
     pub file_path: &'a str,
@@ -29,7 +33,7 @@ pub struct RequestEvent<'a> {
 ///
 /// This function never returns an error — failures are logged and swallowed
 /// so that analytics never blocks a response.
-pub fn log_request(env: &Env, event: &RequestEvent) {
+fn log_request(env: &Env, event: &RequestEvent) {
     let dataset = match env.analytics_engine("ANALYTICS") {
         Ok(ds) => ds,
         Err(e) => {
@@ -61,22 +65,6 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
     }
 }
 
-/// Extract account and product segments from a URL path.
-///
-/// Given `/{account}/{product}[/{key}]`, returns `(account, product, key)`.
-/// Returns `None` for segments that aren't present.
-pub fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        return (None, None, None);
-    }
-    let mut parts = trimmed.splitn(3, '/');
-    let account = parts.next();
-    let product = parts.next();
-    let key = parts.next();
-    (account, product, key)
-}
-
 /// Truncate a string to at most `max_bytes` bytes on a char boundary.
 fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -87,4 +75,45 @@ fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
         end -= 1;
     }
     &s[..end]
+}
+
+/// Build a `RequestEvent` from the request + response and write it to the
+/// Analytics Engine. Never errors — failures are logged and swallowed.
+pub(crate) fn log_analytics(
+    env: &Env,
+    headers: &http::HeaderMap,
+    response: &web_sys::Response,
+    method: &http::Method,
+    account: Option<&str>,
+    product: Option<&str>,
+    key: Option<&str>,
+) {
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let bytes_sent: f64 = response
+        .headers()
+        .get("content-length")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+    log_request(
+        env,
+        &RequestEvent {
+            account_id: account.unwrap_or(""),
+            product_id: product.unwrap_or(""),
+            file_path: key.unwrap_or(""),
+            method: method.as_str(),
+            user_id: header_str(headers, "x-source-user-id"),
+            country: header_str(headers, "cf-ipcountry"),
+            content_type: &content_type,
+            bytes_sent,
+            status_code: response.status() as f64,
+        },
+    );
 }

@@ -3,7 +3,7 @@ use multistore_oidc_provider::jwt::JwtSigner;
 /// How the proxy authenticates to the Source Cooperative API.
 #[derive(Clone)]
 pub(crate) struct ApiAuth {
-    signer: Box<JwtSigner>,
+    signer: JwtSigner,
     issuer: String,
     audience: String,
 }
@@ -11,7 +11,7 @@ pub(crate) struct ApiAuth {
 impl ApiAuth {
     pub fn new(signer: JwtSigner, issuer: String, audience: String) -> Self {
         Self {
-            signer: Box::new(signer),
+            signer,
             issuer,
             audience,
         }
