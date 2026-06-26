@@ -1,5 +1,6 @@
 mod analytics;
 mod auth;
+mod authz;
 mod backend_auth;
 mod cache;
 mod config;
@@ -115,36 +116,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // methods and bypass the S3 object/bucket path mapping below.
     let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
 
-    // POST is only meaningful for STS token exchange; everything else is
-    // read-only, so don't advertise write methods globally via CORS.
-    let cors_allow_post = parts.path == "/.sts";
-
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
-        return Ok(add_cors(empty_response(204), cors_allow_post));
+        return Ok(add_cors(empty_response(204)));
     }
 
-    // ── Short-circuit: write methods ────────────────────────────────
-    // The proxy is read-only for object/bucket paths, so writes get an
-    // S3-style 405 rather than falling through to bucket resolution (which
-    // would misleadingly 404). Special endpoints are exempt.
-    if !is_special_path
-        && matches!(
-            parts.method,
-            http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
-        )
-    {
-        let resp = ErrorResponse {
-            code: "MethodNotAllowed".to_string(),
-            message: "Method Not Allowed".to_string(),
-            resource: String::new(),
-            request_id: request_id.clone(),
-        };
-        return Ok(add_cors(
-            GatewayResponse::Response(ProxyResult::xml(405, resp.to_xml())).into_web_sys(),
-            cors_allow_post,
-        ));
-    }
+    // Writes (PUT/POST/DELETE) flow through the gateway: the registry authorizes
+    // them (caller must hold product write permission; the connection must be
+    // writable and signable) and the backend-auth middleware signs them. See
+    // `authz` and `backend_auth`.
 
     // ── Short-circuit: STS disabled (fail closed) ───────────────────
     // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
@@ -160,7 +140,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         };
         return Ok(add_cors(
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-            cors_allow_post,
         ));
     }
 
@@ -314,7 +293,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(response, cors_allow_post);
+    let response = add_cors(response);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -494,17 +473,14 @@ fn empty_response(status: u16) -> web_sys::Response {
 
 // ── CORS ────────────────────────────────────────────────────────────
 
-fn add_cors(resp: web_sys::Response, allow_post: bool) -> web_sys::Response {
+fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     let h = resp.headers();
-    // The proxy is read-only; POST is advertised only on the STS endpoint.
-    let methods = if allow_post {
-        "GET, HEAD, POST, OPTIONS"
-    } else {
-        "GET, HEAD, OPTIONS"
-    };
     for (name, value) in [
         ("access-control-allow-origin", "*"),
-        ("access-control-allow-methods", methods),
+        (
+            "access-control-allow-methods",
+            "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+        ),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
     ] {

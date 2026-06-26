@@ -22,12 +22,16 @@ path = "tests/pagination.rs"
 name = "backend_auth"
 path = "tests/backend_auth.rs"
 
+[[test]]
+name = "authz"
+path = "tests/authz.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.6.0", features = ["azure"] }
-multistore-oidc-provider = { version = "0.6.0" }
-multistore-path-mapping = { version = "0.6.0" }
-multistore-sts = { version = "0.6.0" }
+multistore-oidc-provider = "0.6.0"
+multistore-path-mapping = "0.6.0"
+multistore-sts = "0.6.0"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -65,14 +69,14 @@ web-sys = { version = "0.3", features = [
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
 
-# multistore-cf-workers 0.6.0 is not on crates.io, so all multistore crates are
-# pinned to the v0.6.0 git tag to keep `multistore` single-sourced: a git
-# cf-workers alongside registry crates would pull two copies of `multistore`
-# and fail to compile. Remove this block once multistore-cf-workers 0.6.0
-# publishes and the version deps above resolve from crates.io.
+# TEMPORARY: build against the aws-chunked write-decode fix branch of multistore
+# until it ships in a release. Without this, the modern aws-cli's default
+# trailer-checksum uploads are stored as raw chunk framing (corrupted writes).
+# Remove this block and bump the multistore* deps above once
+# https://github.com/developmentseed/multistore/pull/92 is released.
 [patch.crates-io]
-multistore = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", tag = "v0.6.0" }
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "fix/decode-aws-chunked-writes" }
