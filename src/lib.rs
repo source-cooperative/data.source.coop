@@ -154,6 +154,35 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         ));
     }
 
+    // ── Short-circuit: write to a keyless path ──────────────────────
+    // A PUT/DELETE addresses a single object, so it needs an object key:
+    // `/{account}/{product}/{key}`. A request to `/{account}/{product}` (or
+    // shorter) targets the product root, which has no key — e.g.
+    // `aws s3 cp f s3://account/product` (no trailing slash) uploads `f` as the
+    // object literally named `product`. Forwarding that makes the upstream
+    // reject the streaming upload with a misleading "x-amz-content-sha256 header
+    // is invalid"; return an actionable 400 so the caller sees the real cause.
+    if !is_special_path
+        && (parts.method == http::Method::PUT || parts.method == http::Method::DELETE)
+        && extract_path_segments(&parts.path)
+            .2
+            .is_none_or(str::is_empty)
+    {
+        let resp = ErrorResponse {
+            code: "InvalidRequest".to_string(),
+            message: format!(
+                "Missing object key: a {} must address an object at \
+                 /{{account}}/{{product}}/{{key}}, not the product root.",
+                parts.method.as_str()
+            ),
+            resource: parts.path.clone(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(400, resp.to_xml())).into_web_sys(),
+        ));
+    }
+
     // ── Path rewriting ─────────────────────────────────────────────
     // Source Cooperative path mapping: `/{account}/{product}/{key}`
     // → internal bucket `account:product`, display name shows just `account`.
