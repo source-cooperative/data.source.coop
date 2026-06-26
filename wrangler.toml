@@ -21,6 +21,10 @@ AUTH_ISSUER = "https://auth.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://source.coop"
+# Ceiling for client-requested /.sts DurationSeconds (seconds). 43200 = 12h,
+# 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
+# more than 1h; this only raises the cap.
+STS_MAX_SESSION_DURATION_SECS = "43200"
 
 # Required secrets (managed as GitHub environment secrets; CI re-uploads them
 # via `wrangler secret bulk` on every deploy — see .github/workflows/deploy.yml):
@@ -73,6 +77,7 @@ AUTH_ISSUER = "https://auth.staging.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://staging.source.coop"
+STS_MAX_SESSION_DURATION_SECS = "43200"  # 12h ceiling for client-requested /.sts DurationSeconds
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
