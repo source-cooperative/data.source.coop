@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71b1513a7eacb866328a72eb85818603e859424c"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71e51edda762322d20f852f42b4a338f53264750"
 dependencies = [
  "async-trait",
  "base64",
@@ -936,7 +936,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71b1513a7eacb866328a72eb85818603e859424c"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71e51edda762322d20f852f42b4a338f53264750"
 dependencies = [
  "async-trait",
  "bytes",
@@ -960,7 +960,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71b1513a7eacb866328a72eb85818603e859424c"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71e51edda762322d20f852f42b4a338f53264750"
 dependencies = [
  "base64",
  "chrono",
@@ -979,7 +979,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71b1513a7eacb866328a72eb85818603e859424c"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71e51edda762322d20f852f42b4a338f53264750"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -989,7 +989,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.6.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71b1513a7eacb866328a72eb85818603e859424c"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fdecode-aws-chunked-writes#71e51edda762322d20f852f42b4a338f53264750"
 dependencies = [
  "aes-gcm",
  "base64",
