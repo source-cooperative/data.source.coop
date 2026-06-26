@@ -209,8 +209,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // The unset case is refused by the fail-closed 501 short-circuit above, so
     // an unrestricted exchanger is never registered.
     if !config.auth_audiences.is_empty() {
-        let sts_registry =
-            StsCredentialRegistry::new(config.auth_issuer.clone(), config.auth_audiences.clone());
+        let sts_registry = StsCredentialRegistry::new(
+            config.auth_issuer.clone(),
+            config.auth_audiences.clone(),
+            config.sts_max_session_duration_secs,
+        );
         router = router.with_sts(
             "/.sts",
             sts_registry,

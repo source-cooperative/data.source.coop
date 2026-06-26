@@ -98,12 +98,22 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
 
+    // Ceiling for client-requested DurationSeconds on /.sts. Clamped against
+    // multistore's 900s floor. Unset → 3600 (1h), matching multistore's own
+    // default so behavior is unchanged until explicitly raised.
+    let sts_max_session_duration_secs = env
+        .var("STS_MAX_SESSION_DURATION_SECS")
+        .ok()
+        .and_then(|v| v.to_string().parse::<u64>().ok())
+        .unwrap_or(3600);
+
     AppConfig {
         api_base_url,
         oidc,
         session_token_key,
         auth_issuer,
         auth_audiences,
+        sts_max_session_duration_secs,
     }
 }
 
@@ -119,6 +129,9 @@ pub struct AppConfig {
     /// the comma-separated `AUTH_AUDIENCE`. Empty disables `/.sts` entirely
     /// (returns 501) rather than accepting any audience.
     pub auth_audiences: Vec<String>,
+    /// Ceiling for client-requested STS session length (`DurationSeconds`),
+    /// in seconds. From `STS_MAX_SESSION_DURATION_SECS`; defaults to 3600 (1h).
+    pub sts_max_session_duration_secs: u64,
 }
 
 pub struct OidcConfig {

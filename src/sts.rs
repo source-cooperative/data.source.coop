@@ -25,7 +25,16 @@ impl StsCredentialRegistry {
     /// it matches any. An empty list would let an ID token a user granted to any
     /// third-party client registered with the issuer be exchanged for that
     /// user's proxy credentials, so callers gate on a non-empty list.
-    pub fn new(oidc_issuer: String, required_audiences: Vec<String>) -> Self {
+    ///
+    /// `max_session_duration_secs` is the ceiling for client-requested
+    /// `DurationSeconds`. Clients still get the multistore default (1h) unless
+    /// they request more, up to this cap. These are self-minted sealed-token
+    /// credentials with no revocation, so a longer TTL widens the leak window.
+    pub fn new(
+        oidc_issuer: String,
+        required_audiences: Vec<String>,
+        max_session_duration_secs: u64,
+    ) -> Self {
         Self {
             default_role: RoleConfig {
                 role_id: "_default".to_string(),
@@ -34,7 +43,7 @@ impl StsCredentialRegistry {
                 required_audiences,
                 subject_conditions: vec![],
                 allowed_scopes: vec![], // unlimited
-                max_session_duration_secs: 3600,
+                max_session_duration_secs,
             },
         }
     }
