@@ -98,14 +98,29 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
 
-    // Ceiling for client-requested DurationSeconds on /.sts. Clamped against
-    // multistore's 900s floor. Unset → 3600 (1h), matching multistore's own
-    // default so behavior is unchanged until explicitly raised.
-    let sts_max_session_duration_secs = env
-        .var("STS_MAX_SESSION_DURATION_SECS")
-        .ok()
-        .and_then(|v| v.to_string().parse::<u64>().ok())
-        .unwrap_or(3600);
+    // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
+    // matching multistore's own default so behavior is unchanged until raised.
+    let sts_max_session_duration_secs = match env.var("STS_MAX_SESSION_DURATION_SECS") {
+        Err(_) => 3600, // unset
+        Ok(v) => match v.to_string().parse::<u64>() {
+            Err(_) => {
+                tracing::warn!(
+                    "STS_MAX_SESSION_DURATION_SECS is not a valid integer; falling back to 3600"
+                );
+                3600
+            }
+            // multistore clamps the requested duration to `(900, this)`, which
+            // panics if `this` < 900, so floor it at multistore's 900s minimum.
+            Ok(n) if n < 900 => {
+                tracing::warn!(
+                    value = n,
+                    "STS_MAX_SESSION_DURATION_SECS is below the 900s floor; using 900"
+                );
+                900
+            }
+            Ok(n) => n,
+        },
+    };
 
     AppConfig {
         api_base_url,
