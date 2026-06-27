@@ -28,10 +28,10 @@ path = "tests/authz.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.6.1", features = ["azure"] }
-multistore-oidc-provider = "0.6.1"
-multistore-path-mapping = "0.6.1"
-multistore-sts = "0.6.1"
+multistore = { version = "0.6.2", features = ["azure"] }
+multistore-oidc-provider = "0.6.2"
+multistore-path-mapping = "0.6.2"
+multistore-sts = "0.6.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -49,7 +49,7 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.6.1", features = ["azure"] }
+multistore-cf-workers = { version = "0.6.2", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none

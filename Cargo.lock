@@ -908,9 +908,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30e6e4ce2238a7315cba3934bb362a435df7a6031c407f234b58c64585fe4c28"
+checksum = "bce59de8d7e3456f9d9bbd47842f520b9142fd28991a6c7bd484846620fb206d"
 dependencies = [
  "async-trait",
  "base64",
@@ -936,9 +936,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b938b67468660c53f631e40e52f090bd59732c905c0155beda02f9dc6d64d52a"
+checksum = "73a27bb8b8a8da696e0671c563e1772f4099924f62fb522a636455d25c6bb814"
 dependencies = [
  "async-trait",
  "bytes",
@@ -961,9 +961,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41553a965899da911d5a6b6c3be01810db8934667660a1b4ec488c307d5f361f"
+checksum = "ff1c6ac0fed7225d1d6fb84981a360d727dc99ab2d0b51960cc404ef47a91c59"
 dependencies = [
  "base64",
  "chrono",
@@ -981,9 +981,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e7a0dcfae3cebdc2a20f5be4c8d2d5633aa87ed45df6d418c2ce549d4a73eac"
+checksum = "a3d603d78607332a71f0a38af203bc25ae11214d90e6ddedff8147888f1da276"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -992,9 +992,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35872fed83157576bd67a1abdc854345e19e0d96bb74f5457660839edefd502e"
+checksum = "0354c742b40c4a0883636c8bd0840cb2e3d24284055e9e91b90a3899b4ff1452"
 dependencies = [
  "aes-gcm",
  "base64",
