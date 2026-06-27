@@ -68,3 +68,16 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
+
+# Build against multistore `main` to pick up fixes that haven't shipped in a
+# crates.io release yet (currently the Cloudflare HEAD subrequest cache-bypass
+# fix: https://github.com/developmentseed/multistore/pull/95). Cargo.lock pins
+# the exact commit, so builds stay reproducible; run `cargo update -p multistore`
+# to advance. Drop this block and bump the multistore* versions above once a
+# release includes the needed fix.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "main" }
