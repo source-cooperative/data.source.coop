@@ -264,11 +264,13 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     .with_signing_path(&rewrite.signing_path)
     .with_signing_query(rewrite.signing_query.as_deref());
 
+    let start_ms = js_sys::Date::now();
     let response = gateway
         .handle_request(&request_info, js_body, collect_js_body)
         .await
         .into_web_sys();
-    tracing::info!(status = response.status(), "response");
+    let duration_ms = js_sys::Date::now() - start_ms;
+    tracing::info!(status = response.status(), duration_ms, "response");
 
     // ── Extract path segments (used by analytics + location broadcast) ──
     let (account, product, key) = extract_path_segments(&parts.path);
@@ -285,6 +287,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             account,
             product,
             key,
+            duration_ms,
+            &config.ip_hash_salt,
         );
     }
 

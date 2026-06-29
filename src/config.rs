@@ -124,6 +124,17 @@ fn build_config(env: &Env) -> AppConfig {
         },
     };
 
+    // Salt for hashing client IPs in analytics. Optional: when unset we still
+    // hash (so raw IPs never land in the dataset), but without a secret salt the
+    // small IPv4 space is brute-forceable, so prod should set it.
+    let ip_hash_salt = env
+        .secret("IP_HASH_SALT")
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    if ip_hash_salt.is_empty() {
+        tracing::warn!("IP_HASH_SALT not set: client-IP hashes are unsalted (brute-forceable)");
+    }
+
     AppConfig {
         api_base_url,
         oidc,
@@ -131,6 +142,7 @@ fn build_config(env: &Env) -> AppConfig {
         auth_issuer,
         auth_audiences,
         sts_max_session_duration_secs,
+        ip_hash_salt,
     }
 }
 
@@ -149,6 +161,9 @@ pub struct AppConfig {
     /// Ceiling for client-requested STS session length (`DurationSeconds`),
     /// in seconds. From `STS_MAX_SESSION_DURATION_SECS`; defaults to 3600 (1h).
     pub sts_max_session_duration_secs: u64,
+    /// Secret salt for hashing client IPs before they enter analytics. Empty
+    /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
+    pub ip_hash_salt: String,
 }
 
 pub struct OidcConfig {

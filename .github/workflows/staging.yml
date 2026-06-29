@@ -22,6 +22,7 @@ jobs:
       OIDC_PROVIDER_KEY: ${{ secrets.OIDC_PROVIDER_KEY }}
       SESSION_TOKEN_KEY: ${{ secrets.SESSION_TOKEN_KEY }}
       OIDC_PROVIDER_KEY_PREVIOUS: ${{ secrets.OIDC_PROVIDER_KEY_PREVIOUS }}
+      IP_HASH_SALT: ${{ secrets.IP_HASH_SALT }}
 
   deploy-public-log-stream:
     name: Deploy Public Log Stream

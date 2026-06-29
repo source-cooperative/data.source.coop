@@ -31,6 +31,8 @@ STS_MAX_SESSION_DURATION_SECS = "43200"
 #   OIDC_PROVIDER_KEY          - PEM-encoded PKCS#8 RSA private key (active)
 #   SESSION_TOKEN_KEY          - base64-encoded 32-byte AES key for sealing STS credentials
 #   OIDC_PROVIDER_KEY_PREVIOUS - PEM-encoded previous key (optional, for rotation)
+#   IP_HASH_SALT               - salt for hashing client IPs in analytics
+#                                (optional; unset = unsalted, brute-forceable)
 # Optional vars for key rotation:
 #   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key
 # Recommended vars:
