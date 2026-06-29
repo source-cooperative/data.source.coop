@@ -21,6 +21,10 @@ AUTH_ISSUER = "https://auth.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://source.coop"
+# Ceiling for client-requested /.sts DurationSeconds (seconds). 43200 = 12h,
+# 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
+# more than 1h; this only raises the cap.
+STS_MAX_SESSION_DURATION_SECS = "43200"
 
 # Required secrets (managed as GitHub environment secrets; CI re-uploads them
 # via `wrangler secret bulk` on every deploy — see .github/workflows/deploy.yml):
@@ -33,9 +37,9 @@ SOURCE_API_URL = "https://source.coop"
 #   OIDC_PROVIDER_KID_PREVIOUS - Key ID for previous key
 # Recommended vars:
 # Required vars (to enable /.sts token exchange):
-#   AUTH_AUDIENCE - OAuth client_id that /.sts subject tokens must be issued to
-#                   (the `aud` claim). Unset = /.sts is disabled (returns 501);
-#                   set to your OAuth client_id to enable it.
+#   AUTH_AUDIENCE - comma-separated OAuth client_id(s) that /.sts subject tokens
+#                   must be issued to (the `aud` claim). A token is accepted if
+#                   it matches any. Unset = /.sts is disabled (returns 501).
 # TODO: Set different sampling rates for prod vs staging
 [observability]
 enabled = true
@@ -70,11 +74,12 @@ routes = [
 
 [env.staging.vars]
 LOG_LEVEL = "DEBUG"
-AUTH_AUDIENCE = "1123dfa8-469f-44fe-b9f4-9b76f06fd325"  # Ory OAuth client_id for staging
+AUTH_AUDIENCE = "1123dfa8-469f-44fe-b9f4-9b76f06fd325,a79c9537-be78-454a-9ea1-b96a1be811cc"  # staging Ory client_ids: frontend + source-coop-cli
 AUTH_ISSUER = "https://auth.staging.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://staging.source.coop"
+STS_MAX_SESSION_DURATION_SECS = "43200"  # 12h ceiling for client-requested /.sts DurationSeconds
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"

@@ -1,14 +1,24 @@
+//! Cloudflare Worker entrypoint for the Source Cooperative data proxy.
+//!
+//! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
+//! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
+//! `account:product` bucket → dispatch through the multistore gateway → emit
+//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! client, JWKS cache, OIDC provider) initialize lazily from the first
+//! request's config.
+
 mod analytics;
-mod auth;
-mod cache;
+mod authz;
+mod backend_auth;
 mod config;
 mod handlers;
+mod location;
 mod pagination;
-mod registry;
+mod source_api;
 mod sts;
 
-use crate::auth::ApiAuth;
-use analytics::{extract_path_segments, hash_ip, log_request, RequestEvent};
+use crate::source_api::{ApiAuth, SourceCoopRegistry};
+use analytics::log_analytics;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
@@ -18,11 +28,12 @@ use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
     WorkerSubscriber,
 };
+use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
 use multistore_oidc_provider::route_handler::OidcRouterExt;
+use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use registry::SourceCoopRegistry;
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -51,6 +62,45 @@ fn jwks_cache() -> JwksCache {
         .clone()
 }
 
+/// [`HttpExchange`] for outbound STS calls, backed by the shared reqwest client
+/// (reqwest wraps `web_sys::fetch` on wasm). This is what lets the OIDC
+/// backend-auth middleware POST `AssumeRoleWithWebIdentity` to AWS STS.
+#[derive(Clone)]
+struct FetchHttpExchange {
+    client: reqwest::Client,
+}
+
+impl HttpExchange for FetchHttpExchange {
+    async fn post_form(
+        &self,
+        url: &str,
+        form: &[(&str, &str)],
+    ) -> std::result::Result<String, OidcProviderError> {
+        let resp = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+        // Intentionally NOT checking the HTTP status / calling
+        // `error_for_status()`: AWS STS returns its `<ErrorResponse>` XML in the
+        // body on 4xx/5xx, and multistore's `parse_response` reads the error
+        // (code + message) out of that body. Discarding it on a non-2xx would
+        // lose the diagnostic and the precise ProxyError mapping.
+        resp.text()
+            .await
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
+    }
+}
+
+/// Isolate-shared OIDC credential provider for backend federation. The gateway
+/// (and its middleware) are rebuilt per request, but the provider — and its
+/// credential cache — must persist so the proxy doesn't re-mint a JWT and re-run
+/// `AssumeRoleWithWebIdentity` on every request to the same role. Initialized
+/// from the first request's signing config, which is constant for the isolate.
+static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = OnceLock::new();
+
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
@@ -73,38 +123,26 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // methods and bypass the S3 object/bucket path mapping below.
     let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
 
-    // POST is only meaningful for STS token exchange; everything else is
-    // read-only, so don't advertise write methods globally via CORS.
-    let cors_allow_post = parts.path == "/.sts";
-
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
-        return Ok(add_cors(empty_response(204), cors_allow_post));
+        let init = web_sys::ResponseInit::new();
+        init.set_status(204);
+        let resp = web_sys::Response::new_with_opt_str_and_init(None, &init)
+            .unwrap_or_else(|_| web_sys::Response::new().unwrap());
+        return Ok(add_cors(resp));
     }
 
-    // ── Short-circuit: write methods ────────────────────────────────
-    // The proxy is read-only for object/bucket paths, so writes get an
-    // S3-style 405 rather than falling through to bucket resolution (which
-    // would misleadingly 404). Special endpoints are exempt.
-    if !is_special_path && is_write_method(&parts.method) {
-        let resp = ErrorResponse {
-            code: "MethodNotAllowed".to_string(),
-            message: "Method Not Allowed".to_string(),
-            resource: String::new(),
-            request_id: request_id.clone(),
-        };
-        return Ok(add_cors(
-            GatewayResponse::Response(ProxyResult::xml(405, resp.to_xml())).into_web_sys(),
-            cors_allow_post,
-        ));
-    }
+    // Writes (PUT/POST/DELETE) flow through the gateway: the registry authorizes
+    // them (caller must hold product write permission; the connection must be
+    // writable and signable) and the backend-auth middleware signs them. See
+    // `authz` and `backend_auth`.
 
     // ── Short-circuit: STS disabled (fail closed) ───────────────────
     // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
     // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
     // be exchanged for a user's credentials. When unset, refuse the endpoint
     // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audience.is_none() {
+    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
         let resp = ErrorResponse {
             code: "NotImplemented".to_string(),
             message: "STS token exchange is not configured".to_string(),
@@ -113,7 +151,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         };
         return Ok(add_cors(
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-            cors_allow_post,
         ));
     }
 
@@ -126,6 +163,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         display_bucket_segments: 1,
     };
     let rewrite = if is_special_path {
+        // Special endpoints aren't S3 paths — pass them through unrewritten.
         multistore_path_mapping::RewriteResult {
             path: parts.path.clone(),
             query: parts.query.clone(),
@@ -161,9 +199,12 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // Mount STS token exchange only when an audience restriction is configured.
     // The unset case is refused by the fail-closed 501 short-circuit above, so
     // an unrestricted exchanger is never registered.
-    if let Some(audience) = &config.auth_audience {
-        let sts_registry =
-            StsCredentialRegistry::new(config.auth_issuer.clone(), Some(audience.clone()));
+    if !config.auth_audiences.is_empty() {
+        let sts_registry = StsCredentialRegistry::new(
+            config.auth_issuer.clone(),
+            config.auth_audiences.clone(),
+            config.sts_max_session_duration_secs,
+        );
         router = router.with_sts(
             "/.sts",
             sts_registry,
@@ -172,10 +213,30 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         );
     }
 
-    let router = router.route("/", IndexHandler).route(
-        "/{bucket}",
-        AccountListHandler::new(registry.clone(), &mapping),
-    );
+    let router = router
+        .route("/", IndexHandler)
+        .route("/{bucket}", AccountListHandler::new(registry.clone()));
+
+    // ── Backend federation middleware ─────────────────────────────
+    // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
+    // assertion, exchange it at AWS STS (AssumeRoleWithWebIdentity) over fetch,
+    // and inject the temporary credentials so the backend request is signed.
+    // A no-op for connections without auth_type=oidc (i.e. unsigned/public).
+    // Reuse the isolate-shared provider so its credential cache stays warm across
+    // requests; `clone()` is cheap and shares that cache.
+    let provider = OIDC_PROVIDER
+        .get_or_init(|| {
+            OidcCredentialProvider::new(
+                config.oidc.signer.clone(),
+                FetchHttpExchange {
+                    client: http_client(),
+                },
+                config.oidc.issuer.clone(),
+                crate::backend_auth::AWS_STS_AUDIENCE.to_string(),
+            )
+        })
+        .clone();
+    let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
@@ -183,6 +244,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         NoopCredentialRegistry,
         None,
     )
+    .with_middleware(backend_auth)
     .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG)
     .with_credential_resolver(config.session_token_key.clone());
@@ -231,13 +293,14 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
+    // Only successful GET reads of a real product (not /.well-known or /.sts).
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
         if response.status() < 400 && !parts.path.starts_with("/.") {
-            maybe_broadcast_location(
+            location::maybe_broadcast_location(
                 &ctx,
                 &env,
-                LocationEvent {
-                    cf: CfProperties::from_request(&req),
+                location::LocationEvent {
+                    cf: location::CfProperties::from_request(&req),
                     country: header_str(&parts.headers, "cf-ipcountry").to_string(),
                     account: acct.to_string(),
                     product: prod.to_string(),
@@ -249,7 +312,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(response, cors_allow_post);
+    let response = add_cors(response);
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -269,13 +332,6 @@ fn init_tracing(env: &Env) -> tracing::Level {
     max_level
 }
 
-fn is_write_method(method: &http::Method) -> bool {
-    matches!(
-        *method,
-        http::Method::PUT | http::Method::POST | http::Method::DELETE | http::Method::PATCH
-    )
-}
-
 fn extract_request_id(headers: &http::HeaderMap) -> String {
     headers
         .get("cf-ray")
@@ -284,177 +340,37 @@ fn extract_request_id(headers: &http::HeaderMap) -> String {
         .to_string()
 }
 
-fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
+pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
     headers
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
 }
 
-// ── Analytics ──────────────────────────────────────────────────────
-
-#[allow(clippy::too_many_arguments)]
-fn log_analytics(
-    env: &Env,
-    headers: &http::HeaderMap,
-    response: &web_sys::Response,
-    method: &http::Method,
-    account: Option<&str>,
-    product: Option<&str>,
-    key: Option<&str>,
-    duration_ms: f64,
-    ip_hash_salt: &str,
-) {
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    let bytes_sent: f64 = response
-        .headers()
-        .get("content-length")
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.0);
-
-    let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
-
-    log_request(
-        env,
-        &RequestEvent {
-            account_id: account.unwrap_or(""),
-            product_id: product.unwrap_or(""),
-            file_path: key.unwrap_or(""),
-            method: method.as_str(),
-            user_id: header_str(headers, "x-source-user-id"),
-            client_ip_hash: &client_ip_hash,
-            range: header_str(headers, "range"),
-            country: header_str(headers, "cf-ipcountry"),
-            content_type: &content_type,
-            bytes_sent,
-            status_code: response.status() as f64,
-            duration_ms,
-        },
-    );
-}
-
-// ── Location broadcasting ──────────────────────────────────────────
-
-/// Properties extracted from the Cloudflare `request.cf` object.
-#[derive(Default)]
-struct CfProperties {
-    latitude: String,
-    longitude: String,
-    city: String,
-    colo: String,
-}
-
-impl CfProperties {
-    fn from_request(req: &web_sys::Request) -> Self {
-        let cf =
-            js_sys::Reflect::get(req, &wasm_bindgen::JsValue::from_str("cf")).unwrap_or_default();
-        if cf.is_undefined() || cf.is_null() {
-            return Self::default();
-        }
-        let get = |key: &str| -> String {
-            js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
-                .ok()
-                .map(|v| {
-                    v.as_string()
-                        .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
-                })
-                .unwrap_or_default()
-        };
-        Self {
-            latitude: get("latitude"),
-            longitude: get("longitude"),
-            city: get("city"),
-            colo: get("colo"),
-        }
+/// Split `/{account}/{product}[/{key}]` into its segments; any segment not
+/// present is `None`. Used to tag the analytics event and the location broadcast.
+fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        return (None, None, None);
     }
-}
-
-struct LocationEvent {
-    cf: CfProperties,
-    country: String,
-    account: String,
-    product: String,
-    key: String,
-    api_base_url: String,
-    api_auth: ApiAuth,
-}
-
-/// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
-/// Runs entirely inside `wait_until` so it never blocks the response.
-fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
-    let (Ok(lat), Ok(lon)) = (
-        event.cf.latitude.parse::<f64>(),
-        event.cf.longitude.parse::<f64>(),
-    ) else {
-        return;
-    };
-
-    let Ok(location_ws) = env.service("PUBLIC_LOG_STREAM") else {
-        return;
-    };
-
-    ctx.wait_until(async move {
-        let is_public = cache::get_or_fetch_product(
-            &event.api_base_url,
-            &event.account,
-            &event.product,
-            &event.api_auth,
-            "",
-            None,
-        )
-        .await
-        .map(|p| p.is_public())
-        .unwrap_or(false);
-        if !is_public {
-            return;
-        }
-
-        let body = serde_json::json!({
-            "lat": lat,
-            "lon": lon,
-            "city": event.cf.city,
-            "country": event.country,
-            "colo": event.cf.colo,
-            "account_id": event.account,
-            "product_id": event.product,
-            "path": event.key,
-        });
-        let mut init = worker::RequestInit::new();
-        init.with_method(worker::Method::Post);
-        init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
-        let _ = location_ws
-            .fetch("https://public-log-stream/location", Some(init))
-            .await;
-    });
-}
-
-fn empty_response(status: u16) -> web_sys::Response {
-    let init = web_sys::ResponseInit::new();
-    init.set_status(status);
-    web_sys::Response::new_with_opt_str_and_init(None, &init)
-        .unwrap_or_else(|_| web_sys::Response::new().unwrap())
+    let mut parts = trimmed.splitn(3, '/');
+    let account = parts.next();
+    let product = parts.next();
+    let key = parts.next();
+    (account, product, key)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
 
-fn add_cors(resp: web_sys::Response, allow_post: bool) -> web_sys::Response {
+fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     let h = resp.headers();
-    // The proxy is read-only; POST is advertised only on the STS endpoint.
-    let methods = if allow_post {
-        "GET, HEAD, POST, OPTIONS"
-    } else {
-        "GET, HEAD, OPTIONS"
-    };
     for (name, value) in [
         ("access-control-allow-origin", "*"),
-        ("access-control-allow-methods", methods),
+        (
+            "access-control-allow-methods",
+            "GET, HEAD, PUT, POST, DELETE, OPTIONS",
+        ),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
     ] {

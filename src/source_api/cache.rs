@@ -3,7 +3,7 @@
 //! Each public function caches one API call type with its own TTL.
 //! Adjust the `*_CACHE_SECS` constants to tune per-datatype expiry.
 
-use crate::registry::{DataConnection, SourceProduct, SourceProductList};
+use super::types::{DataConnection, SourceProduct, SourceProductList};
 use multistore::error::ProxyError;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
@@ -25,11 +25,24 @@ const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
 /// Product metadata (`/api/v1/products/{account}/{product}`).
 const PRODUCT_CACHE_SECS: u32 = 300; // 5 minutes
 
-/// Data connections list (`/api/v1/data-connections`).
-const DATA_CONNECTIONS_CACHE_SECS: u32 = 1800; // 30 minutes
+/// A single data connection (`/api/v1/data-connections/{id}`). Matches product
+/// metadata: a per-id response is subject-authorized, so the TTL is an
+/// authorization-revocation lag, not just a freshness knob.
+///
+/// Longer than `PERMISSIONS_CACHE_SECS` on purpose, even though `read_only`
+/// gates writes from here. This is fetched on *every* request (read and write),
+/// so a short TTL taxes the read path; flipping a connection read-only freezes
+/// *all* writers and is a deliberate admin act where ~5 min lag is acceptable.
+/// Revoking a single (e.g. compromised) account's write grant is the urgent
+/// case, and that rides the 60s permission TTL, not this one.
+const DATA_CONNECTION_CACHE_SECS: u32 = 300; // 5 minutes
 
 /// Product list for an account (`/api/v1/products/{account}`).
 const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
+
+/// Caller's permissions on a product (`.../permissions`). Short: it gates writes,
+/// so a revoked grant should stop taking effect quickly.
+const PERMISSIONS_CACHE_SECS: u32 = 60; // 1 minute
 
 // ── Public cache functions ─────────────────────────────────────────
 
@@ -60,19 +73,59 @@ pub async fn get_or_fetch_product(
     .await
 }
 
-/// Fetch all data connections, cached for `DATA_CONNECTIONS_CACHE_SECS`.
-pub async fn get_or_fetch_data_connections(
+/// Fetch the authenticated caller's permissions on a product, cached for
+/// `PERMISSIONS_CACHE_SECS`. Returns the permission strings the API grants for
+/// the caller (e.g. `["read", "write"]`); writes are gated on `"write"`.
+pub async fn get_or_fetch_permissions(
     api_base_url: &str,
+    account: &str,
+    product: &str,
+    api_auth: &crate::ApiAuth,
+    request_id: &str,
+    subject: &str,
+) -> Result<Vec<String>, ProxyError> {
+    let api_url = format!(
+        "{}/api/v1/products/{}/{}/permissions",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+        utf8_percent_encode(product, PATH_SEGMENT),
+    );
+    let cache_key = cache_key_with_subject(&api_url, Some(subject));
+    cached_fetch(
+        &cache_key,
+        &api_url,
+        PERMISSIONS_CACHE_SECS,
+        api_auth,
+        request_id,
+        Some(subject),
+    )
+    .await
+}
+
+/// Fetch a single data connection by id, cached for `DATA_CONNECTION_CACHE_SECS`.
+///
+/// Resolving by id (rather than scanning a cached full list) lets the
+/// subject-scoped Source API authorize this exact connection: a caller not
+/// entitled to it gets 404/403, surfaced as `BucketNotFound` / `AccessDenied`.
+/// A just-created connection resolves on first reference — there is no stale
+/// list to fall behind, so no force-refresh dance is needed.
+pub async fn get_or_fetch_data_connection(
+    api_base_url: &str,
+    connection_id: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
     subject: Option<&str>,
-) -> Result<Vec<DataConnection>, ProxyError> {
-    let api_url = format!("{}/api/v1/data-connections", api_base_url);
+) -> Result<DataConnection, ProxyError> {
+    let api_url = format!(
+        "{}/api/v1/data-connections/{}",
+        api_base_url,
+        utf8_percent_encode(connection_id, PATH_SEGMENT),
+    );
     let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
         &cache_key,
         &api_url,
-        DATA_CONNECTIONS_CACHE_SECS,
+        DATA_CONNECTION_CACHE_SECS,
         api_auth,
         request_id,
         subject,
@@ -112,18 +165,16 @@ pub async fn get_or_fetch_product_list(
 /// cached separately.
 fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
     match subject {
-        // Hex-encode the subject so the cache key is always a well-formed URL.
-        // Principal names can contain spaces, `&`, `#`, or non-ASCII, any of
-        // which would otherwise corrupt the key or collide distinct subjects.
-        // Hex is injective and URL-safe, so each subject maps to a unique key.
+        // Percent-encode the subject so the cache key is always a well-formed
+        // URL. Principal names can contain spaces, `&`, `#`, or non-ASCII, any
+        // of which would otherwise corrupt the key or collide distinct subjects.
+        // Percent-encoding is injective and URL-safe, so each subject maps to a
+        // unique key.
         Some(subj) => {
-            let encoded: String = subj.bytes().map(|b| format!("{:02x}", b)).collect();
-            // Pick the query separator defensively. Callers pass query-free
-            // URLs today (path segments are percent-encoded above), but a stray
-            // `?` must never silently merge into an existing query and forge a
-            // cache key that collides with another caller's.
-            let sep = if api_url.contains('?') { '&' } else { '?' };
-            format!("{api_url}{sep}subject={encoded}")
+            let encoded = utf8_percent_encode(subj, PATH_SEGMENT);
+            // Callers always pass query-free URLs (path segments are
+            // percent-encoded above), so `?` is the separator.
+            format!("{api_url}?subject={encoded}")
         }
         None => api_url.to_string(),
     }

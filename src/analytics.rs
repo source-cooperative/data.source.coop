@@ -1,6 +1,9 @@
 #[cfg(target_arch = "wasm32")]
 use worker::{AnalyticsEngineDataPointBuilder, Env};
 
+#[cfg(target_arch = "wasm32")]
+use crate::header_str;
+
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -95,22 +98,6 @@ pub fn log_request(env: &Env, event: &RequestEvent) {
     }
 }
 
-/// Extract account and product segments from a URL path.
-///
-/// Given `/{account}/{product}[/{key}]`, returns `(account, product, key)`.
-/// Returns `None` for segments that aren't present.
-pub fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        return (None, None, None);
-    }
-    let mut parts = trimmed.splitn(3, '/');
-    let account = parts.next();
-    let product = parts.next();
-    let key = parts.next();
-    (account, product, key)
-}
-
 /// HMAC-SHA256 of a client IP keyed by `salt`, hex-encoded (64 chars).
 ///
 /// `salt` is a deployment secret; without it the small IPv4 space could be
@@ -142,4 +129,54 @@ fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
         end -= 1;
     }
     &s[..end]
+}
+
+/// Build a `RequestEvent` from the request + response and write it to the
+/// Analytics Engine. Never errors — failures are logged and swallowed.
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn log_analytics(
+    env: &Env,
+    headers: &http::HeaderMap,
+    response: &web_sys::Response,
+    method: &http::Method,
+    account: Option<&str>,
+    product: Option<&str>,
+    key: Option<&str>,
+    duration_ms: f64,
+    ip_hash_salt: &str,
+) {
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let bytes_sent: f64 = response
+        .headers()
+        .get("content-length")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+    let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
+
+    log_request(
+        env,
+        &RequestEvent {
+            account_id: account.unwrap_or(""),
+            product_id: product.unwrap_or(""),
+            file_path: key.unwrap_or(""),
+            method: method.as_str(),
+            user_id: header_str(headers, "x-source-user-id"),
+            client_ip_hash: &client_ip_hash,
+            range: header_str(headers, "range"),
+            country: header_str(headers, "cf-ipcountry"),
+            content_type: &content_type,
+            bytes_sent,
+            status_code: response.status() as f64,
+            duration_ms,
+        },
+    );
 }

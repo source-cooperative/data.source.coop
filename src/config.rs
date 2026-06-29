@@ -1,3 +1,5 @@
+//! Process-wide configuration parsed once from Worker env vars + secrets.
+
 use std::sync::OnceLock;
 
 use multistore_oidc_provider::jwt::JwtSigner;
@@ -79,17 +81,48 @@ fn build_config(env: &Env) -> AppConfig {
         .map(|v| v.to_string())
         .expect("AUTH_ISSUER must be set");
 
-    let auth_audience = env
+    // AUTH_AUDIENCE is a comma-separated list of OAuth client IDs whose tokens
+    // `/.sts` accepts (e.g. the web app and the CLI). A token is accepted if its
+    // `aud` matches any entry.
+    let auth_audiences: Vec<String> = env
         .var("AUTH_AUDIENCE")
         .map(|v| v.to_string())
         .ok()
-        .filter(|s| !s.is_empty());
-    if auth_audience.is_none() {
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if auth_audiences.is_empty() {
         // Fail closed: without an audience restriction, an ID token minted for
         // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
         // credentials, so /.sts is disabled entirely (returns 501) until set.
         tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
+
+    // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
+    // matching multistore's own default so behavior is unchanged until raised.
+    let sts_max_session_duration_secs = match env.var("STS_MAX_SESSION_DURATION_SECS") {
+        Err(_) => 3600, // unset
+        Ok(v) => match v.to_string().parse::<u64>() {
+            Err(_) => {
+                tracing::warn!(
+                    "STS_MAX_SESSION_DURATION_SECS is not a valid integer; falling back to 3600"
+                );
+                3600
+            }
+            // multistore clamps the requested duration to `(900, this)`, which
+            // panics if `this` < 900, so floor it at multistore's 900s minimum.
+            Ok(n) if n < 900 => {
+                tracing::warn!(
+                    value = n,
+                    "STS_MAX_SESSION_DURATION_SECS is below the 900s floor; using 900"
+                );
+                900
+            }
+            Ok(n) => n,
+        },
+    };
 
     // Salt for hashing client IPs in analytics. Optional: when unset we still
     // hash (so raw IPs never land in the dataset), but without a secret salt the
@@ -107,7 +140,8 @@ fn build_config(env: &Env) -> AppConfig {
         oidc,
         session_token_key,
         auth_issuer,
-        auth_audience,
+        auth_audiences,
+        sts_max_session_duration_secs,
         ip_hash_salt,
     }
 }
@@ -119,10 +153,14 @@ pub struct AppConfig {
     pub session_token_key: TokenKey,
     /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
     pub auth_issuer: String,
-    /// OAuth client ID that subject tokens presented to `/.sts` must be
-    /// issued to (the `aud` claim). Required; `None` disables the `/.sts`
-    /// endpoint entirely (returns 501) rather than accepting any audience.
-    pub auth_audience: Option<String>,
+    /// OAuth client IDs that subject tokens presented to `/.sts` may be issued
+    /// to (the `aud` claim); a token is accepted if it matches any. Parsed from
+    /// the comma-separated `AUTH_AUDIENCE`. Empty disables `/.sts` entirely
+    /// (returns 501) rather than accepting any audience.
+    pub auth_audiences: Vec<String>,
+    /// Ceiling for client-requested STS session length (`DurationSeconds`),
+    /// in seconds. From `STS_MAX_SESSION_DURATION_SECS`; defaults to 3600 (1h).
+    pub sts_max_session_duration_secs: u64,
     /// Secret salt for hashing client IPs before they enter analytics. Empty
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,

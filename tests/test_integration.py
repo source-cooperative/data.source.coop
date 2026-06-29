@@ -22,9 +22,12 @@ def test_index():
     assert "Source Cooperative Data Proxy" in resp.text
 
 
-def test_write_rejected():
-    resp = requests.put(f"{PROXY_URL}/test/test/file.txt")
-    assert resp.status_code == 405
+def test_anonymous_write_denied():
+    # Writes route through the gateway and are authorized there. An
+    # unauthenticated write to a real product is denied at the gate (403),
+    # before any backend call.
+    resp = requests.put(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 403
 
 
 def test_options_cors():

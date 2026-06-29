@@ -17,12 +17,8 @@ jobs:
     with:
       worker_name: source-data-proxy-pr-${{ github.event.pull_request.number }}
       wrangler_config: wrangler.preview.toml
-      var_overrides: >-
-        LOG_LEVEL:DEBUG
-        SOURCE_API_URL:https://staging.source.coop
-        OIDC_PROVIDER_ISSUER:https://source-data-proxy-pr-${{ github.event.pull_request.number }}.source-coop.workers.dev
-        OIDC_PROVIDER_KID:source-proxy-1
-        AUTH_ISSUER:https://auth.staging.source.coop
+      # All static preview vars live in wrangler.preview.toml [vars]; only the
+      # per-PR dynamic bindings are templated here.
       service_overrides: >-
         PUBLIC_LOG_STREAM:public-log-stream-pr-${{ github.event.pull_request.number }}
       environment: preview

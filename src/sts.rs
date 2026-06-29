@@ -9,9 +9,9 @@ use multistore::types::{RoleConfig, StoredCredential};
 
 /// Credential registry that serves a single hardcoded `_default` role.
 ///
-/// The default role trusts the Source Cooperative auth provider with no
-/// scope restrictions, allowing any authenticated user to obtain temporary
-/// credentials.
+/// The default role trusts the Source Cooperative auth provider with no scope
+/// restrictions, so any user holding a token for one of the configured
+/// audiences (`required_audiences`) can obtain temporary credentials.
 #[derive(Clone)]
 pub struct StsCredentialRegistry {
     default_role: RoleConfig,
@@ -20,20 +20,30 @@ pub struct StsCredentialRegistry {
 impl StsCredentialRegistry {
     /// Create a new registry whose `_default` role trusts the given auth issuer.
     ///
-    /// `required_audience` restricts token exchange to subject tokens minted
-    /// for a specific OAuth client (the `aud` claim). Without it, an ID token
-    /// a user granted to any third-party client registered with the issuer
-    /// could be exchanged for that user's proxy credentials.
-    pub fn new(oidc_issuer: String, required_audience: Option<String>) -> Self {
+    /// `required_audiences` restricts token exchange to subject tokens minted
+    /// for one of these OAuth clients (the `aud` claim); a token is accepted if
+    /// it matches any. An empty list would let an ID token a user granted to any
+    /// third-party client registered with the issuer be exchanged for that
+    /// user's proxy credentials, so callers gate on a non-empty list.
+    ///
+    /// `max_session_duration_secs` is the ceiling for client-requested
+    /// `DurationSeconds`. Clients still get the multistore default (1h) unless
+    /// they request more, up to this cap. These are self-minted sealed-token
+    /// credentials with no revocation, so a longer TTL widens the leak window.
+    pub fn new(
+        oidc_issuer: String,
+        required_audiences: Vec<String>,
+        max_session_duration_secs: u64,
+    ) -> Self {
         Self {
             default_role: RoleConfig {
                 role_id: "_default".to_string(),
                 name: "Default".to_string(),
                 trusted_oidc_issuers: vec![oidc_issuer],
-                required_audience,
+                required_audiences,
                 subject_conditions: vec![],
                 allowed_scopes: vec![], // unlimited
-                max_session_duration_secs: 3600,
+                max_session_duration_secs,
             },
         }
     }

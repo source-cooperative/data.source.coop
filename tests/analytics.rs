@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{extract_path_segments, hash_ip, RequestEvent};
+use analytics::{hash_ip, RequestEvent};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -18,42 +18,6 @@ fn event<'a>() -> RequestEvent<'a> {
         status_code: 200.0,
         duration_ms: 42.5,
     }
-}
-
-// ── extract_path_segments ───────────────────────────────────────────
-
-#[test]
-fn segments_empty_path() {
-    assert_eq!(extract_path_segments("/"), (None, None, None));
-    assert_eq!(extract_path_segments(""), (None, None, None));
-}
-
-#[test]
-fn segments_account_only() {
-    assert_eq!(
-        extract_path_segments("/cholmes"),
-        (Some("cholmes"), None, None)
-    );
-}
-
-#[test]
-fn segments_account_product() {
-    assert_eq!(
-        extract_path_segments("/cholmes/admin-boundaries"),
-        (Some("cholmes"), Some("admin-boundaries"), None)
-    );
-}
-
-#[test]
-fn segments_full_path_with_nested_key() {
-    assert_eq!(
-        extract_path_segments("/cholmes/admin-boundaries/dir/sub/file.parquet"),
-        (
-            Some("cholmes"),
-            Some("admin-boundaries"),
-            Some("dir/sub/file.parquet")
-        )
-    );
 }
 
 // ── RequestEvent schema ─────────────────────────────────────────────

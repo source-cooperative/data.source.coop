@@ -1,3 +1,8 @@
+//! Characterization tests for `multistore_path_mapping::PathMapping` — the
+//! dependency that rewrites `/{account}/{product}/...` into the proxy's internal
+//! `account:product` bucket. Unlike the sibling test files, this exercises a
+//! dependency's behavior the proxy relies on, not local `src/` code.
+
 use multistore_path_mapping::PathMapping;
 
 fn mapping() -> PathMapping {

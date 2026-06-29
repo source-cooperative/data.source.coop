@@ -908,9 +908,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.4.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfdf7fb1fa70d7a75a57e322825fa61da83bfaef5a6e705ad871b8bad46db55b"
+checksum = "bce59de8d7e3456f9d9bbd47842f520b9142fd28991a6c7bd484846620fb206d"
 dependencies = [
  "async-trait",
  "base64",
@@ -921,6 +921,7 @@ dependencies = [
  "hmac",
  "http",
  "matchit 0.8.6",
+ "md-5",
  "object_store",
  "percent-encoding",
  "quick-xml 0.37.5",
@@ -935,9 +936,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.4.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "941b094b16c87594cdda4952e52c1a70bc19ca8a89985fc8d63a82b9b7feb6a9"
+checksum = "73a27bb8b8a8da696e0671c563e1772f4099924f62fb522a636455d25c6bb814"
 dependencies = [
  "async-trait",
  "bytes",
@@ -960,14 +961,15 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.4.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "249fb5386150184f591170ddfb0916ae9fe1861c3523d8ae84b638cad22f5e76"
+checksum = "ff1c6ac0fed7225d1d6fb84981a360d727dc99ab2d0b51960cc404ef47a91c59"
 dependencies = [
- "async-trait",
  "base64",
  "chrono",
+ "futures",
  "multistore",
+ "quick-xml 0.37.5",
  "rsa",
  "serde",
  "serde_json",
@@ -979,9 +981,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.4.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa1f27fa70820affb7056520372cbf337fa7739056bf6f0e63b4b5870aeb5a8e"
+checksum = "a3d603d78607332a71f0a38af203bc25ae11214d90e6ddedff8147888f1da276"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -990,12 +992,11 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.4.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d147130ee410a7f429ab4d8fa1be0f391be43682d3582bf0393e184d705a722a"
+checksum = "0354c742b40c4a0883636c8bd0840cb2e3d24284055e9e91b90a3899b4ff1452"
 dependencies = [
  "aes-gcm",
- "async-trait",
  "base64",
  "chrono",
  "multistore",
@@ -1006,7 +1007,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror",
  "tracing",
  "url",
 ]
@@ -1289,9 +1289,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.14"
+version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
+checksum = "4fcb935c5bec503c2f0e306bdd3e58bb9029dcb14fa8d9ac76e3a5256ac0763e"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
