@@ -13,6 +13,7 @@ mod backend_auth;
 mod config;
 mod handlers;
 mod location;
+mod object_path;
 mod pagination;
 mod source_api;
 mod sts;
@@ -34,6 +35,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
+use object_path::{extract_path_segments, is_keyless_write};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -151,6 +153,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         };
         return Ok(add_cors(
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+        ));
+    }
+
+    // ── Short-circuit: write to a keyless path ──────────────────────
+    // A keyless PUT/DELETE (e.g. `aws s3 cp f s3://account/product` with no
+    // trailing slash) targets the product root, which has no object key.
+    // Forwarding it makes the upstream reject the streaming upload with a
+    // misleading "x-amz-content-sha256 header is invalid"; return an actionable
+    // 400 instead so the caller sees the real cause. See `is_keyless_write`.
+    if !is_special_path && is_keyless_write(&parts.method, &parts.path) {
+        let resp = ErrorResponse {
+            code: "InvalidRequest".to_string(),
+            message: format!(
+                "Missing object key: a {} must address an object at \
+                 /{{account}}/{{product}}/{{key}}, not the product root.",
+                parts.method.as_str()
+            ),
+            resource: parts.path.clone(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(400, resp.to_xml())).into_web_sys(),
         ));
     }
 
@@ -345,20 +369,6 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-}
-
-/// Split `/{account}/{product}[/{key}]` into its segments; any segment not
-/// present is `None`. Used to tag the analytics event and the location broadcast.
-fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        return (None, None, None);
-    }
-    let mut parts = trimmed.splitn(3, '/');
-    let account = parts.next();
-    let product = parts.next();
-    let key = parts.next();
-    (account, product, key)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

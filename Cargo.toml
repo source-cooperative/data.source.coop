@@ -26,6 +26,10 @@ path = "tests/backend_auth.rs"
 name = "authz"
 path = "tests/authz.rs"
 
+[[test]]
+name = "object_path"
+path = "tests/object_path.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.6.2", features = ["azure"] }
