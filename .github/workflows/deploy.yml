@@ -47,6 +47,8 @@ on:
         required: true
       OIDC_PROVIDER_KEY_PREVIOUS:
         required: false
+      IP_HASH_SALT:
+        required: false
 
 jobs:
   deploy:
@@ -100,12 +102,15 @@ jobs:
       - name: Upload worker secrets
         # GitHub environment secrets are the source of truth — anything set
         # here is re-uploaded on every deploy, overwriting values set manually
-        # via `wrangler secret put`. OIDC_PROVIDER_KEY_PREVIOUS is included
-        # only while a rotation is in progress (i.e. the GitHub secret exists).
+        # via `wrangler secret put`. OIDC_PROVIDER_KEY_PREVIOUS and
+        # IP_HASH_SALT are included only when the GitHub secret is set
+        # (IP_HASH_SALT is optional: the worker falls back to unsalted hashes
+        # and warns, so a missing salt must not fail the deploy).
         env:
           OIDC_PROVIDER_KEY: ${{ secrets.OIDC_PROVIDER_KEY }}
           SESSION_TOKEN_KEY: ${{ secrets.SESSION_TOKEN_KEY }}
           OIDC_PROVIDER_KEY_PREVIOUS: ${{ secrets.OIDC_PROVIDER_KEY_PREVIOUS }}
+          IP_HASH_SALT: ${{ secrets.IP_HASH_SALT }}
         run: |
           # Fail loudly if a required secret is missing/empty in this GitHub
           # environment. Without this, jq emits an empty value, `secret bulk`
@@ -121,7 +126,8 @@ jobs:
             WORKER_ARGS="--name ${{ inputs.worker_name }}"
           fi
           jq -n '{OIDC_PROVIDER_KEY: env.OIDC_PROVIDER_KEY, SESSION_TOKEN_KEY: env.SESSION_TOKEN_KEY}
-                 + (if (env.OIDC_PROVIDER_KEY_PREVIOUS // "") != "" then {OIDC_PROVIDER_KEY_PREVIOUS: env.OIDC_PROVIDER_KEY_PREVIOUS} else {} end)' \
+                 + (if (env.OIDC_PROVIDER_KEY_PREVIOUS // "") != "" then {OIDC_PROVIDER_KEY_PREVIOUS: env.OIDC_PROVIDER_KEY_PREVIOUS} else {} end)
+                 + (if (env.IP_HASH_SALT // "") != "" then {IP_HASH_SALT: env.IP_HASH_SALT} else {} end)' \
             | npx wrangler@3 secret bulk $WORKER_ARGS
 
       - name: Get deploy URL
