@@ -62,6 +62,17 @@ fn jwks_cache() -> JwksCache {
         .clone()
 }
 
+/// Bound the outbound STS `AssumeRoleWithWebIdentity` call. Without it a slow or
+/// hung federation lets the whole request stall until the Cloudflare edge kills
+/// it with a non-XML `error code: NNNN` body, which the caller's AWS SDK can't
+/// deserialize ("char 'e' is not expected.:1:1"). With the bound, a stall instead
+/// returns a proper S3 `ServiceUnavailable` XML error (HttpError → BackendError
+/// → 503) the client can parse and retry. STS normally answers in well under a
+/// second, so this only trips on genuine stalls — which only happen on a cold
+/// isolate, since the OIDC provider caches credentials across requests once warm.
+// ponytail: fixed 10s; promote to an env var if a deployment ever needs to tune it.
+const STS_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// [`HttpExchange`] for outbound STS calls, backed by the shared reqwest client
 /// (reqwest wraps `web_sys::fetch` on wasm). This is what lets the OIDC
 /// backend-auth middleware POST `AssumeRoleWithWebIdentity` to AWS STS.
@@ -80,6 +91,7 @@ impl HttpExchange for FetchHttpExchange {
             .client
             .post(url)
             .form(form)
+            .timeout(STS_REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
