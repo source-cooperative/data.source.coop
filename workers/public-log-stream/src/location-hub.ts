@@ -1,47 +1,40 @@
 import { DurableObject } from "cloudflare:workers";
+import { buildLocs } from "./aggregate.mjs";
 
 export interface Env {
   LOCATION_HUB: DurableObjectNamespace<LocationHub>;
   EMIT_INTERVAL_MS: string;
-  MAX_BROADCASTS_PER_EMIT: string;
+  MAX_PRODUCTS_PER_COLO: string;
   CORS_ORIGIN: string;
 }
 
+// Posted by the proxy per successful public-product GET. Only the datacenter
+// (colo) and the product are used; requester geolocation is intentionally
+// never forwarded to viewers.
 export interface LocationEvent {
-  lat: number;
-  lon: number;
-  city?: string;
-  country?: string;
   colo?: string;
   account_id?: string;
   product_id?: string;
-  path?: string;
 }
 
-interface Stats {
-  requestCount: number;
-  broadcastCount: number;
-  windowStart: number;
-  seenLocations: Set<string>;
+// One datacenter's activity within the current window.
+interface ColoStats {
+  n: number;
+  products: Map<string, number>;
 }
-
 
 export class LocationHub extends DurableObject<Env> {
-  private stats: Stats = {
-    requestCount: 0,
-    broadcastCount: 0,
-    windowStart: Date.now(),
-    seenLocations: new Set(),
-  };
+  private colos = new Map<string, ColoStats>();
+  private requestCount = 0;
   private alarmScheduled = false;
   private sentIdle = false;
   private emitInterval: number;
-  private maxBroadcasts: number;
+  private maxProducts: number;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.emitInterval = parseInt(env.EMIT_INTERVAL_MS) || 500;
-    this.maxBroadcasts = parseInt(env.MAX_BROADCASTS_PER_EMIT) || 25;
+    this.maxProducts = parseInt(env.MAX_PRODUCTS_PER_COLO) || 5;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -74,46 +67,21 @@ export class LocationHub extends DurableObject<Env> {
   }
 
   private async handleLocation(request: Request): Promise<Response> {
-    const location: LocationEvent = await request.json();
+    const event: LocationEvent = await request.json();
 
-    // Anonymize to ~1km precision (city-level)
-    location.lat = Math.round(location.lat * 100) / 100;
-    location.lon = Math.round(location.lon * 100) / 100;
-
-    const now = Date.now();
-    if (now - this.stats.windowStart >= this.emitInterval) {
-      this.stats = {
-        requestCount: 0,
-        broadcastCount: 0,
-        windowStart: now,
-        seenLocations: new Set(),
-      };
-    }
-
-    this.stats.requestCount++;
-    this.sentIdle = false;
-
-    // Deduplicate: one event per unique anonymized location per window
-    const locationKey = `${location.lat},${location.lon}`;
-    if (this.stats.seenLocations.has(locationKey)) {
-      this.ensureAlarm();
+    // No datacenter → can't place it on the globe; drop it.
+    if (!event.colo) {
       return new Response("ok");
     }
-    this.stats.seenLocations.add(locationKey);
 
-    // Sample: only broadcast if under the ceiling
-    if (this.stats.broadcastCount < this.maxBroadcasts) {
-      this.stats.broadcastCount++;
-      const message = JSON.stringify({ type: "location", data: location });
-      for (const ws of this.ctx.getWebSockets()) {
-        try {
-          ws.send(message);
-        } catch {
-          // Client disconnected, cleaned up in webSocketClose
-        }
-      }
-    }
+    const colo = this.colos.get(event.colo) ?? { n: 0, products: new Map() };
+    colo.n++;
+    const product = `${event.account_id ?? ""}/${event.product_id ?? ""}`;
+    colo.products.set(product, (colo.products.get(product) ?? 0) + 1);
+    this.colos.set(event.colo, colo);
 
+    this.requestCount++;
+    this.sentIdle = false;
     this.ensureAlarm();
     return new Response("ok");
   }
@@ -132,43 +100,41 @@ export class LocationHub extends DurableObject<Env> {
     this.alarmScheduled = false;
     const clients = this.ctx.getWebSockets();
 
-    if (clients.length > 0) {
-      const hasActivity = this.stats.requestCount > 0;
+    // Nobody watching → let the alarm stop (re-armed on next connect/POST).
+    if (clients.length === 0) {
+      this.colos.clear();
+      this.requestCount = 0;
+      return;
+    }
 
-      // Send stats if there's activity, or once when going idle
-      if (hasActivity || !this.sentIdle) {
-        const statsMessage = JSON.stringify({
-          type: "stats",
-          data: {
-            requestsPerSecond: this.stats.requestCount,
-            broadcastsPerSecond: this.stats.broadcastCount,
-            viewers: clients.length,
-          },
-        });
+    const hasActivity = this.colos.size > 0;
 
-        for (const ws of clients) {
-          try {
-            ws.send(statsMessage);
-          } catch {
-            // Cleaned up in webSocketClose
-          }
+    // Emit while there's activity, plus one final tick when going idle so the
+    // globe can fade out, then stay quiet until activity resumes.
+    if (hasActivity || !this.sentIdle) {
+      const message = JSON.stringify({
+        type: "tick",
+        requestsPerWindow: this.requestCount,
+        viewers: clients.length,
+        locations: buildLocs(this.colos, this.maxProducts),
+      });
+
+      for (const ws of clients) {
+        try {
+          ws.send(message);
+        } catch {
+          // Cleaned up in webSocketClose
         }
-
-        this.sentIdle = !hasActivity;
       }
 
-      // Reset for next window
-      this.stats = {
-        requestCount: 0,
-        broadcastCount: 0,
-        windowStart: Date.now(),
-        seenLocations: new Set(),
-      };
-
-      // Keep alarm running while clients are connected
-      await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
-      this.alarmScheduled = true;
+      this.sentIdle = !hasActivity;
     }
+
+    // Reset for the next window and keep the alarm running while clients remain.
+    this.colos.clear();
+    this.requestCount = 0;
+    await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
+    this.alarmScheduled = true;
   }
 
   async webSocketMessage(

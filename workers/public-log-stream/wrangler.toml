@@ -16,7 +16,7 @@ new_sqlite_classes = ["LocationHub"]
 
 [vars]
 EMIT_INTERVAL_MS = "500"
-MAX_BROADCASTS_PER_EMIT = "25"
+MAX_PRODUCTS_PER_COLO = "5"
 CORS_ORIGIN = "*"
 
 [env.staging]
@@ -26,7 +26,7 @@ routes = [
 
 [env.staging.vars]
 EMIT_INTERVAL_MS = "500"
-MAX_BROADCASTS_PER_EMIT = "25"
+MAX_PRODUCTS_PER_COLO = "5"
 CORS_ORIGIN = "*"
 
 [[env.staging.durable_objects.bindings]]
