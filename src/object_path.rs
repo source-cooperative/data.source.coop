@@ -38,5 +38,5 @@ pub(crate) fn extract_path_segments(path: &str) -> (Option<&str>, Option<&str>, 
 /// (multi-object delete) is a legitimate bucket-level operation.
 pub(crate) fn is_keyless_write(method: &http::Method, path: &str) -> bool {
     (*method == http::Method::PUT || *method == http::Method::DELETE)
-        && extract_path_segments(path).2.is_none_or(str::is_empty)
+        && extract_path_segments(path).2.is_none()
 }
