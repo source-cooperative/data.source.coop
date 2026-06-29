@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{hash_ip, RequestEvent};
+use analytics::{hash_ip, strip_range_unit, RequestEvent};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -11,7 +11,7 @@ fn event<'a>() -> RequestEvent<'a> {
         method: "GET",
         user_id: "",
         client_ip_hash: "deadbeef",
-        range: "bytes=0-1023",
+        range: "0-1023", // already stripped of the "bytes=" unit prefix
         country: "US",
         content_type: "application/octet-stream",
         bytes_sent: 1024.0,
@@ -40,7 +40,7 @@ fn blobs_in_schema_order() {
             "US",                       // blob6: country
             "application/octet-stream", // blob7: content_type
             "deadbeef",                 // blob8: client_ip_hash
-            "bytes=0-1023",             // blob9: range
+            "0-1023",                   // blob9: range (bytes= prefix stripped)
         ]
     );
 }
@@ -103,4 +103,16 @@ fn hash_ip_empty_ip_stays_empty() {
     // Unknown client → empty, so anonymous requests don't all collapse to one
     // hash of the empty string.
     assert_eq!(hash_ip("", "salt"), "");
+}
+
+// ── strip_range_unit ────────────────────────────────────────────────
+
+#[test]
+fn strip_range_unit_drops_bytes_prefix() {
+    assert_eq!(strip_range_unit("bytes=0-1023"), "0-1023");
+    assert_eq!(strip_range_unit("bytes=1024-"), "1024-");
+    // Prefix absent → value preserved verbatim (empty stays empty; a non-bytes
+    // unit is not silently mangled).
+    assert_eq!(strip_range_unit(""), "");
+    assert_eq!(strip_range_unit("items=0-5"), "items=0-5");
 }

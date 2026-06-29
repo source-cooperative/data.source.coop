@@ -17,7 +17,8 @@ pub struct RequestEvent<'a> {
     /// HMAC-SHA256 of the client IP — see [`hash_ip`]. We never log the raw
     /// IP; this lets us count distinct clients without storing PII.
     pub client_ip_hash: &'a str,
-    /// `Range` request header verbatim (e.g. `bytes=0-1023`), empty if absent.
+    /// `Range` request header with the `bytes=` unit prefix stripped
+    /// (e.g. `0-1023`), empty if absent.
     pub range: &'a str,
     pub country: &'a str,
     pub content_type: &'a str,
@@ -42,7 +43,7 @@ impl RequestEvent<'_> {
     ///   blob6: country
     ///   blob7: content_type
     ///   blob8: client_ip_hash (HMAC-SHA256; empty when IP is unknown)
-    ///   blob9: range (Range request header, empty if absent)
+    ///   blob9: range (Range header, "bytes=" prefix stripped, empty if absent)
     pub fn blobs(&self) -> [&str; 9] {
         [
             self.account_id,
@@ -119,6 +120,14 @@ pub fn hash_ip(ip: &str, salt: &str) -> String {
         .collect()
 }
 
+/// Strip the constant `bytes=` unit prefix from a `Range` header value
+/// (e.g. `bytes=0-1023` → `0-1023`) so blob9 stores just the parseable ranges.
+/// A non-bytes unit (legal per RFC 7233, never seen in practice) and the empty
+/// string pass through unchanged, so nothing is silently mangled.
+pub fn strip_range_unit(range: &str) -> &str {
+    range.strip_prefix("bytes=").unwrap_or(range)
+}
+
 /// Truncate a string to at most `max_bytes` bytes on a char boundary.
 fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -161,6 +170,7 @@ pub(crate) fn log_analytics(
         .unwrap_or(0.0);
 
     let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
+    let range = strip_range_unit(header_str(headers, "range"));
 
     log_request(
         env,
@@ -171,7 +181,7 @@ pub(crate) fn log_analytics(
             method: method.as_str(),
             user_id: header_str(headers, "x-source-user-id"),
             client_ip_hash: &client_ip_hash,
-            range: header_str(headers, "range"),
+            range,
             country: header_str(headers, "cf-ipcountry"),
             content_type: &content_type,
             bytes_sent,
