@@ -909,8 +909,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bce59de8d7e3456f9d9bbd47842f520b9142fd28991a6c7bd484846620fb206d"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#c755997b4443843847840eadba73b4e633706f0b"
 dependencies = [
  "async-trait",
  "base64",
@@ -937,8 +936,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73a27bb8b8a8da696e0671c563e1772f4099924f62fb522a636455d25c6bb814"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#c755997b4443843847840eadba73b4e633706f0b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -962,8 +960,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff1c6ac0fed7225d1d6fb84981a360d727dc99ab2d0b51960cc404ef47a91c59"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#c755997b4443843847840eadba73b4e633706f0b"
 dependencies = [
  "base64",
  "chrono",
@@ -982,8 +979,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d603d78607332a71f0a38af203bc25ae11214d90e6ddedff8147888f1da276"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#c755997b4443843847840eadba73b4e633706f0b"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -993,8 +989,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0354c742b40c4a0883636c8bd0840cb2e3d24284055e9e91b90a3899b4ff1452"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#c755997b4443843847840eadba73b4e633706f0b"
 dependencies = [
  "aes-gcm",
  "base64",
