@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.6.2"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#56b84877e68c0948bf532fd48ce56b286b5f34df"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#718ee732259a95ede3afcdf7a654d83abeb69e4b"
 dependencies = [
  "async-trait",
  "base64",
@@ -936,7 +936,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.6.2"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#56b84877e68c0948bf532fd48ce56b286b5f34df"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#718ee732259a95ede3afcdf7a654d83abeb69e4b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -960,7 +960,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.6.2"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#56b84877e68c0948bf532fd48ce56b286b5f34df"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#718ee732259a95ede3afcdf7a654d83abeb69e4b"
 dependencies = [
  "base64",
  "chrono",
@@ -979,7 +979,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.6.2"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#56b84877e68c0948bf532fd48ce56b286b5f34df"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#718ee732259a95ede3afcdf7a654d83abeb69e4b"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -989,7 +989,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.6.2"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#56b84877e68c0948bf532fd48ce56b286b5f34df"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fcross-request-body-io#718ee732259a95ede3afcdf7a654d83abeb69e4b"
 dependencies = [
  "aes-gcm",
  "base64",
