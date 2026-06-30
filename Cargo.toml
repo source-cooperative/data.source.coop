@@ -77,15 +77,18 @@ web-sys = { version = "0.3", features = [
 worker = { version = "=0.7.4", features = ["http"] }
 worker-macros = { version = "=0.7.4", features = ["http"] }
 
-# TEMPORARY: build against the cross-request-body-io fix branch of multistore
-# until it ships in a release. Fixes 500/503 "Cannot perform I/O on behalf of a
-# different request" on multipart/batch-delete writes under a cold-isolate burst
-# (developmentseed/multistore#100). All five multistore* crates must resolve
-# from the same git source or their shared types won't unify. Remove this block
-# and bump the multistore* deps once the fix is released.
+# TEMPORARY: build against the multistore cross-request-body-io fix, which is
+# merged to main (#100) but not yet released. The fix/buffered-body-size-guard
+# branch carries main + the #102 review follow-ups (size guard before the
+# buffered-op read, fail-closed on classifier over-match), so it's the complete
+# un-released set. Fixes 500/503 "Cannot perform I/O on behalf of a different
+# request" on multipart/batch-delete writes under a cold-isolate burst. All five
+# multistore* crates must resolve from the same git source or their shared types
+# won't unify. Remove this block and bump the multistore* deps once it ships in a
+# release.
 [patch.crates-io]
-multistore = { git = "https://github.com/developmentseed/multistore", branch = "fix/cross-request-body-io" }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "fix/cross-request-body-io" }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "fix/cross-request-body-io" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "fix/cross-request-body-io" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "fix/cross-request-body-io" }
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "fix/buffered-body-size-guard" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "fix/buffered-body-size-guard" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "fix/buffered-body-size-guard" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "fix/buffered-body-size-guard" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "fix/buffered-body-size-guard" }
