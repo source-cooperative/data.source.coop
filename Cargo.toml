@@ -26,6 +26,10 @@ path = "tests/backend_auth.rs"
 name = "authz"
 path = "tests/authz.rs"
 
+[[test]]
+name = "sts_cache"
+path = "tests/sts_cache.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.6.2", features = ["azure"] }
@@ -47,6 +51,12 @@ sha2 = "0.10"
 
 # Tracing
 tracing = "0.1"
+
+# Time — parse the STS response `<Expiration>` for the L2 credential cache TTL.
+# Already in the tree transitively (multistore); named directly here so sts_cache
+# can use it. `alloc` is enough for `parse_from_rfc3339`; feature unification adds
+# whatever the wasm build needs.
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -16,6 +16,7 @@ mod location;
 mod pagination;
 mod source_api;
 mod sts;
+mod sts_cache;
 
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
@@ -87,6 +88,17 @@ impl HttpExchange for FetchHttpExchange {
         url: &str,
         form: &[(&str, &str)],
     ) -> std::result::Result<String, OidcProviderError> {
+        // L2 (cross-isolate, per-colo) cache for the AssumeRoleWithWebIdentity
+        // response, keyed by RoleArn. On a hit we skip the slow STS round-trip
+        // entirely — the one thing that stalls the request hot path on a cold
+        // isolate. multistore's in-isolate cache is L1; this sits under it.
+        let cache_key = sts_cache::role_arn_from_form(form).map(sts_cache::cache_key);
+        if let Some(ref key) = cache_key {
+            if let Some(body) = sts_cache_get(key).await {
+                return Ok(body);
+            }
+        }
+
         let resp = self
             .client
             .post(url)
@@ -100,9 +112,45 @@ impl HttpExchange for FetchHttpExchange {
         // body on 4xx/5xx, and multistore's `parse_response` reads the error
         // (code + message) out of that body. Discarding it on a non-2xx would
         // lose the diagnostic and the precise ProxyError mapping.
-        resp.text()
+        let body = resp
+            .text()
             .await
-            .map_err(|e| OidcProviderError::HttpError(e.to_string()))
+            .map_err(|e| OidcProviderError::HttpError(e.to_string()))?;
+
+        // Cache only a successful, not-near-expiry credential response —
+        // `ttl_secs` returns None for an STS error document, so failures are
+        // never cached.
+        if let Some(ref key) = cache_key {
+            let now = (worker::Date::now().as_millis() / 1000) as i64;
+            if let Some(ttl) = sts_cache::ttl_secs(&body, now) {
+                sts_cache_put(key, &body, ttl).await;
+            }
+        }
+        Ok(body)
+    }
+}
+
+/// L2 read. Best-effort: any cache error degrades to a miss (we just call STS).
+async fn sts_cache_get(key: &str) -> Option<String> {
+    let mut resp = worker::Cache::default().get(key, false).await.ok()??;
+    resp.text().await.ok()
+}
+
+/// L2 write. Best-effort: a failed put just means the next request re-mints.
+async fn sts_cache_put(key: &str, body: &str, ttl_secs: u32) {
+    let headers = worker::Headers::new();
+    let _ = headers.set("content-type", "text/xml");
+    let _ = headers.set("cache-control", &format!("max-age={ttl_secs}"));
+    match worker::Response::ok(body) {
+        Ok(resp) => {
+            if let Err(e) = worker::Cache::default()
+                .put(key, resp.with_headers(headers))
+                .await
+            {
+                tracing::warn!("STS L2 cache put failed: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("STS L2 cache response build failed: {e}"),
     }
 }
 
