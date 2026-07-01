@@ -6,8 +6,7 @@ use multistore::registry::{BucketRegistry, ResolvedBucket};
 use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 use std::collections::HashMap;
 
-use crate::authz::is_write_action;
-use crate::backend_auth::{apply_backend_auth, BackendAuth};
+use crate::authz::{decide_backend_auth, is_write_action};
 
 use super::types::DataConnectionDetails;
 
@@ -165,60 +164,56 @@ async fn resolve_product(
     )
     .await?;
 
-    // Authorize writes. The subject-scoped fetches above already cleared the
-    // caller to *see* this product; a write additionally requires an
-    // authenticated caller who holds the product's `write` permission, a
-    // connection that is not read-only, and a connection the proxy can sign as.
-    if is_write {
-        // Anonymous callers can never write (and there is no subject to query
-        // permissions with).
-        let subject = subject.ok_or(ProxyError::AccessDenied)?;
-        // Connection-level denials need no caller lookup — check them first so a
-        // write the connection can't accept skips the permissions API call. A
-        // connection can sign writes only via an S3 web-identity role.
-        let signable = matches!(
-            connection.authentication,
-            BackendAuth::S3WebIdentityRole { .. }
-        );
-        if connection.read_only || !signable {
-            return Err(ProxyError::AccessDenied);
-        }
-        // The caller must hold the product's `write` permission.
-        let permissions = super::cache::get_or_fetch_permissions(
-            api_base_url,
-            account,
-            product,
-            api_auth,
-            request_id,
-            subject,
-        )
-        .await?;
-        if !permissions.iter().any(|p| p.eq_ignore_ascii_case("write")) {
-            return Err(ProxyError::AccessDenied);
-        }
-    }
-
     // 4. Build BucketConfig
     let (backend_type, mut backend_options) = build_backend_options(&connection.details)?;
 
+    // A write needs the caller's product permissions; fetch them only for an
+    // authenticated write, since reads never consult them and an anonymous write
+    // is denied before they're read. (Earlier revisions also skipped this fetch
+    // for writes the connection itself could not accept — read-only / unsignable —
+    // as a micro-opt. Consolidating the whole gate into `decide_backend_auth`
+    // trades that for a single source of truth, at the cost of one extra API call
+    // on that specific deny path.)
+    let permissions = match subject {
+        Some(subject) if is_write => {
+            super::cache::get_or_fetch_permissions(
+                api_base_url,
+                account,
+                product,
+                api_auth,
+                request_id,
+                subject,
+            )
+            .await?
+        }
+        _ => Vec::new(),
+    };
+
     // Backend authentication: unsigned (public) by default, or federate the
-    // proxy's OIDC identity into the connection's role.
+    // proxy's OIDC identity into the connection's role — but only after the write
+    // gate passes. Both decisions live in `decide_backend_auth`.
     //
     // The confused-deputy guard is upstream: the subject-scoped Source API
     // fetches above (get_or_fetch_product / get_or_fetch_data_connection, keyed
-    // on the caller's principal) only return the product/connection this caller
-    // is authorized for — so reaching here means the caller is already cleared
-    // for this connection's backend. Federation does not re-authorize.
+    // on the caller's principal) only return the product/connection this caller is
+    // authorized for — so reaching here means the caller is already cleared for
+    // this connection's backend, hence we pass `Some(..)`. Federation does not
+    // re-authorize.
     //
     // This ordering is enforced by data dependency, not just statement order:
-    // apply_backend_auth needs `connection`, which only exists once the
-    // subject-scoped fetch succeeds. A 403/404 from that fetch propagates via `?`
-    // before we ever get here, so an unauthorized caller can never reach
-    // federation. Guarded end-to-end by tests/test_federation.py's
-    // test_restricted_product_denied_to_anonymous.
+    // `connection` only exists once the subject-scoped fetch succeeds, and a
+    // 403/404 from that fetch propagates via `?` before we ever get here — so an
+    // unauthorized caller can never reach federation. Guarded in CI by the
+    // `tests/authz.rs` `decide_backend_auth` unit tests (an unauthorized outcome
+    // ⇒ AccessDenied with no options emitted) and end-to-end by
+    // tests/test_federation.py's test_restricted_product_denied_to_anonymous.
     span.record("auth_type", connection.authentication.kind());
-    apply_backend_auth(
-        &connection.authentication,
+    decide_backend_auth(
+        Some(&connection.authentication),
+        connection.read_only,
+        is_write,
+        subject.is_some(),
+        &permissions,
         &connection.data_connection_id,
         &backend_type,
         &mut backend_options,
