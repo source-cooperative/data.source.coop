@@ -87,3 +87,13 @@ fn sts_error_document_is_not_cached() {
         <Message>nope</Message></Error></ErrorResponse>";
     assert_eq!(ttl_secs(err, 0), None);
 }
+
+#[test]
+fn unparseable_expiration_is_not_cached() {
+    // Present but malformed <Expiration> (no TZ) → don't cache a credential
+    // whose real expiry we can't determine.
+    let bad = "<AssumeRoleWithWebIdentityResponse><Credentials>\
+        <Expiration>2026-06-30 01:00:00</Expiration>\
+        </Credentials></AssumeRoleWithWebIdentityResponse>";
+    assert_eq!(ttl_secs(bad, 0), None);
+}
