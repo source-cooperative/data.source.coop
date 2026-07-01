@@ -135,3 +135,17 @@ fn url_encoded_prefix() {
         Some("list-type=2&prefix=admin%20boundaries/subdir/".to_string())
     );
 }
+
+// ── Signing-path encoding (http::Uri) ───────────────────────────────
+// The proxy recovers the raw, percent-encoded request path from the URL for
+// SigV4 signature verification: `RequestParts` decodes the path for routing,
+// but the client signs the *encoded* path, so a decoded key with a space breaks
+// the signature (SignatureDoesNotMatch). This pins the `http` crate behavior the
+// fix relies on — `Uri::path()` must return the path WITHOUT decoding `%20`.
+#[test]
+fn uri_path_preserves_percent_encoding() {
+    let uri: http::Uri = "https://data.staging.source.coop/acct/prod/foo%20bar?x-id=PutObject"
+        .parse()
+        .unwrap();
+    assert_eq!(uri.path(), "/acct/prod/foo%20bar");
+}

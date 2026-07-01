@@ -278,6 +278,18 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         tracing::info_span!("request", %request_id, method = %parts.method, path = %parts.path);
     let _guard = span.enter();
 
+    // SigV4's canonical URI is the percent-encoded path the client signed over.
+    // `RequestParts` decodes the path for bucket/key routing, so recover the raw
+    // encoded path from the request URL for signature verification — otherwise a
+    // key with an escaped character (e.g. a space → `%20`) fails with
+    // SignatureDoesNotMatch. `Uri::path()` returns the path un-decoded; fall back
+    // to the decoded signing path if the URL somehow won't parse.
+    let signing_path = req
+        .url()
+        .parse::<http::Uri>()
+        .map(|u| u.path().to_string())
+        .unwrap_or_else(|_| rewrite.signing_path.clone());
+
     let request_info = RequestInfo::new(
         &parts.method,
         &rewrite.path,
@@ -285,7 +297,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         &parts.headers,
         None,
     )
-    .with_signing_path(&rewrite.signing_path)
+    .with_signing_path(&signing_path)
     .with_signing_query(rewrite.signing_query.as_deref());
 
     let start_ms = js_sys::Date::now();
