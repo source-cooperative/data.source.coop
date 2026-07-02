@@ -5,7 +5,7 @@
 #[path = "../src/sts_cache.rs"]
 mod sts_cache;
 
-use sts_cache::{cache_key, role_arn_from_form, ttl_secs, REFRESH_LEAD_SECS};
+use sts_cache::{cache_inputs_from_form, cache_key, ttl_secs, REFRESH_LEAD_SECS};
 
 const OK_RESP: &str = "<AssumeRoleWithWebIdentityResponse><Credentials>\
     <AccessKeyId>AKID</AccessKeyId>\
@@ -18,43 +18,65 @@ fn exp_unix() -> i64 {
         .timestamp()
 }
 
-// ── role_arn_from_form ─────────────────────────────────────────────
+// ── cache_inputs_from_form ─────────────────────────────────────────
 
 #[test]
-fn role_arn_only_for_assume_role() {
+fn inputs_for_assume_role() {
     let assume = [
         ("Action", "AssumeRoleWithWebIdentity"),
         ("RoleArn", "arn:aws:iam::1:role/r"),
+        ("RoleSessionName", "scv1_conn_abc"),
         ("WebIdentityToken", "jwt"),
     ];
-    assert_eq!(role_arn_from_form(&assume), Some("arn:aws:iam::1:role/r"));
+    assert_eq!(
+        cache_inputs_from_form(&assume),
+        Some(("arn:aws:iam::1:role/r", "scv1_conn_abc"))
+    );
 }
 
 #[test]
 fn non_assume_role_action_is_not_cached() {
     // A different action must bypass the cache even if a RoleArn is present.
     let other = [("Action", "GetCallerIdentity"), ("RoleArn", "arn:x")];
-    assert_eq!(role_arn_from_form(&other), None);
+    assert_eq!(cache_inputs_from_form(&other), None);
 }
 
 #[test]
 fn assume_role_without_role_arn_is_none() {
-    let no_arn = [("Action", "AssumeRoleWithWebIdentity")];
-    assert_eq!(role_arn_from_form(&no_arn), None);
+    let no_arn = [
+        ("Action", "AssumeRoleWithWebIdentity"),
+        ("RoleSessionName", "scv1_conn_abc"),
+    ];
+    assert_eq!(cache_inputs_from_form(&no_arn), None);
+}
+
+#[test]
+fn assume_role_without_session_name_is_none() {
+    // Missing the per-connection identity → fail closed (bypass cache) rather
+    // than key on the role alone and risk cross-connection credential sharing.
+    let no_session = [
+        ("Action", "AssumeRoleWithWebIdentity"),
+        ("RoleArn", "arn:aws:iam::1:role/r"),
+    ];
+    assert_eq!(cache_inputs_from_form(&no_session), None);
 }
 
 // ── cache_key ──────────────────────────────────────────────────────
 
 #[test]
-fn cache_key_is_non_routable_and_encodes_arn() {
-    let k = cache_key("arn:aws:iam::1:role/r");
+fn cache_key_is_non_routable_and_encodes_inputs() {
+    let k = cache_key("arn:aws:iam::1:role/r", "scv1_conn_abc");
     assert!(k.starts_with("https://sts-creds.cache.internal/v1/"));
-    // The `:` and `/` in the ARN must be percent-encoded so the key is one
+    // The `:` and `/` in the ARN must be percent-encoded so each part is one
     // well-formed, collision-free path segment.
     assert!(!k
         .trim_start_matches("https://sts-creds.cache.internal/v1/")
         .contains(':'));
-    assert_ne!(cache_key("arn:a"), cache_key("arn:b"));
+    assert_ne!(cache_key("arn:a", "s"), cache_key("arn:b", "s"));
+    // Same role, different connection identity → different key. This is the
+    // security property: creds are never shared across connections that only
+    // share a role.
+    assert_ne!(cache_key("arn:r", "connA"), cache_key("arn:r", "connB"));
 }
 
 // ── ttl_secs ───────────────────────────────────────────────────────

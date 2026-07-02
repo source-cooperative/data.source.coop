@@ -91,10 +91,14 @@ impl HttpExchange for FetchHttpExchange {
         form: &[(&str, &str)],
     ) -> std::result::Result<String, OidcProviderError> {
         // L2 (cross-isolate, per-colo) cache for the AssumeRoleWithWebIdentity
-        // response, keyed by RoleArn. On a hit we skip the slow STS round-trip
-        // entirely — the one thing that stalls the request hot path on a cold
-        // isolate. multistore's in-isolate cache is L1; this sits under it.
-        let cache_key = sts_cache::role_arn_from_form(form).map(sts_cache::cache_key);
+        // response, keyed by (RoleArn, RoleSessionName) — the session name is the
+        // per-connection identity the trust policy conditions on, so credentials
+        // are never shared across connections that merely share a role. On a hit
+        // we skip the slow STS round-trip entirely — the one thing that stalls the
+        // request hot path on a cold isolate. multistore's in-isolate cache is L1;
+        // this sits under it.
+        let cache_key = sts_cache::cache_inputs_from_form(form)
+            .map(|(role_arn, session_name)| sts_cache::cache_key(role_arn, session_name));
         if let Some(ref key) = cache_key {
             if let Some(body) = sts_cache_get(key).await {
                 return Ok(body);

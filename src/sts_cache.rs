@@ -19,28 +19,46 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 /// — the two tiers never hand out an about-to-expire credential.
 pub const REFRESH_LEAD_SECS: i64 = 300; // 5 minutes
 
-/// The `RoleArn` iff `form` is an `AssumeRoleWithWebIdentity` request — the only
-/// exchange we cache (other STS actions and the Azure/GCP bearer flows return
-/// `None` and bypass the cache). `RoleArn` is multistore's own L1 cache key, so
-/// L2 keys line up with L1 exactly.
-pub fn role_arn_from_form<'a>(form: &'a [(&'a str, &'a str)]) -> Option<&'a str> {
+/// The `(RoleArn, RoleSessionName)` iff `form` is an `AssumeRoleWithWebIdentity`
+/// request — the only exchange we cache (other STS actions and the Azure/GCP
+/// bearer flows return `None` and bypass the cache). Both fields must be present
+/// or we bypass the cache (fail closed to a live STS call).
+///
+/// Keying on the session name too — not just the role — is a security boundary,
+/// not an optimization. The session name is the sanitized per-connection subject
+/// (`scv1:conn:{id}`), which the role's trust policy conditions on **at mint
+/// time**. A cache hit skips that mint, so it skips the trust-policy check; if the
+/// key were the role alone, a credential minted for one connection could be served
+/// to a different connection that shares the role but that the trust policy would
+/// reject. So the key must carry every input the mint's authorization depends on.
+//
+// ponytail: session name is lossy — sts_session_name() maps non-[A-Za-z0-9+=,.@-_]
+// to '_' and truncates to 64 chars, so two very long/similar subjects could
+// collide and share a credential. The lossless fix is at multistore's L1 (it has
+// the raw subject); this L2 key mirrors what the form exposes. Upgrade path: key
+// on a hash of the WebIdentityToken `sub` if truncation collisions ever bite.
+pub fn cache_inputs_from_form<'a>(form: &'a [(&'a str, &'a str)]) -> Option<(&'a str, &'a str)> {
     let is_assume_role = form
         .iter()
         .any(|&(k, v)| k == "Action" && v == "AssumeRoleWithWebIdentity");
     if !is_assume_role {
         return None;
     }
-    form.iter().find(|&&(k, _)| k == "RoleArn").map(|&(_, v)| v)
+    let find = |key: &str| form.iter().find(|&&(k, _)| k == key).map(|&(_, v)| v);
+    Some((find("RoleArn")?, find("RoleSessionName")?))
 }
 
-/// Cache key: a synthetic, non-routable URL. Cache API entries are only returned
-/// when a request URL matches the key, and this host never arrives as a real edge
-/// request — so a cached (short-lived, role-scoped) credential is not externally
-/// addressable.
-pub fn cache_key(role_arn: &str) -> String {
+/// Cache key: a synthetic, non-routable URL scoped to both the role and the
+/// session name (the per-connection identity the trust policy sees). Cache API
+/// entries are only returned when a request URL matches the key, and this host
+/// never arrives as a real edge request — so a cached (short-lived, role-scoped)
+/// credential is not externally addressable. Both segments are percent-encoded so
+/// each is one well-formed, collision-free path segment.
+pub fn cache_key(role_arn: &str, session_name: &str) -> String {
     format!(
-        "https://sts-creds.cache.internal/v1/{}",
-        utf8_percent_encode(role_arn, NON_ALPHANUMERIC)
+        "https://sts-creds.cache.internal/v1/{}/{}",
+        utf8_percent_encode(role_arn, NON_ALPHANUMERIC),
+        utf8_percent_encode(session_name, NON_ALPHANUMERIC),
     )
 }
 
