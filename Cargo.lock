@@ -1733,6 +1733,7 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.2.0"
 dependencies = [
+ "chrono",
  "console_error_panic_hook",
  "getrandom 0.4.2",
  "hmac",
