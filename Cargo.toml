@@ -30,6 +30,10 @@ path = "tests/authz.rs"
 name = "object_path"
 path = "tests/object_path.rs"
 
+[[test]]
+name = "multipart"
+path = "tests/multipart.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.6.3", features = ["azure"] }
