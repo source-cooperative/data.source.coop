@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/source-cooperative/data.source.coop/compare/v2.2.0...v2.2.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* correct prod auth audiences ([5d216e6](https://github.com/source-cooperative/data.source.coop/commit/5d216e6eba0ca61116d2af243a94fe9b3a21d3bd))
+
 ## [2.2.0](https://github.com/source-cooperative/data.source.coop/compare/v2.1.2...v2.2.0) (2026-07-01)
 
 
