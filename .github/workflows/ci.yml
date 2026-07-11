@@ -101,7 +101,17 @@ jobs:
             printf '"\n'
             echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
             echo "AUTH_ISSUER=https://auth.test.example.com"
+            echo "SOURCE_API_URL=http://localhost:9000"
           } > .dev.vars
+      - name: Start Source API stub
+        # Pins the control plane: the live API's data connection grew an
+        # s3_web_identity_role that CI's throwaway key can't sign (every object
+        # read 502'd). The stub serves an unsigned connection; object reads
+        # still hit the real public bucket. See tests/stub_api.py.
+        run: |
+          python3 tests/stub_api.py &
+          curl --retry 30 --retry-delay 1 --retry-connrefused --silent --fail \
+            http://localhost:9000/api/v1/products/cholmes/admin-boundaries > /dev/null
       - name: Start wrangler dev
         run: |
           # Skip the build command (the artifact is prebuilt). Scope the
