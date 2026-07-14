@@ -28,6 +28,10 @@ REAL_API = "https://source.coop"
 # connection — exactly the drift we want an early warning for.
 KNOWN_AUTH_TYPES = {"unsigned", "s3_web_identity_role"}
 
+# Providers the proxy's build_backend_options maps (src/source_api/registry.rs,
+# closed match). Anything else is ProxyError::Internal on every request.
+KNOWN_PROVIDERS = {"s3", "az", "azure", "gcs", "gs"}
+
 
 def fetch(path):
     resp = requests.get(f"{REAL_API}{path}", timeout=30)
@@ -79,6 +83,32 @@ def test_data_connection_shape():
     real = fetch(f"/api/v1/data-connections/{CONNECTION}")
     stub = ROUTES[f"/api/v1/data-connections/{CONNECTION}"]
     assert_shape_subset(stub, real, "connection")
+
+
+def test_product_values():
+    """Shape checks can't see value drift: renaming `visibility: "public"`
+    keeps the JSON type while making the proxy parse Visibility::Unknown and
+    fail closed on every product. Pin the enum-like values of the known-public
+    fixture product."""
+    real = fetch(f"/api/v1/products/{ACCOUNT}/{PRODUCT}")
+    assert real.get("visibility") == "public", (
+        f"visibility {real.get('visibility')!r}: any value other than "
+        "'public' deserializes to Visibility::Unknown (fail closed)"
+    )
+    assert not real.get("disabled"), "fixture product is disabled on the live API"
+
+
+def test_data_connection_values():
+    real = fetch(f"/api/v1/data-connections/{CONNECTION}")
+    assert real.get("read_only") is False, (
+        "fixture connection became read-only: the proxy would deny writes "
+        "that the stub says are allowed"
+    )
+    provider = real.get("details", {}).get("provider")
+    assert provider in KNOWN_PROVIDERS, (
+        f"unknown provider {provider!r}: the proxy would return Internal on "
+        "every request to this connection"
+    )
 
 
 def test_data_connection_auth_is_supported():
