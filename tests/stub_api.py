@@ -9,8 +9,13 @@ never sign, and every object read 502s.
 This stub serves the three control-plane endpoints the proxy fetches, with the
 connection left *unsigned* so reads go to the (genuinely public) backing bucket
 without credentials. The data plane still exercises the real bucket; only the
-control plane is pinned. Responses carry just the fields the proxy
-deserializes (see src/source_api/types.rs) — serde ignores the rest anyway.
+control plane is pinned.
+
+Response bodies live in tests/fixtures/*.json, shared with tests/fixtures.rs,
+which deserializes each one through the proxy's real serde structs
+(src/source_api/types.rs) — so "the stub serves what the proxy parses" is a
+compiled fact, not a comment. Fixtures carry just the fields the proxy
+deserializes; serde ignores the rest anyway.
 
 CI starts this before `wrangler dev` and points the worker at it via
 SOURCE_API_URL in .dev.vars.
@@ -18,8 +23,16 @@ SOURCE_API_URL in .dev.vars.
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 PORT = 9000
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _fixture(name):
+    return json.loads((_FIXTURES / f"{name}.json").read_text())
+
 
 # Must match the constants in test_integration.py and the real layout of the
 # public bucket, since object reads hit it for real.
@@ -27,20 +40,7 @@ ACCOUNT = "cholmes"
 PRODUCT = "admin-boundaries"
 CONNECTION = "aws-opendata-us-west-2"
 
-PRODUCT_JSON = {
-    "product_id": PRODUCT,
-    "disabled": False,
-    "visibility": "public",
-    "metadata": {
-        "mirrors": {
-            CONNECTION: {
-                "connection_id": CONNECTION,
-                "prefix": f"{ACCOUNT}/{PRODUCT}/",
-            }
-        },
-        "primary_mirror": CONNECTION,
-    },
-}
+PRODUCT_JSON = _fixture("product")
 
 # ── Write probe ────────────────────────────────────────────────────
 # A synthetic product on a federated (s3_web_identity_role) connection, used by
@@ -54,54 +54,21 @@ PRODUCT_JSON = {
 WRITE_ACCOUNT = "ci-tests"
 WRITE_PRODUCT = "write-probe"
 WRITE_CONNECTION = "ci-write-probe"
-WRITE_BUCKET = "ci-write-probe-unprovisioned"
-WRITE_REGION = "us-west-2"
-WRITE_ROLE_ARN = "arn:aws:iam::000000000000:role/unprovisioned"
 
-WRITE_PRODUCT_JSON = {
-    "product_id": WRITE_PRODUCT,
-    "disabled": False,
-    "visibility": "public",
-    "metadata": {
-        "mirrors": {
-            WRITE_CONNECTION: {
-                "connection_id": WRITE_CONNECTION,
-                "prefix": f"{WRITE_ACCOUNT}/{WRITE_PRODUCT}/",
-            }
-        },
-        "primary_mirror": WRITE_CONNECTION,
-    },
-}
+WRITE_PRODUCT_JSON = _fixture("product_write_probe")
 
 ROUTES = {
     f"/api/v1/products/{ACCOUNT}": {"products": [PRODUCT_JSON]},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
     # No `authentication` field -> BackendAuth::Unsigned -> unsigned reads.
-    f"/api/v1/data-connections/{CONNECTION}": {
-        "data_connection_id": CONNECTION,
-        "read_only": False,
-        "details": {
-            "provider": "s3",
-            "bucket": "us-west-2.opendata.source.coop",
-            "region": "us-west-2",
-            "base_prefix": "",
-        },
-    },
+    f"/api/v1/data-connections/{CONNECTION}": _fixture("data_connection"),
     # Write probe (see above).
     f"/api/v1/products/{WRITE_ACCOUNT}": {"products": [WRITE_PRODUCT_JSON]},
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
-    f"/api/v1/data-connections/{WRITE_CONNECTION}": {
-        "data_connection_id": WRITE_CONNECTION,
-        "read_only": False,
-        "details": {
-            "provider": "s3",
-            "bucket": WRITE_BUCKET,
-            "region": WRITE_REGION,
-            "base_prefix": "",
-        },
-        "authentication": {"type": "s3_web_identity_role", "role_arn": WRITE_ROLE_ARN},
-    },
+    f"/api/v1/data-connections/{WRITE_CONNECTION}": _fixture(
+        "data_connection_write_probe"
+    ),
 }
 
 
