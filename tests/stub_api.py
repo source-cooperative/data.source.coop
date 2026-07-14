@@ -57,6 +57,21 @@ WRITE_CONNECTION = "ci-write-probe"
 
 WRITE_PRODUCT_JSON = _fixture("product_write_probe")
 
+# ── Failure probes ─────────────────────────────────────────────────
+# Synthetic products that make the control plane misbehave on purpose, so the
+# proxy's fail-closed error mapping is exercised in CI (the original incident
+# was an untested control-plane failure path). See test_control_plane.py.
+ERR_500_PRODUCT = "err-500"
+ERR_BAD_JSON_PRODUCT = "err-bad-json"
+
+# A restricted product: the real API hides products a caller isn't entitled
+# to (404, so existence doesn't leak). The stub's version of "entitled" is
+# simply presenting an Authorization header — the proxy only sends one when
+# it recovered an authenticated subject. Its mirror points at the same public
+# bucket data as the read product, so an authorized read serves real bytes.
+RESTRICTED_PRODUCT = "restricted-probe"
+RESTRICTED_PRODUCT_JSON = _fixture("product_restricted")
+
 ROUTES = {
     f"/api/v1/products/{ACCOUNT}": {"products": [PRODUCT_JSON]},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
@@ -74,11 +89,25 @@ ROUTES = {
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = ROUTES.get(self.path.split("?")[0])
-        self.send_response(200 if body else 404)
+        path = self.path.split("?")[0]
+        if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
+            return self._send(500, b"{}")
+        if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_BAD_JSON_PRODUCT}":
+            return self._send(200, b"{this is not json")
+        if path == f"/api/v1/products/{WRITE_ACCOUNT}/{RESTRICTED_PRODUCT}":
+            if self.headers.get("Authorization"):
+                return self._send(200, json.dumps(RESTRICTED_PRODUCT_JSON).encode())
+            return self._send(404, b"{}")
+        body = ROUTES.get(path)
+        if body is None:
+            return self._send(404, b"{}")
+        self._send(200, json.dumps(body).encode())
+
+    def _send(self, status, body):
+        self.send_response(status)
         self.send_header("content-type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps(body if body is not None else {}).encode())
+        self.wfile.write(body)
 
 
 if __name__ == "__main__":

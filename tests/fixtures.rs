@@ -60,6 +60,16 @@ fn write_probe_connection_fixture_is_federated() {
 }
 
 #[test]
+fn restricted_product_fixture_is_not_public() {
+    let p: SourceProduct =
+        serde_json::from_str(include_str!("fixtures/product_restricted.json")).unwrap();
+    assert!(
+        !p.is_public(),
+        "the restricted probe exists to exercise the non-public path"
+    );
+}
+
+#[test]
 fn product_list_wrapper_parses() {
     // The stub wraps the product fixture as {"products": [...]} for the
     // account listing route; pin that wrapper shape too.

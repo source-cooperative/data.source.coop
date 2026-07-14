@@ -151,6 +151,43 @@ def test_sts_rejects_wrong_audience():
 
 
 @needs_token
+def test_signed_request_with_special_char_key_verifies():
+    """#176 regression pin: inbound SigV4 verification must use the encoded
+    request path. A key with spaces and `*%~#+` must fail as 404 (no such
+    key), never 403 SignatureDoesNotMatch."""
+    import botocore.exceptions
+
+    client = s3_client()
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.head_object(
+            Bucket="cholmes", Key="admin-boundaries/no such key *%~#+.txt"
+        )
+    status = exc.value.response["ResponseMetadata"]["HTTPStatusCode"]
+    assert status == 404, (
+        f"expected 404 for a nonexistent key, got {status} — a 403 here means "
+        "inbound signature verification broke on encoded paths again"
+    )
+
+
+@needs_token
+def test_federated_write_fails_closed():
+    """The write probe's role is unassumable by design (placeholder ARN,
+    throwaway signing key): backend STS federation must fail with a bounded,
+    parseable S3 error — never a hang, never a silent success. This is the
+    incident class that motivated the stub, kept permanently exercised."""
+    import botocore.exceptions
+
+    client = s3_client()
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.put_object(
+            Bucket=WRITE_ACCOUNT, Key=f"{WRITE_PRODUCT}/fail-closed.txt", Body=b"x"
+        )
+    # The exact code depends on how AWS STS rejects the assertion; what
+    # matters is that boto3 could parse an S3-shaped error at all.
+    assert exc.value.response["Error"].get("Code"), "unparseable error response"
+
+
+@needs_token
 def test_corrupted_session_token_rejected():
     """A SigV4 request whose sealed SessionToken has been tampered with must
     be rejected, not fall back to anonymous-and-succeed on a public product."""
