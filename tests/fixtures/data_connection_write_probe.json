@@ -1,0 +1,14 @@
+{
+  "data_connection_id": "ci-write-probe",
+  "read_only": false,
+  "details": {
+    "provider": "s3",
+    "bucket": "ci-write-probe-unprovisioned",
+    "region": "us-west-2",
+    "base_prefix": ""
+  },
+  "authentication": {
+    "type": "s3_web_identity_role",
+    "role_arn": "arn:aws:iam::000000000000:role/unprovisioned"
+  }
+}

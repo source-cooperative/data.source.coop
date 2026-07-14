@@ -13,6 +13,7 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -23,6 +24,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,6 +37,7 @@ jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -44,6 +47,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -55,6 +59,7 @@ jobs:
   build:
     name: Build Worker
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,7 +80,13 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [build]
+    permissions:
+      contents: read
+      # Mint a GitHub OIDC token as the write tests' caller identity — the
+      # worker verifies it against GitHub's JWKS (AUTH_ISSUER below).
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -89,34 +100,108 @@ jobs:
       - name: Install wrangler
         run: npm install -g wrangler@3
       - name: Generate test secrets
-        # Required by `load_config` in src/config.rs. The actual key material
-        # doesn't matter for these read-only public-data tests — we just need
-        # values that parse, since `JwtSigner::from_pem` and `TokenKey::from_base64`
-        # validate at startup.
+        # Required by `load_config` in src/config.rs (`JwtSigner::from_pem` and
+        # `TokenKey::from_base64` validate at startup). The signing key is a
+        # throwaway: CI never holds a real signing identity, so a compromised
+        # dependency in this job can't mint federation assertions any AWS role
+        # trusts. Federated end-to-end coverage lives in the deployed-environment
+        # smoke tests (tests/test_federation.py, wired into staging.yml) instead.
+        # Inbound callers authenticate with GitHub Actions OIDC tokens:
+        # AUTH_ISSUER points at GitHub and AUTH_AUDIENCE matches the audience
+        # requested in "Mint caller identity token" below.
         run: |
-          openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
           {
-            printf 'OIDC_PROVIDER_KEY="'
-            cat /tmp/oidc.pem
-            printf '"\n'
+            openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
+            printf 'OIDC_PROVIDER_KEY="%s"\n' "$(cat /tmp/oidc.pem)"
             echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
-            echo "AUTH_ISSUER=https://auth.test.example.com"
+            echo "AUTH_ISSUER=https://token.actions.githubusercontent.com"
+            echo "AUTH_AUDIENCE=source-data-proxy-ci"
+            echo "SOURCE_API_URL=http://localhost:9000"
           } > .dev.vars
+      - name: Mint caller identity token (GitHub OIDC)
+        # Fork PRs run without id-token permission; the credentialed write
+        # tests then skip (see tests/test_writes.py). Same-repo runs MUST
+        # mint: without this guard, a lost `id-token: write` permission or a
+        # transient mint failure would silently skip the credentialed tier
+        # while CI stays green.
+        env:
+          EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            if [ "$EXPECT_OIDC" = "true" ]; then
+              echo "::error::GitHub OIDC unavailable on a same-repo run — was the id-token permission removed?"
+              exit 1
+            fi
+            echo "GitHub OIDC unavailable (fork PR) — credentialed write tests will skip"
+            exit 0
+          fi
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=source-data-proxy-ci" | jq -r '.value')
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "::error::OIDC token mint returned no value"
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
+          # A second, validly-signed token whose audience mismatches
+          # AUTH_AUDIENCE: test_writes.py asserts the /.sts aud gate rejects
+          # it (signature checks alone would let it through).
+          wrong=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=not-the-data-proxy" | jq -r '.value')
+          if [ -z "$wrong" ] || [ "$wrong" = "null" ]; then
+            echo "::error::wrong-audience token mint returned no value"
+            exit 1
+          fi
+          echo "::add-mask::$wrong"
+          echo "CI_WRONG_AUDIENCE_TOKEN=$wrong" >> "$GITHUB_ENV"
+      - name: Start Source API stub
+        # Pins the control plane: the live API's data connection grew an
+        # s3_web_identity_role that CI's throwaway key can't sign (every object
+        # read 502'd). The stub serves an unsigned connection; object reads
+        # still hit the real public bucket. See tests/stub_api.py.
+        run: |
+          python3 tests/stub_api.py > /tmp/stub_api.log 2>&1 &
+          curl --retry 30 --retry-delay 1 --retry-connrefused --silent --fail \
+            http://localhost:9000/api/v1/products/cholmes/admin-boundaries > /dev/null
       - name: Start wrangler dev
         run: |
           # Skip the build command (the artifact is prebuilt). Scope the
           # rewrite to the [build] section so other `command =` lines that
           # may appear later in the config are untouched.
           sed -i '/^\[build\]/,/^\[/ s/^command = .*/command = "echo skip"/' wrangler.toml
-          wrangler dev --port 8787 &
+          wrangler dev --port 8787 > /tmp/wrangler.log 2>&1 &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
       - name: Run integration tests
-        run: uvx --with requests pytest tests/ -v
+        # Contract tests are excluded: they hit the live prod API, so they run
+        # on a schedule instead (.github/workflows/contract.yml) — a prod
+        # outage must not redden PRs the way live control-plane drift used to.
+        env:
+          # On same-repo runs the credentialed tier must run: if the token
+          # var went missing (renamed, mint plumbing broken), the tests fail
+          # loudly instead of skipping green (see tests/test_writes.py).
+          CI_EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: uvx --with requests --with boto3 pytest tests/ -v --ignore=tests/test_contract.py
+      - name: Dump server logs
+        # Both servers run in the background, so their output isn't captured
+        # by the steps that started them — without this, a red run leaves no
+        # server-side evidence of what the worker or stub actually did.
+        # cancelled() covers the job-timeout case (a hang is exactly when
+        # these logs matter most).
+        if: failure() || cancelled()
+        run: |
+          echo "::group::source api stub"
+          cat /tmp/stub_api.log || true
+          echo "::endgroup::"
+          echo "::group::wrangler dev"
+          cat /tmp/wrangler.log || true
+          echo "::endgroup::"
 
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

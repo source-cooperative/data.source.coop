@@ -34,6 +34,10 @@ path = "tests/object_path.rs"
 name = "multipart"
 path = "tests/multipart.rs"
 
+[[test]]
+name = "fixtures"
+path = "tests/fixtures.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.6.4", features = ["azure"] }

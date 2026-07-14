@@ -46,4 +46,32 @@ ignore = [
     # transitive deps (`rsa`, `quinn-proto`, `object_store`) upgrade to
     # `rand` 0.10+.
     "RUSTSEC-2026-0097",
+
+    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: denial-of-service in `quick-xml`
+    # XML parsing (quadratic duplicate-attribute check; unbounded
+    # namespace-declaration allocation in `NsReader`). Patched only in
+    # quick-xml >= 0.41.0.
+    #
+    # We pull vulnerable quick-xml transitively via `object_store` (and via
+    # `multistore`, which pins the same majors). No semver-compatible upgrade
+    # path exists: object_store 0.13.x requires `^0.39.0` and even the latest
+    # object_store 0.14.0 requires `^0.40.1` — both below the 0.41.0 fix — so
+    # `cargo update` cannot reach a patched release anywhere in the tree.
+    #
+    # Impact here is bounded:
+    #
+    # 1. The vulnerable parser only processes XML *responses from configured
+    #    storage backends* (S3/Azure list and multipart responses), not
+    #    arbitrary client input. Triggering it requires a data connection
+    #    pointing at a hostile endpoint.
+    #
+    # 2. Both advisories are resource-exhaustion DoS, and the parse runs
+    #    inside a Cloudflare Workers invocation with hard per-request CPU and
+    #    memory limits — a poisoned response fails that one request; it cannot
+    #    take down the service.
+    #
+    # Revisit when: object_store ships a release on quick-xml >= 0.41 and
+    # multistore adopts it — then remove these ignores and `cargo update`.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
