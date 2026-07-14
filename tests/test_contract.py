@@ -11,6 +11,10 @@ the contract and both it and types.rs need updating together.
 The write-probe permissions endpoint has no anonymously-fetchable real
 counterpart, so it is not contract-tested here; its shape is covered by the
 authz behavior of the deployed-environment smoke tests instead.
+
+These tests hit the live prod API, so they run nightly
+(.github/workflows/contract.yml), not in the PR-gating CI job — a prod outage
+must not redden unrelated PRs.
 """
 
 import requests

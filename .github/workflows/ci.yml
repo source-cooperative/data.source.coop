@@ -143,10 +143,10 @@ jobs:
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
       - name: Run integration tests
-        # Contract tests (tests/test_contract.py) run in the same invocation:
-        # they verify the stub's response shapes are still a subset of the
-        # real API's, so pinning the control plane can't silently hide drift.
-        run: uvx --with requests --with boto3 pytest tests/ -v
+        # Contract tests are excluded: they hit the live prod API, so they run
+        # on a schedule instead (.github/workflows/contract.yml) — a prod
+        # outage must not redden PRs the way live control-plane drift used to.
+        run: uvx --with requests --with boto3 pytest tests/ -v --ignore=tests/test_contract.py
 
   audit:
     name: Security Audit
