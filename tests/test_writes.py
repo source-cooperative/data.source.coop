@@ -45,6 +45,10 @@ needs_token = pytest.mark.skipif(
     not ID_TOKEN and not _token_expected,
     reason="caller identity not configured (set CI_WRITE_ID_TOKEN)",
 )
+needs_wrong_aud_token = pytest.mark.skipif(
+    not WRONG_AUD_TOKEN and not _token_expected,
+    reason="wrong-audience token not configured (set CI_WRONG_AUDIENCE_TOKEN)",
+)
 
 
 def sts_exchange(token):
@@ -144,14 +148,18 @@ def test_sts_rejects_tampered_signature():
     )
 
 
-@pytest.mark.skipif(
-    not WRONG_AUD_TOKEN,
-    reason="wrong-audience token not configured (set CI_WRONG_AUDIENCE_TOKEN)",
-)
+@needs_wrong_aud_token
 def test_sts_rejects_wrong_audience():
     """A validly-signed token whose aud isn't in AUTH_AUDIENCE must be
     rejected — this is the gate that keeps other GitHub OIDC consumers'
     tokens from minting credentials here."""
+    # Presence assert, not just the skipif: with the token missing,
+    # sts_exchange(None) sends no WebIdentityToken and the 4xx assertion
+    # below would pass vacuously — testing nothing.
+    assert WRONG_AUD_TOKEN, (
+        "CI_WRONG_AUDIENCE_TOKEN expected on same-repo runs but missing — "
+        "did the env var name drift between ci.yml and this file?"
+    )
     resp = sts_exchange(WRONG_AUD_TOKEN)
     assert 400 <= resp.status_code < 500, (
         f"wrong-audience token was not rejected ({resp.status_code}): {resp.text[:300]}"
