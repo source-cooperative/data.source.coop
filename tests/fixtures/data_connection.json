@@ -1,0 +1,10 @@
+{
+  "data_connection_id": "aws-opendata-us-west-2",
+  "read_only": false,
+  "details": {
+    "provider": "s3",
+    "bucket": "us-west-2.opendata.source.coop",
+    "region": "us-west-2",
+    "base_prefix": ""
+  }
+}

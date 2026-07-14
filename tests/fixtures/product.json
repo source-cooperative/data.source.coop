@@ -1,0 +1,14 @@
+{
+  "product_id": "admin-boundaries",
+  "disabled": false,
+  "visibility": "public",
+  "metadata": {
+    "mirrors": {
+      "aws-opendata-us-west-2": {
+        "connection_id": "aws-opendata-us-west-2",
+        "prefix": "cholmes/admin-boundaries/"
+      }
+    },
+    "primary_mirror": "aws-opendata-us-west-2"
+  }
+}
