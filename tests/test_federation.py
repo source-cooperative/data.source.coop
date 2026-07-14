@@ -10,8 +10,9 @@ This needs real infrastructure that can't be stood up in unit tests — a deploy
 proxy, a federated test product whose data connection carries a ``role_arn``, and
 the customer-side IAM OIDC provider + role trust policy (conditioned on
 ``aud = sts.amazonaws.com`` and ``sub = scv1:conn:{connection_id}``). So it is
-gated on env vars and SKIPS when they are unset. Set them in staging/preview CI
-to activate it (it is discovered automatically by ``pytest tests/``):
+gated on env vars and SKIPS when they are unset. The staging deploy workflow
+(.github/workflows/staging.yml, job ``federation-smoke``) runs it against the
+deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
 
   PROXY_URL                  base URL of the deployed proxy (shared with the other
                              integration tests; defaults to http://localhost:8787)
