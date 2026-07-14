@@ -35,6 +35,7 @@ from stub_api import WRITE_ACCOUNT, WRITE_PRODUCT
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
 ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
+WRONG_AUD_TOKEN = os.environ.get("CI_WRONG_AUDIENCE_TOKEN")
 
 needs_token = pytest.mark.skipif(
     not ID_TOKEN,
@@ -42,16 +43,21 @@ needs_token = pytest.mark.skipif(
 )
 
 
-def exchange_token():
-    """POST /.sts and return (access_key_id, secret_access_key, session_token)."""
-    resp = requests.post(
+def sts_exchange(token):
+    """POST /.sts with the given web identity token; return the raw response."""
+    return requests.post(
         f"{PROXY_URL}/.sts",
         params={
             "Action": "AssumeRoleWithWebIdentity",
             "RoleArn": "_default",
-            "WebIdentityToken": ID_TOKEN,
+            "WebIdentityToken": token,
         },
     )
+
+
+def exchange_token():
+    """POST /.sts and return (access_key_id, secret_access_key, session_token)."""
+    resp = sts_exchange(ID_TOKEN)
     assert resp.status_code == 200, f"/.sts exchange failed ({resp.status_code}): {resp.text[:300]}"
     # Match by local name to stay independent of the response's xmlns.
     fields = {
@@ -61,17 +67,19 @@ def exchange_token():
     return fields["AccessKeyId"], fields["SecretAccessKey"], fields["SessionToken"]
 
 
-def s3_client():
+def s3_client(session_token=None):
+    """Credentialed S3 client via /.sts; `session_token` overrides the sealed
+    token so tests can present corrupted ones."""
     import boto3  # deferred: only the credentialed tests need it
     from botocore.config import Config
 
-    access_key, secret_key, session_token = exchange_token()
+    access_key, secret_key, real_token = exchange_token()
     return boto3.client(
         "s3",
         endpoint_url=PROXY_URL,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        aws_session_token=session_token,
+        aws_session_token=session_token or real_token,
         region_name="us-east-1",
         config=Config(s3={"addressing_style": "path"}),
     )
@@ -104,3 +112,54 @@ def test_sigv4_identity_is_recognized():
         client.list_objects_v2(Bucket="cholmes", Prefix="admin-boundaries/", MaxKeys=1)
     except botocore.exceptions.ClientError as e:
         pytest.fail(f"signed request rejected: {e}")
+
+
+# ── Negatives: the positive tests above would also pass against a fail-open
+# verifier (a 200 is a 200), so each rejection path gets pinned explicitly. ──
+
+
+def test_sts_rejects_garbage_token():
+    """An unparseable web identity token must never mint credentials."""
+    resp = sts_exchange("not-a-jwt")
+    assert 400 <= resp.status_code < 500, (
+        f"garbage token was not rejected ({resp.status_code}): {resp.text[:300]}"
+    )
+
+
+@needs_token
+def test_sts_rejects_tampered_signature():
+    """A real token with a corrupted signature must fail JWKS verification."""
+    tampered = ID_TOKEN[:-1] + ("A" if ID_TOKEN[-1] != "A" else "B")
+    resp = sts_exchange(tampered)
+    assert 400 <= resp.status_code < 500, (
+        f"tampered token was not rejected ({resp.status_code}): {resp.text[:300]}"
+    )
+
+
+@pytest.mark.skipif(
+    not WRONG_AUD_TOKEN,
+    reason="wrong-audience token not configured (set CI_WRONG_AUDIENCE_TOKEN)",
+)
+def test_sts_rejects_wrong_audience():
+    """A validly-signed token whose aud isn't in AUTH_AUDIENCE must be
+    rejected — this is the gate that keeps other GitHub OIDC consumers'
+    tokens from minting credentials here."""
+    resp = sts_exchange(WRONG_AUD_TOKEN)
+    assert 400 <= resp.status_code < 500, (
+        f"wrong-audience token was not rejected ({resp.status_code}): {resp.text[:300]}"
+    )
+
+
+@needs_token
+def test_corrupted_session_token_rejected():
+    """A SigV4 request whose sealed SessionToken has been tampered with must
+    be rejected, not fall back to anonymous-and-succeed on a public product."""
+    import botocore.exceptions
+
+    good = exchange_token()[2]
+    corrupted = good[:-4] + ("AAAA" if good[-4:] != "AAAA" else "BBBB")
+    client = s3_client(session_token=corrupted)
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.list_objects_v2(Bucket="cholmes", Prefix="admin-boundaries/", MaxKeys=1)
+    status = exc.value.response["ResponseMetadata"]["HTTPStatusCode"]
+    assert status in (400, 403), f"expected 400/403, got {status}"

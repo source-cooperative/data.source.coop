@@ -146,6 +146,13 @@ jobs:
           fi
           echo "::add-mask::$token"
           echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
+          # A second, validly-signed token whose audience mismatches
+          # AUTH_AUDIENCE: test_writes.py asserts the /.sts aud gate rejects
+          # it (signature checks alone would let it through).
+          wrong=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=not-the-data-proxy" | jq -r '.value')
+          echo "::add-mask::$wrong"
+          echo "CI_WRONG_AUDIENCE_TOKEN=$wrong" >> "$GITHUB_ENV"
       - name: Start Source API stub
         # Pins the control plane: the live API's data connection grew an
         # s3_web_identity_role that CI's throwaway key can't sign (every object
