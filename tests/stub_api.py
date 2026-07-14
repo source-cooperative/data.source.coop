@@ -22,6 +22,7 @@ SOURCE_API_URL in .dev.vars.
 """
 
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -57,6 +58,17 @@ WRITE_CONNECTION = "ci-write-probe"
 
 WRITE_PRODUCT_JSON = _fixture("product_write_probe")
 
+WRITE_CONNECTION_JSON = _fixture("data_connection_write_probe")
+# Activation plumbing: the same CI_WRITE_PROBE_* variables that un-skip
+# test_multipart_roundtrip_hive_partition replace the fixture placeholders
+# here, so the test gate and the served connection can't drift apart.
+_details = WRITE_CONNECTION_JSON["details"]
+_details["bucket"] = os.environ.get("CI_WRITE_PROBE_BUCKET", _details["bucket"])
+_details["region"] = os.environ.get("CI_WRITE_PROBE_REGION", _details["region"])
+WRITE_CONNECTION_JSON["authentication"]["role_arn"] = os.environ.get(
+    "CI_WRITE_PROBE_ROLE_ARN", WRITE_CONNECTION_JSON["authentication"]["role_arn"]
+)
+
 # ── Failure probes ─────────────────────────────────────────────────
 # Synthetic products that make the control plane misbehave on purpose, so the
 # proxy's fail-closed error mapping is exercised in CI (the original incident
@@ -81,9 +93,7 @@ ROUTES = {
     f"/api/v1/products/{WRITE_ACCOUNT}": {"products": [WRITE_PRODUCT_JSON]},
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
-    f"/api/v1/data-connections/{WRITE_CONNECTION}": _fixture(
-        "data_connection_write_probe"
-    ),
+    f"/api/v1/data-connections/{WRITE_CONNECTION}": WRITE_CONNECTION_JSON,
 }
 
 # Import-time drift guards: routes are keyed on the constants above, bodies
