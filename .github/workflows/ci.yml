@@ -114,14 +114,30 @@ jobs:
           } > .dev.vars
       - name: Mint caller identity token (GitHub OIDC)
         # Fork PRs run without id-token permission; the credentialed write
-        # tests then skip (see tests/test_writes.py).
+        # tests then skip (see tests/test_writes.py). Same-repo runs MUST
+        # mint: without this guard, a lost `id-token: write` permission or a
+        # transient mint failure would silently skip the credentialed tier
+        # while CI stays green. (Also note bare `run:` uses bash without
+        # pipefail — unguarded, a failed curl would export an empty or
+        # literal-"null" token.)
+        env:
+          EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
+          set -euo pipefail
           if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo "GitHub OIDC unavailable — credentialed write tests will skip"
+            if [ "$EXPECT_OIDC" = "true" ]; then
+              echo "::error::GitHub OIDC unavailable on a same-repo run — was the id-token permission removed?"
+              exit 1
+            fi
+            echo "GitHub OIDC unavailable (fork PR) — credentialed write tests will skip"
             exit 0
           fi
-          token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=source-data-proxy-ci" | jq -r '.value')
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "::error::OIDC token mint returned no value"
+            exit 1
+          fi
           echo "::add-mask::$token"
           echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
       - name: Start Source API stub
