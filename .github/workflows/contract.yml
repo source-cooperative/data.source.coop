@@ -16,7 +16,22 @@ jobs:
     name: Stub vs Live API
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uvx --with requests pytest tests/test_contract.py -v
+      - name: File a drift issue
+        # A red nightly that only emails the last cron-editor is a silent
+        # alarm; an open issue is not. Deduped by title.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Nightly API contract check failed"
+          if [ -z "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number --jq '.[0].number')" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" \
+              --body "The stub fixtures (tests/fixtures/) or src/source_api/types.rs may have drifted from the live Source API: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi

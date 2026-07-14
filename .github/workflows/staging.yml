@@ -42,7 +42,9 @@ jobs:
     # the job shows as skipped, not silently green.
     name: Federation Smoke Test
     needs: deploy
-    if: vars.FEDERATION_TEST_ACCOUNT != ''
+    # All three or nothing: a partial configuration would run the job with
+    # every test skipped — green without testing anything.
+    if: vars.FEDERATION_TEST_ACCOUNT != '' && vars.FEDERATION_TEST_PRODUCT != '' && vars.FEDERATION_TEST_KEY != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

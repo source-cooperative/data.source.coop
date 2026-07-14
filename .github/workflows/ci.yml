@@ -149,6 +149,10 @@ jobs:
           # it (signature checks alone would let it through).
           wrong=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=not-the-data-proxy" | jq -r '.value')
+          if [ -z "$wrong" ] || [ "$wrong" = "null" ]; then
+            echo "::error::wrong-audience token mint returned no value"
+            exit 1
+          fi
           echo "::add-mask::$wrong"
           echo "CI_WRONG_AUDIENCE_TOKEN=$wrong" >> "$GITHUB_ENV"
       - name: Start Source API stub
@@ -173,12 +177,19 @@ jobs:
         # Contract tests are excluded: they hit the live prod API, so they run
         # on a schedule instead (.github/workflows/contract.yml) — a prod
         # outage must not redden PRs the way live control-plane drift used to.
+        env:
+          # On same-repo runs the credentialed tier must run: if the token
+          # var went missing (renamed, mint plumbing broken), the tests fail
+          # loudly instead of skipping green (see tests/test_writes.py).
+          CI_EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: uvx --with requests --with boto3 pytest tests/ -v --ignore=tests/test_contract.py
       - name: Dump server logs
         # Both servers run in the background, so their output isn't captured
         # by the steps that started them — without this, a red run leaves no
         # server-side evidence of what the worker or stub actually did.
-        if: failure()
+        # cancelled() covers the job-timeout case (a hang is exactly when
+        # these logs matter most).
+        if: failure() || cancelled()
         run: |
           echo "::group::source api stub"
           cat /tmp/stub_api.log || true

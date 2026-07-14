@@ -37,8 +37,12 @@ PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
 ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
 WRONG_AUD_TOKEN = os.environ.get("CI_WRONG_AUDIENCE_TOKEN")
 
+# When CI declares a token must exist (same-repo runs export CI_EXPECT_OIDC),
+# a missing token means the mint->env plumbing broke: run the tests and fail
+# loudly instead of skipping the whole credentialed tier green.
+_token_expected = os.environ.get("CI_EXPECT_OIDC") == "true"
 needs_token = pytest.mark.skipif(
-    not ID_TOKEN,
+    not ID_TOKEN and not _token_expected,
     reason="caller identity not configured (set CI_WRITE_ID_TOKEN)",
 )
 

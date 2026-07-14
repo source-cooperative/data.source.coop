@@ -1,6 +1,15 @@
-import socket
+import requests
 
-# No test call passes timeout= explicitly; urllib3 (and thus requests) falls
-# back to the global socket default, so this one knob bounds every HTTP call
-# in the suite instead of hanging a CI runner until the job timeout.
-socket.setdefaulttimeout(30)
+# Bound every requests call in the suite so a wedged server fails a test in
+# seconds instead of hanging the job until timeout-minutes kills it.
+# (socket.setdefaulttimeout doesn't work here: urllib3 explicitly sets
+# settimeout(None) when no timeout= is passed.) Explicit timeout= arguments
+# still win over this default.
+_original_request = requests.Session.request
+
+
+def _bounded_request(self, *args, timeout=30, **kwargs):
+    return _original_request(self, *args, timeout=timeout, **kwargs)
+
+
+requests.Session.request = _bounded_request
