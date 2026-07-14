@@ -26,6 +26,7 @@ smoke tests (tests/test_federation.py, wired into staging.yml).
 """
 
 import os
+import uuid
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -97,6 +98,104 @@ def test_anonymous_write_to_federated_product_denied():
     """No credentials -> denied at the gate, before any backend/STS call."""
     resp = requests.put(f"{PROXY_URL}/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/denied.txt")
     assert resp.status_code == 403
+
+
+# ── Multipart (#180) ────────────────────────────────────────────────
+# Hive-style partition keys (`country_iso=ETH`) hit the raw-signed multipart
+# path where the 0.6.3 encoding bug lived. Three layers: anonymous denial
+# (hermetic, every run), federation fail-closed (CI, every same-repo run),
+# full round-trip (needs the write-probe AWS infra).
+
+HIVE_KEY_DIR = "by_country/country_iso=ETH"
+
+
+def test_anonymous_multipart_create_denied():
+    """CreateMultipartUpload is a write like any other: the gate denies it
+    anonymously before routing anywhere near the backend."""
+    resp = requests.post(
+        f"{PROXY_URL}/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/{HIVE_KEY_DIR}/denied.pmtiles?uploads"
+    )
+    assert resp.status_code == 403
+
+
+@needs_token
+def test_multipart_create_fails_closed():
+    """An authenticated CreateMultipartUpload on the probe's unassumable role
+    must fail with a bounded, parseable error — pinning that multipart
+    operations route through the same write-authz + federation seam as plain
+    PUTs, with a hive-partitioned key on the raw-signed path."""
+    import botocore.exceptions
+
+    client = s3_client()
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.create_multipart_upload(
+            Bucket=WRITE_ACCOUNT,
+            Key=f"{WRITE_PRODUCT}/{HIVE_KEY_DIR}/fail-closed.pmtiles",
+        )
+    assert exc.value.response["Error"].get("Code"), "unparseable error response"
+
+
+needs_probe_infra = pytest.mark.skipif(
+    not (ID_TOKEN and os.environ.get("CI_WRITE_PROBE_ROLE_ARN")),
+    reason="write-probe AWS infra not configured (set CI_WRITE_PROBE_ROLE_ARN)",
+)
+
+
+@needs_probe_infra
+def test_multipart_roundtrip_hive_partition():
+    """End-to-end multipart through the actual worker: create -> two parts ->
+    complete -> read back -> delete, on a hive-partitioned key. This is the
+    proxy-level guarantee for #180 that the upstream multistore unit tests
+    can't give.
+
+    Activation (see #183's follow-ups): the probe bucket + IAM role, a worker
+    signing key whose issuer the role's OIDC provider trusts (a dedicated CI
+    key — not staging's), the stub serving the real bucket/role instead of
+    placeholders, and ci.yml exporting CI_WRITE_PROBE_ROLE_ARN. Until then it
+    skips here but runs against any provisioned worker via the same env vars.
+    """
+    client = s3_client()
+    key = (
+        f"{WRITE_PRODUCT}/{HIVE_KEY_DIR}/"
+        f"gh-{os.environ.get('GITHUB_RUN_ID', 'local')}-{uuid.uuid4().hex}.pmtiles"
+    )
+    part1 = b"a" * (5 * 1024 * 1024)  # S3 minimum size for non-final parts
+    part2 = b"b" * 1024
+
+    upload = client.create_multipart_upload(Bucket=WRITE_ACCOUNT, Key=key)
+    upload_id = upload["UploadId"]
+    completed = False
+    try:
+        parts = [
+            client.upload_part(
+                Bucket=WRITE_ACCOUNT, Key=key, UploadId=upload_id,
+                PartNumber=n, Body=body,
+            )
+            for n, body in ((1, part1), (2, part2))
+        ]
+        client.complete_multipart_upload(
+            Bucket=WRITE_ACCOUNT, Key=key, UploadId=upload_id,
+            MultipartUpload={
+                "Parts": [
+                    {"PartNumber": n, "ETag": p["ETag"]}
+                    for n, p in zip((1, 2), parts)
+                ]
+            },
+        )
+        completed = True
+        got = client.get_object(Bucket=WRITE_ACCOUNT, Key=key)["Body"].read()
+        assert got == part1 + part2
+    finally:
+        # Best effort — the bucket's lifecycle rule expires strays anyway.
+        try:
+            if completed:
+                client.delete_object(Bucket=WRITE_ACCOUNT, Key=key)
+            else:
+                client.abort_multipart_upload(
+                    Bucket=WRITE_ACCOUNT, Key=key, UploadId=upload_id
+                )
+        except Exception:
+            pass
 
 
 @needs_token
