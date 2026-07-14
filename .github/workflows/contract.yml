@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           title="Nightly API contract check failed"
-          if [ -z "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number --jq '.[0].number')" ]; then
+          if [ -z "$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number --jq '.[0].number // empty')" ]; then
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" \
               --body "The stub fixtures (tests/fixtures/) or src/source_api/types.rs may have drifted from the live Source API: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           fi
