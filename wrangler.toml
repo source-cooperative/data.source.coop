@@ -16,11 +16,12 @@ host = "localhost:8787"
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 
 [vars]
-LOG_LEVEL = "WARN"
-AUTH_ISSUER = "https://auth.source.coop"
-OIDC_PROVIDER_ISSUER = "https://data.source.coop"
-OIDC_PROVIDER_KID = "data-proxy-1"
-SOURCE_API_URL = "https://source.coop"
+AUTH_AUDIENCE = "fb15e9fb-00e7-4604-9df0-ac27ac5822f2,197e20e7-d52d-4d1d-9e54-4b73a342034b" # prod Ory client_ids: frontend + source-coop-cli
+AUTH_ISSUER = "https://auth.source.coop" 
+LOG_LEVEL = "WARN" 
+OIDC_PROVIDER_ISSUER = "https://data.source.coop" 
+OIDC_PROVIDER_KID = "data-proxy-1" 
+SOURCE_API_URL = "https://source.coop" 
 # Ceiling for client-requested /.sts DurationSeconds (seconds). 43200 = 12h,
 # 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
 # more than 1h; this only raises the cap.

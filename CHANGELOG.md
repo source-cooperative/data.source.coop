@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.2.1](https://github.com/source-cooperative/data.source.coop/compare/v2.2.0...v2.2.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* correct prod auth audiences ([5d216e6](https://github.com/source-cooperative/data.source.coop/commit/5d216e6eba0ca61116d2af243a94fe9b3a21d3bd))
+
+## [2.2.0](https://github.com/source-cooperative/data.source.coop/compare/v2.1.2...v2.2.0) (2026-07-01)
+
+
+### Features
+
+* accept multiple audiences for /.sts token exchange ([#163](https://github.com/source-cooperative/data.source.coop/issues/163)) ([e911496](https://github.com/source-cooperative/data.source.coop/commit/e911496769d5eb043831ac8bcd7d5774005d0aa6))
+* **analytics:** log request duration and client IP ([#153](https://github.com/source-cooperative/data.source.coop/issues/153)) ([cad41b1](https://github.com/source-cooperative/data.source.coop/commit/cad41b10b2055fd4848541eb7618ac4356b102ea))
+* authorize and enable writes to data connections ([#162](https://github.com/source-cooperative/data.source.coop/issues/162)) ([85972e8](https://github.com/source-cooperative/data.source.coop/commit/85972e89e270184f6ba64bb5d14006bae8053494))
+* make STS max session TTL configurable via env var ([#165](https://github.com/source-cooperative/data.source.coop/issues/165)) ([39d15f5](https://github.com/source-cooperative/data.source.coop/commit/39d15f5d11423bbc033ac8b8588ecab6e4bb746a))
+* OIDC provider ([#132](https://github.com/source-cooperative/data.source.coop/issues/132)) ([5671b64](https://github.com/source-cooperative/data.source.coop/commit/5671b64bcf104780d51376accf007580d2842e80))
+* per-connection backend authentication via OIDC federation ([#147](https://github.com/source-cooperative/data.source.coop/issues/147)) ([2f7a12f](https://github.com/source-cooperative/data.source.coop/commit/2f7a12f807dee5cc971d0f6eaee99269074139d1))
+* **worker:** aggregate live-globe activity by datacenter ([#171](https://github.com/source-cooperative/data.source.coop/issues/171)) ([c0a3169](https://github.com/source-cooperative/data.source.coop/commit/c0a31695ad0157b66aa283a5a0ca16c8b1bf920e))
+
+
+### Bug Fixes
+
+* **deps:** bump quinn-proto to 0.11.15 (RUSTSEC-2026-0185) ([#161](https://github.com/source-cooperative/data.source.coop/issues/161)) ([189e348](https://github.com/source-cooperative/data.source.coop/commit/189e348b78c0c63a74eefb5d925b1bbd4d16ad00))
+* **registry:** sync product model with source.coop[#284](https://github.com/source-cooperative/data.source.coop/issues/284) (drop mirror config, use visibility) ([#149](https://github.com/source-cooperative/data.source.coop/issues/149)) ([8ecf9b4](https://github.com/source-cooperative/data.source.coop/commit/8ecf9b469b3cfe7b9d19533e1fbf758256cc4af5))
+* return clear 400 for keyless writes instead of misleading sha256 error ([#168](https://github.com/source-cooperative/data.source.coop/issues/168)) ([f1187f5](https://github.com/source-cooperative/data.source.coop/commit/f1187f521567a60c22467d733fdf4428564ba057))
+* **sigv4:** use encoded request path for inbound signature verification ([#176](https://github.com/source-cooperative/data.source.coop/issues/176)) ([56a9520](https://github.com/source-cooperative/data.source.coop/commit/56a9520006cd9ddc97c4b3cfcbde8fb4e796fef2))
+* **sts:** bound the AssumeRoleWithWebIdentity call with a request timeout ([#172](https://github.com/source-cooperative/data.source.coop/issues/172)) ([fa463c7](https://github.com/source-cooperative/data.source.coop/commit/fa463c72e1387bfa0d671b766c06a5e74db91675))
+
 ## [2.1.2](https://github.com/source-cooperative/data.source.coop/compare/v2.1.1...v2.1.2) (2026-05-29)
 
 
