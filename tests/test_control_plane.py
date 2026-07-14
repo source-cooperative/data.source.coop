@@ -7,14 +7,10 @@ proxy must map each failure to a bounded, parseable S3 XML error — never a
 hang, never a success.
 """
 
-import os
-
 import requests
 
 from stub_api import ERR_500_PRODUCT, ERR_BAD_JSON_PRODUCT, RESTRICTED_PRODUCT, WRITE_ACCOUNT
-from test_writes import needs_token, s3_client
-
-PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
+from test_writes import PROXY_URL, needs_token, s3_client
 
 
 def test_api_500_maps_to_s3_internal_error():

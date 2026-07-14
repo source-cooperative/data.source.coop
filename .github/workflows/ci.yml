@@ -123,9 +123,7 @@ jobs:
         # tests then skip (see tests/test_writes.py). Same-repo runs MUST
         # mint: without this guard, a lost `id-token: write` permission or a
         # transient mint failure would silently skip the credentialed tier
-        # while CI stays green. (Also note bare `run:` uses bash without
-        # pipefail — unguarded, a failed curl would export an empty or
-        # literal-"null" token.)
+        # while CI stays green.
         env:
           EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
