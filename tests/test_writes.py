@@ -108,7 +108,11 @@ def test_sts_exchange_issues_credentials():
 @needs_token
 def test_sigv4_identity_is_recognized():
     """A SigV4-signed request with the sealed token resolves to an authenticated
-    subject: listing a public product succeeds (rather than 403 on bad auth)."""
+    subject: listing a public product succeeds (rather than 403 on bad auth).
+
+    The non-empty Prefix matters: it folds the request into a product-scoped
+    list, which routes past the credential-blind account-list handler into the
+    SigV4-verified pipeline. Without it this test wouldn't touch auth at all."""
     import botocore.exceptions
 
     client = s3_client()
@@ -200,7 +204,10 @@ def test_corrupted_session_token_rejected():
     good = exchange_token()[2]
     corrupted = good[:-4] + ("AAAA" if good[-4:] != "AAAA" else "BBBB")
     client = s3_client(session_token=corrupted)
+    # An object GET, not a list: object paths route through the SigV4-verified
+    # pipeline unconditionally, so this can't silently degrade into hitting a
+    # credential-blind handler.
     with pytest.raises(botocore.exceptions.ClientError) as exc:
-        client.list_objects_v2(Bucket="cholmes", Prefix="admin-boundaries/", MaxKeys=1)
+        client.get_object(Bucket="cholmes", Key="admin-boundaries/countries.parquet")
     status = exc.value.response["ResponseMetadata"]["HTTPStatusCode"]
     assert status in (400, 403), f"expected 400/403, got {status}"

@@ -86,6 +86,21 @@ ROUTES = {
     ),
 }
 
+# Import-time drift guards: routes are keyed on the constants above, bodies
+# carry fixture literals. A mismatch must crash the stub at startup (CI's
+# readiness curl then fails loudly) instead of surfacing as a mystery
+# NoSuchBucket mid-suite.
+assert PRODUCT_JSON["product_id"] == PRODUCT
+assert CONNECTION in PRODUCT_JSON["metadata"]["mirrors"]
+assert WRITE_PRODUCT_JSON["product_id"] == WRITE_PRODUCT
+assert WRITE_CONNECTION in WRITE_PRODUCT_JSON["metadata"]["mirrors"]
+assert RESTRICTED_PRODUCT_JSON["product_id"] == RESTRICTED_PRODUCT
+assert ROUTES[f"/api/v1/data-connections/{CONNECTION}"]["data_connection_id"] == CONNECTION
+assert (
+    ROUTES[f"/api/v1/data-connections/{WRITE_CONNECTION}"]["data_connection_id"]
+    == WRITE_CONNECTION
+)
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
