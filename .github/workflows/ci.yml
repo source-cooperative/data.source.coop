@@ -159,7 +159,7 @@ jobs:
         # read 502'd). The stub serves an unsigned connection; object reads
         # still hit the real public bucket. See tests/stub_api.py.
         run: |
-          python3 tests/stub_api.py &
+          python3 tests/stub_api.py > /tmp/stub_api.log 2>&1 &
           curl --retry 30 --retry-delay 1 --retry-connrefused --silent --fail \
             http://localhost:9000/api/v1/products/cholmes/admin-boundaries > /dev/null
       - name: Start wrangler dev
@@ -168,7 +168,7 @@ jobs:
           # rewrite to the [build] section so other `command =` lines that
           # may appear later in the config are untouched.
           sed -i '/^\[build\]/,/^\[/ s/^command = .*/command = "echo skip"/' wrangler.toml
-          wrangler dev --port 8787 &
+          wrangler dev --port 8787 > /tmp/wrangler.log 2>&1 &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
           echo "Server ready"
       - name: Run integration tests
@@ -176,6 +176,18 @@ jobs:
         # on a schedule instead (.github/workflows/contract.yml) — a prod
         # outage must not redden PRs the way live control-plane drift used to.
         run: uvx --with requests --with boto3 pytest tests/ -v --ignore=tests/test_contract.py
+      - name: Dump server logs
+        # Both servers run in the background, so their output isn't captured
+        # by the steps that started them — without this, a red run leaves no
+        # server-side evidence of what the worker or stub actually did.
+        if: failure()
+        run: |
+          echo "::group::source api stub"
+          cat /tmp/stub_api.log || true
+          echo "::endgroup::"
+          echo "::group::wrangler dev"
+          cat /tmp/wrangler.log || true
+          echo "::endgroup::"
 
   audit:
     name: Security Audit

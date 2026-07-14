@@ -113,9 +113,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(body if body is not None else {}).encode())
 
-    def log_message(self, *args):  # keep CI logs quiet
-        pass
-
 
 if __name__ == "__main__":
     print(f"source api stub listening on :{PORT}", flush=True)
