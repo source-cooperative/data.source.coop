@@ -6,3 +6,6 @@ node_modules
 docs/plans
 .worktrees
 .dev.vars
+
+# Python test bytecode
+tests/__pycache__/
