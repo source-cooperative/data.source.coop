@@ -95,32 +95,23 @@ jobs:
         run: npm install -g wrangler@3
       - name: Generate test secrets
         # Required by `load_config` in src/config.rs (`JwtSigner::from_pem` and
-        # `TokenKey::from_base64` validate at startup). When the staging signing
-        # key is available (the same repo secret preview deploys use), the local
-        # worker federates AWS STS as the staging identity, activating the
-        # federated write test; otherwise (fork PRs) a throwaway key keeps the
-        # read-only tests working and the write test skips.
+        # `TokenKey::from_base64` validate at startup). The signing key is a
+        # throwaway: CI never holds a real signing identity, so a compromised
+        # dependency in this job can't mint federation assertions any AWS role
+        # trusts. Federated end-to-end coverage lives in the deployed-environment
+        # smoke tests (tests/test_federation.py, wired into staging.yml) instead.
         # Inbound callers authenticate with GitHub Actions OIDC tokens:
         # AUTH_ISSUER points at GitHub and AUTH_AUDIENCE matches the audience
         # requested in "Mint caller identity token" below.
-        id: secrets
-        env:
-          STAGING_OIDC_KEY: ${{ secrets.OIDC_PROVIDER_KEY }}
         run: |
           {
-            if [ -n "$STAGING_OIDC_KEY" ]; then
-              printf 'OIDC_PROVIDER_KEY="%s"\n' "$STAGING_OIDC_KEY"
-              echo "OIDC_PROVIDER_ISSUER=https://data.staging.source.coop"
-            else
-              openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
-              printf 'OIDC_PROVIDER_KEY="%s"\n' "$(cat /tmp/oidc.pem)"
-            fi
+            openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
+            printf 'OIDC_PROVIDER_KEY="%s"\n' "$(cat /tmp/oidc.pem)"
             echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
             echo "AUTH_ISSUER=https://token.actions.githubusercontent.com"
             echo "AUTH_AUDIENCE=source-data-proxy-ci"
             echo "SOURCE_API_URL=http://localhost:9000"
           } > .dev.vars
-          echo "has_staging_key=$([ -n "$STAGING_OIDC_KEY" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - name: Mint caller identity token (GitHub OIDC)
         # Fork PRs run without id-token permission; the credentialed write
         # tests then skip (see tests/test_writes.py).
@@ -138,12 +129,6 @@ jobs:
         # s3_web_identity_role that CI's throwaway key can't sign (every object
         # read 502'd). The stub serves an unsigned connection; object reads
         # still hit the real public bucket. See tests/stub_api.py.
-        # The CI_WRITE_PROBE_* repo variables configure the write-probe
-        # product's bucket/role (unset -> placeholders, write test skips).
-        env:
-          CI_WRITE_PROBE_BUCKET: ${{ vars.CI_WRITE_PROBE_BUCKET }}
-          CI_WRITE_PROBE_REGION: ${{ vars.CI_WRITE_PROBE_REGION }}
-          CI_WRITE_PROBE_ROLE_ARN: ${{ vars.CI_WRITE_PROBE_ROLE_ARN }}
         run: |
           python3 tests/stub_api.py &
           curl --retry 30 --retry-delay 1 --retry-connrefused --silent --fail \
@@ -161,11 +146,6 @@ jobs:
         # Contract tests (tests/test_contract.py) run in the same invocation:
         # they verify the stub's response shapes are still a subset of the
         # real API's, so pinning the control plane can't silently hide drift.
-        env:
-          # Activate the federated write test only when the worker holds the
-          # real staging signing key (fork PRs don't receive secrets, and a
-          # throwaway key can't complete the AWS STS federation).
-          CI_WRITE_PROBE_ROLE_ARN: ${{ steps.secrets.outputs.has_staging_key == 'true' && vars.CI_WRITE_PROBE_ROLE_ARN || '' }}
         run: uvx --with requests --with boto3 pytest tests/ -v
 
   audit:

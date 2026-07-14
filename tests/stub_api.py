@@ -17,7 +17,6 @@ SOURCE_API_URL in .dev.vars.
 """
 
 import json
-import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = 9000
@@ -45,21 +44,19 @@ PRODUCT_JSON = {
 
 # ── Write probe ────────────────────────────────────────────────────
 # A synthetic product on a federated (s3_web_identity_role) connection, used by
-# test_writes.py to exercise authenticated writes end-to-end. The bucket/role
-# come from CI configuration; the placeholders keep the routes servable so the
-# proxy-side denial tests (e.g. anonymous write -> 403) run even when the AWS
-# infra isn't provisioned. The stub does no per-subject authz: the permissions
-# endpoint grants write to every authenticated subject, and product visibility
-# is enforced by the real API, not the proxy — so there is nothing meaningful
-# to stub for restricted reads.
+# test_writes.py for the proxy-side write path (anonymous denial, /.sts + SigV4
+# identity). The bucket/role are deliberately unresolvable: CI's worker signs
+# with a throwaway key, so AWS federation can never succeed here — the
+# placeholder connection instead pins that federation failures stay fail-closed
+# (see test_control_plane.py). Real federated e2e lives in test_federation.py
+# against deployed environments. The stub does no per-subject authz: the
+# permissions endpoint grants write to every authenticated subject.
 WRITE_ACCOUNT = "ci-tests"
 WRITE_PRODUCT = "write-probe"
 WRITE_CONNECTION = "ci-write-probe"
-WRITE_BUCKET = os.environ.get("CI_WRITE_PROBE_BUCKET", "ci-write-probe-unprovisioned")
-WRITE_REGION = os.environ.get("CI_WRITE_PROBE_REGION", "us-west-2")
-WRITE_ROLE_ARN = os.environ.get(
-    "CI_WRITE_PROBE_ROLE_ARN", "arn:aws:iam::000000000000:role/unprovisioned"
-)
+WRITE_BUCKET = "ci-write-probe-unprovisioned"
+WRITE_REGION = "us-west-2"
+WRITE_ROLE_ARN = "arn:aws:iam::000000000000:role/unprovisioned"
 
 WRITE_PRODUCT_JSON = {
     "product_id": WRITE_PRODUCT,

@@ -12,23 +12,20 @@ authenticated write follows the real client flow end-to-end:
      SESSION_TOKEN_KEY.
   3. SigV4-sign S3 requests with those credentials; the proxy unseals the
      token, verifies the signature, and recovers the subject (the JWT's `sub`).
-  4. The stub grants the subject `write` on ci-tests/write-probe, whose
-     connection is s3_web_identity_role — the worker federates its own OIDC
-     identity through AWS STS and signs the backend PUT.
 
-Tiered gating so the suite degrades gracefully:
+Two tiers, so the suite degrades gracefully:
 
   - anonymous write denial: always runs (proxy-side, no credentials involved).
   - /.sts exchange + SigV4 identity: needs CI_WRITE_ID_TOKEN (a GitHub OIDC
     token minted in ci.yml; absent on fork PRs and local runs -> skipped).
     Hermetic — no AWS infrastructure required.
-  - federated write/read-back: additionally needs the probe AWS infra
-    (CI_WRITE_PROBE_ROLE_ARN et al., see stub_api.py) -> skipped until the
-    bucket and role are provisioned.
+
+CI's worker signs with a throwaway key on purpose, so real AWS federation can
+never succeed here; that end of the path is covered by the deployed-environment
+smoke tests (tests/test_federation.py, wired into staging.yml).
 """
 
 import os
-import uuid
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -38,18 +35,10 @@ from stub_api import WRITE_ACCOUNT, WRITE_PRODUCT
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
 ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
-ROLE_ARN = os.environ.get("CI_WRITE_PROBE_ROLE_ARN")
 
 needs_token = pytest.mark.skipif(
     not ID_TOKEN,
     reason="caller identity not configured (set CI_WRITE_ID_TOKEN)",
-)
-needs_probe_infra = pytest.mark.skipif(
-    not (ID_TOKEN and ROLE_ARN),
-    reason=(
-        "write-probe AWS infra not configured "
-        "(set CI_WRITE_ID_TOKEN and CI_WRITE_PROBE_ROLE_ARN/BUCKET)"
-    ),
 )
 
 
@@ -115,25 +104,3 @@ def test_sigv4_identity_is_recognized():
         client.list_objects_v2(Bucket="cholmes", Prefix="admin-boundaries/", MaxKeys=1)
     except botocore.exceptions.ClientError as e:
         pytest.fail(f"signed request rejected: {e}")
-
-
-@needs_probe_infra
-def test_authenticated_write_and_read_back():
-    """Full path: GH OIDC -> /.sts -> SigV4 PUT -> STS-federated backend write,
-    then read the object back through the same federated connection."""
-    client = s3_client()
-    key = f"{WRITE_PRODUCT}/gh-{os.environ.get('GITHUB_RUN_ID', 'local')}-{uuid.uuid4().hex}.txt"
-    body = f"write probe {key}".encode()
-
-    client.put_object(Bucket=WRITE_ACCOUNT, Key=key, Body=body)
-    try:
-        head = client.head_object(Bucket=WRITE_ACCOUNT, Key=key)
-        assert head["ContentLength"] == len(body)
-        got = client.get_object(Bucket=WRITE_ACCOUNT, Key=key)["Body"].read()
-        assert got == body
-    finally:
-        # Best effort — a bucket lifecycle rule should expire strays anyway.
-        try:
-            client.delete_object(Bucket=WRITE_ACCOUNT, Key=key)
-        except Exception:
-            pass
