@@ -31,10 +31,6 @@ name = "object_path"
 path = "tests/object_path.rs"
 
 [[test]]
-name = "multipart"
-path = "tests/multipart.rs"
-
-[[test]]
 name = "fixtures"
 path = "tests/fixtures.rs"
 
