@@ -63,10 +63,25 @@ impl CredentialRegistry for StsCredentialRegistry {
         // individual repositories can define custom roles with fine-grained
         // scope and subject restrictions (e.g. per-repo CI/CD access).
         // For now, only the hardcoded `_default` role is supported.
-        if role_id == "_default" {
+        if is_default_role(role_id) {
             Ok(Some(self.default_role.clone()))
         } else {
             Ok(None)
         }
     }
+}
+
+/// Whether `role_id` names the `_default` role — literally, or via an
+/// ARN-shaped alias whose resource is `role/_default` (any partition/account,
+/// e.g. `arn:aws:iam::000000000000:role/_default`).
+///
+/// The alias exists because AWS SDKs validate `RoleArn` client-side (ARN shape,
+/// 20-character minimum) before the request is ever sent, so a bare `_default`
+/// can't reach the server from standard tooling. Accepting the alias keeps
+/// `/.sts` a drop-in `AssumeRoleWithWebIdentity` target for unmodified SDKs
+/// (see source-cooperative/data.source.coop#184). Same role, same trust model —
+/// only the name is longer; the partition/account portion is ignored rather
+/// than validated because it carries no meaning here.
+pub(crate) fn is_default_role(role_id: &str) -> bool {
+    role_id == "_default" || (role_id.starts_with("arn:") && role_id.ends_with(":role/_default"))
 }
