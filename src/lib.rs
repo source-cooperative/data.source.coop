@@ -266,35 +266,41 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // error, unknown visibility, or disabled product means no caching. The
     // gateway still authorizes every request; the plan only decides whether
     // the backend fetch may ride the chunk cache. See `chunk_cache`.
-    let chunk_plan = match (config.chunk_cache_enabled
-        && parts.method == http::Method::GET
-        && !is_special_path
-        && parts.query.as_deref().unwrap_or("").is_empty())
-    .then(|| extract_path_segments(&parts.path))
-    {
-        Some((Some(account), Some(product), Some(_key))) => {
-            let host = req
-                .url()
-                .parse::<http::Uri>()
-                .ok()
-                .and_then(|u| u.host().map(str::to_string));
-            match host {
-                Some(host) => source_api::cache::get_or_fetch_product(
-                    &config.api_base_url,
-                    account,
-                    product,
-                    &api_auth,
-                    &request_id,
-                    None,
-                )
-                .await
-                .ok()
-                .filter(|p| p.is_public())
-                .map(|_| CachePlan::new(&host, &parts.path, ctx.clone())),
-                None => None,
-            }
+    let chunk_plan = 'plan: {
+        if !(config.chunk_cache_enabled
+            && parts.method == http::Method::GET
+            && !is_special_path
+            && parts.query.as_deref().unwrap_or("").is_empty())
+        {
+            break 'plan None;
         }
-        _ => None,
+        let (Some(account), Some(product), Some(_key)) = extract_path_segments(&parts.path) else {
+            break 'plan None;
+        };
+        let Some(host) = req
+            .url()
+            .parse::<http::Uri>()
+            .ok()
+            .and_then(|u| u.host().map(str::to_string))
+        else {
+            break 'plan None;
+        };
+        // ponytail: anonymous callers share the gateway's edge-cached entry, but
+        // authenticated callers pay a second, subject-keyed product fetch the
+        // gateway can't reuse. Thread is_public through multistore's resolved
+        // bucket to drop this fetch entirely if that latency/load cost bites.
+        source_api::cache::get_or_fetch_product(
+            &config.api_base_url,
+            account,
+            product,
+            &api_auth,
+            &request_id,
+            None,
+        )
+        .await
+        .ok()
+        .filter(|p| p.is_public())
+        .map(|_| CachePlan::new(&host, &parts.path, ctx.clone()))
     };
 
     // ── Backend federation middleware ─────────────────────────────

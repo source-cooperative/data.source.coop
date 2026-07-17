@@ -1752,7 +1752,6 @@ dependencies = [
  "sha2",
  "tracing",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "web-sys",
  "worker",
  "worker-macros",

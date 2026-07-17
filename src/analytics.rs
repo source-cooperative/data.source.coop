@@ -136,6 +136,19 @@ pub fn strip_range_unit(range: &str) -> &str {
     range.strip_prefix("bytes=").unwrap_or(range)
 }
 
+/// Map an `x-cache` header value to the blob10 taxonomy: only the exact tokens
+/// the chunk cache emits are kept; anything else (empty, or a foreign CDN value
+/// like "Hit from cloudfront") becomes "". Returns a `'static` token, never a
+/// borrow of the input.
+pub fn cache_status_token(value: &str) -> &'static str {
+    match value {
+        "HIT" => "HIT",
+        "MISS" => "MISS",
+        "BYPASS" => "BYPASS",
+        _ => "",
+    }
+}
+
 /// Truncate a string to at most `max_bytes` bytes on a char boundary.
 fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -179,13 +192,19 @@ pub(crate) fn log_analytics(
 
     let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
     let range = strip_range_unit(header_str(headers, "range"));
-    // Stamped by the chunk cache (see `chunk_cache`); absent → empty.
-    let cache_status = response
-        .headers()
-        .get("x-cache")
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    // Only our own chunk-cache disposition counts. Normalize to the known
+    // tokens so a CDN-fronted backend's `x-cache` (e.g. "Hit from cloudfront"),
+    // which survives the gateway's denylist on plan=None paths, can't pollute
+    // the HIT/MISS/BYPASS taxonomy. See `chunk_cache`.
+    let cache_status = cache_status_token(
+        response
+            .headers()
+            .get("x-cache")
+            .ok()
+            .flatten()
+            .as_deref()
+            .unwrap_or_default(),
+    );
 
     log_request(
         env,
@@ -199,7 +218,7 @@ pub(crate) fn log_analytics(
             range,
             country: header_str(headers, "cf-ipcountry"),
             content_type: &content_type,
-            cache_status: &cache_status,
+            cache_status,
             bytes_sent,
             status_code: response.status() as f64,
             duration_ms,

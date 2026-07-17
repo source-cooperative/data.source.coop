@@ -22,9 +22,12 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 pub const CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 
 /// Requested spans larger than this bypass the chunk cache and stream straight
-/// from the backend, bounding subrequest count and assembly memory (32 MiB
-/// buffered worst-case, well under the 128 MB isolate limit; ≤ 8 chunks ×
-/// (match + put) + meta ≈ 18 Cache API ops against the 50-per-request cap).
+/// from the backend, bounding subrequest count and assembly memory. An
+/// unaligned 32 MiB span touches at most 9 chunks × (match + put) + meta ≈ 20
+/// Cache API ops, under the 50-per-request cap. Peak wasm memory ≈ the 32 MiB
+/// assembly buffer plus one JS copy at response build; large concurrent cold
+/// reads are the residency ceiling to watch against the 128 MB isolate limit.
+// ponytail: fixed 32 MiB; lower it (or stream assembly) if isolate OOMs appear.
 pub const MAX_CACHEABLE_SPAN: u64 = 32 * 1024 * 1024;
 
 /// TTL for the per-object metadata entry (ETag + length). This is the staleness
@@ -34,8 +37,9 @@ pub const MAX_CACHEABLE_SPAN: u64 = 32 * 1024 * 1024;
 pub const META_TTL_SECS: u32 = 60;
 
 /// Percent-encode set for one cache-key path segment: everything except RFC
-/// 3986 unreserved. Same set as the Source API cache keys — slugs pass through
-/// byte-identical while `?`, `#`, `&`, `/` etc. can't inject or collide.
+/// 3986 unreserved. Same set as `source_api::cache::PATH_SEGMENT`; deliberately
+/// duplicated rather than shared because `tests/chunk_cache.rs` compiles this
+/// file standalone (`#[path]`) with no access to `crate::source_api`.
 const KEY_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
@@ -64,14 +68,23 @@ pub fn parse_range(value: &str) -> Option<RangeSpec> {
     }
     let (a, b) = spec.split_once('-')?;
     match (a.is_empty(), b.is_empty()) {
-        (true, false) => b.parse().ok().filter(|n| *n > 0).map(RangeSpec::Suffix),
-        (false, true) => a.parse().ok().map(RangeSpec::From),
+        (true, false) => digits(b).filter(|n| *n > 0).map(RangeSpec::Suffix),
+        (false, true) => digits(a).map(RangeSpec::From),
         (false, false) => {
-            let (s, e) = (a.parse().ok()?, b.parse().ok()?);
+            let (s, e) = (digits(a)?, digits(b)?);
             (s <= e).then_some(RangeSpec::Bounded(s, e))
         }
         (true, true) => None,
     }
+}
+
+/// Parse an all-ASCII-digit offset. Unlike `u64::from_str`, rejects a leading
+/// `+` (or any sign/whitespace), so a non-RFC-9110 `bytes=+0-+9` is refused and
+/// bypasses instead of diverging from S3 (which ignores the malformed header).
+fn digits(s: &str) -> Option<u64> {
+    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| s.parse().ok())
+        .flatten()
 }
 
 /// Resolve a parsed range against the object length into inclusive `[start,
@@ -153,14 +166,19 @@ pub fn is_strong_etag(etag: &str) -> bool {
 }
 
 /// Per-object metadata cached under [`meta_key`] for [`META_TTL_SECS`].
+///
+/// `headers` holds every origin entity header from the probe (content-type,
+/// content-encoding, content-disposition, cache-control, last-modified,
+/// x-amz-meta-*, …) so a cache-served response carries the same headers the
+/// direct path would — minus the range framing (content-length/content-range),
+/// which is regenerated per request. Dropping these silently corrupts, e.g.,
+/// a `Content-Encoding: gzip` object served without the header.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ObjectMeta {
     pub etag: String,
     pub len: u64,
     #[serde(default)]
-    pub content_type: Option<String>,
-    #[serde(default)]
-    pub last_modified: Option<String>,
+    pub headers: Vec<(String, String)>,
 }
 
 // ── Worker-side implementation (wasm only) ──────────────────────────
@@ -173,15 +191,15 @@ mod wasm_impl {
     use super::*;
     use bytes::Bytes;
     use http::header::{
-        HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_MATCH,
-        LAST_MODIFIED, RANGE,
+        HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_MATCH,
+        RANGE,
     };
     use http::HeaderMap;
     use multistore::backend::{ForwardResponse, ProxyBackend, RawResponse};
     use multistore::error::ProxyError;
     use multistore::route_handler::ForwardRequest;
     use multistore::types::BucketConfig;
-    use multistore_cf_workers::{JsBody, WorkerBackend};
+    use multistore_cf_workers::{collect_js_body, JsBody, WorkerBackend};
     use object_store::list::PaginatedListStore;
     use object_store::signer::Signer;
     use std::rc::Rc;
@@ -225,15 +243,6 @@ mod wasm_impl {
         }
     }
 
-    /// Outcome of the chunk path short of a fully assembled response.
-    enum ServeError {
-        /// Serve the original request directly from the backend instead
-        /// (stamped `x-cache: BYPASS`). Always a correct outcome.
-        Fallback(&'static str),
-        /// A locally synthesized terminal response (e.g. 416).
-        Respond(ForwardResponse<web_sys::Response>),
-    }
-
     impl ProxyBackend for ChunkCachingBackend {
         type ResponseBody = web_sys::Response;
         type Body = JsBody;
@@ -246,16 +255,17 @@ mod wasm_impl {
             let Some(plan) = self.plan.as_ref() else {
                 return self.inner.forward(request, body).await;
             };
-            if !eligible(&request) {
-                let mut resp = self.inner.forward(request, body).await?;
-                resp.headers
-                    .insert(X_CACHE, HeaderValue::from_static("BYPASS"));
-                return Ok(resp);
-            }
-            match serve_chunked(plan, &self.inner, &request).await {
+            // Any bypass — ineligible request or a mid-serve fallback — takes the
+            // same path: forward the original request and stamp BYPASS. A bypass
+            // is always a correct outcome (the origin serves the exact request).
+            let outcome = if eligible(&request) {
+                serve_chunked(plan, &self.inner, &request).await
+            } else {
+                Err("ineligible request")
+            };
+            match outcome {
                 Ok(resp) => Ok(resp),
-                Err(ServeError::Respond(resp)) => Ok(resp),
-                Err(ServeError::Fallback(reason)) => {
+                Err(reason) => {
                     tracing::debug!(reason, "chunk cache bypass");
                     let mut resp = self.inner.forward(request, body).await?;
                     resp.headers
@@ -288,8 +298,9 @@ mod wasm_impl {
     }
 
     /// The plan is built for object GETs only; here we additionally refuse
-    /// conditional requests (v1 keeps their semantics on the direct path —
-    /// a mismatched `If-Range` must become a full 200, etc.).
+    /// conditional requests so their precondition semantics stay on the direct
+    /// path. (`If-Range` is intentionally absent: multistore's GetObject header
+    /// allowlist never forwards it, so it cannot reach this backend.)
     fn eligible(request: &ForwardRequest) -> bool {
         request.method == http::Method::GET
             && ![
@@ -297,7 +308,6 @@ mod wasm_impl {
                 "if-none-match",
                 "if-modified-since",
                 "if-unmodified-since",
-                "if-range",
             ]
             .iter()
             .any(|h| request.headers.contains_key(*h))
@@ -307,13 +317,13 @@ mod wasm_impl {
         plan: &CachePlan,
         inner: &WorkerBackend,
         request: &ForwardRequest,
-    ) -> Result<ForwardResponse<web_sys::Response>, ServeError> {
+    ) -> Result<ForwardResponse<web_sys::Response>, &'static str> {
         let range_spec = match request.headers.get(RANGE) {
             Some(v) => Some(
                 v.to_str()
                     .ok()
                     .and_then(parse_range)
-                    .ok_or(ServeError::Fallback("unparseable or multi-range"))?,
+                    .ok_or("unparseable or multi-range")?,
             ),
             None => None,
         };
@@ -331,15 +341,18 @@ mod wasm_impl {
             }
         };
         if meta.len == 0 || !is_strong_etag(&meta.etag) {
-            return Err(ServeError::Fallback("empty object or non-strong etag"));
+            return Err("empty object or non-strong etag");
         }
 
         // ── Resolve the client range against the object length ─────────
-        let Some((start, end)) = resolve_range(range_spec.as_ref(), meta.len) else {
-            return Err(ServeError::Respond(range_not_satisfiable(meta.len)));
-        };
+        // Unsatisfiable against cached meta → bypass, letting the origin
+        // adjudicate against the *live* object. Synthesizing a 416 here would be
+        // wrong for up to META_TTL_SECS after the object grew (the origin would
+        // return 206), and would drop S3's parseable InvalidRange error body.
+        let (start, end) = resolve_range(range_spec.as_ref(), meta.len)
+            .ok_or("range unsatisfiable vs cached meta")?;
         if end - start + 1 > MAX_CACHEABLE_SPAN {
-            return Err(ServeError::Fallback("span exceeds cacheable threshold"));
+            return Err("span exceeds cacheable threshold");
         }
 
         // ── Gather chunks: cache hit or backend ranged GET ──────────────
@@ -352,26 +365,42 @@ mod wasm_impl {
         for index in first..=last {
             let key = chunk_key(&plan.prefix, &meta.etag, CHUNK_SIZE, index);
             let (cb_start, cb_end) = chunk_bounds(index, CHUNK_SIZE, meta.len);
-            let bytes = match cache.get(key.as_str(), false).await.ok().flatten() {
-                Some(mut hit) => {
-                    hits += 1;
-                    hit.bytes()
-                        .await
-                        .map_err(|_| ServeError::Fallback("cached chunk read failed"))?
-                }
-                None => {
-                    fetch_chunk(
-                        plan, inner, request, &cache, &meta_key, &key, &meta, cb_start, cb_end,
-                    )
-                    .await?
-                }
+            let expected = cb_end - cb_start + 1;
+            let (bytes, from_cache) = match cache.get(key.as_str(), false).await.ok().flatten() {
+                Some(mut hit) => (
+                    hit.bytes().await.map_err(|_| "cached chunk read failed")?,
+                    true,
+                ),
+                None => (
+                    fetch_chunk(inner, request, &cache, &meta_key, &meta, cb_start, cb_end).await?,
+                    false,
+                ),
             };
-            if bytes.len() as u64 != cb_end - cb_start + 1 {
-                return Err(ServeError::Fallback("chunk length mismatch"));
+            // A wrong-length chunk must never be stitched — nor left cached under
+            // its immutable key, or it poisons this generation forever. Evict a
+            // poisoned entry; a bad backend body just bypasses.
+            if bytes.len() as u64 != expected {
+                if from_cache {
+                    let _ = cache.delete(key.as_str(), false).await;
+                }
+                return Err("chunk length mismatch");
             }
-            let from = start.max(cb_start) - cb_start;
-            let to = end.min(cb_end) - cb_start + 1;
-            body.extend_from_slice(&bytes[from as usize..to as usize]);
+            let from = (start.max(cb_start) - cb_start) as usize;
+            let to = (end.min(cb_end) - cb_start + 1) as usize;
+            body.extend_from_slice(&bytes[from..to]);
+            if from_cache {
+                hits += 1;
+            } else {
+                // Cache the validated chunk in the background; move the Vec (the
+                // client's slice is already copied into `body`, so no clone).
+                background_put(
+                    plan,
+                    key,
+                    bytes,
+                    "application/octet-stream",
+                    "public, max-age=31536000, immutable".to_string(),
+                );
+            }
         }
 
         Ok(build_response(
@@ -391,44 +420,54 @@ mod wasm_impl {
     async fn probe_meta(
         inner: &WorkerBackend,
         request: &ForwardRequest,
-    ) -> Result<ObjectMeta, ServeError> {
+    ) -> Result<ObjectMeta, &'static str> {
         let resp = inner
             .forward(sub_request(request, "bytes=0-0", None), JsBody::new(None))
             .await
-            .map_err(|_| ServeError::Fallback("meta probe fetch failed"))?;
+            .map_err(|_| "meta probe fetch failed")?;
         if resp.status != 206 {
             // 200 = backend ignored Range; 416 = zero-length object; anything
             // else is the backend's problem to report on the direct path.
-            return Err(ServeError::Fallback("meta probe not 206"));
+            return Err("meta probe not 206");
         }
         let etag = header_string(&resp.headers, ETAG.as_str())
             .filter(|e| is_strong_etag(e))
-            .ok_or(ServeError::Fallback("missing or weak etag"))?;
+            .ok_or("missing or weak etag")?;
         let len = header_string(&resp.headers, CONTENT_RANGE.as_str())
             .as_deref()
             .and_then(parse_content_range_total)
-            .ok_or(ServeError::Fallback("unparseable content-range"))?;
-        Ok(ObjectMeta {
-            etag,
-            len,
-            content_type: header_string(&resp.headers, CONTENT_TYPE.as_str()),
-            last_modified: header_string(&resp.headers, LAST_MODIFIED.as_str()),
-        })
+            .ok_or("unparseable content-range")?;
+        // Preserve every origin entity header for replay on cache-served
+        // responses; skip only the range framing we regenerate per request.
+        let headers = resp
+            .headers
+            .iter()
+            .filter(|(n, _)| {
+                let n = n.as_str();
+                n != CONTENT_LENGTH.as_str() && n != CONTENT_RANGE.as_str()
+            })
+            .filter_map(|(n, v)| {
+                v.to_str()
+                    .ok()
+                    .map(|v| (n.as_str().to_string(), v.to_string()))
+            })
+            .collect();
+        Ok(ObjectMeta { etag, len, headers })
     }
 
-    /// Fetch one aligned chunk from the backend and cache it in the background.
-    #[allow(clippy::too_many_arguments)]
+    /// Fetch one aligned chunk from the backend. Validates status + ETag (a
+    /// drift means the object changed → evict meta and bypass, so
+    /// mixed-generation stitching is impossible); the caller validates length
+    /// and caches the chunk.
     async fn fetch_chunk(
-        plan: &CachePlan,
         inner: &WorkerBackend,
         request: &ForwardRequest,
         cache: &worker::Cache,
         meta_key: &str,
-        key: &str,
         meta: &ObjectMeta,
         cb_start: u64,
         cb_end: u64,
-    ) -> Result<Vec<u8>, ServeError> {
+    ) -> Result<Vec<u8>, &'static str> {
         let range = format!("bytes={cb_start}-{cb_end}");
         let resp = inner
             .forward(
@@ -436,40 +475,19 @@ mod wasm_impl {
                 JsBody::new(None),
             )
             .await
-            .map_err(|_| ServeError::Fallback("backend chunk fetch failed"))?;
+            .map_err(|_| "backend chunk fetch failed")?;
 
-        // 412 (If-Match) or an ETag drift means the object was overwritten
-        // since the meta entry was written: drop the meta so the next request
-        // re-probes, and serve this one directly — mixed-generation stitching
-        // is structurally impossible.
         let fresh = resp.status == 206
             && header_string(&resp.headers, ETAG.as_str()).as_deref() == Some(meta.etag.as_str());
         if !fresh {
             let _ = cache.delete(meta_key, false).await;
-            return Err(ServeError::Fallback("object changed under chunk fetch"));
+            return Err("object changed under chunk fetch");
         }
 
-        let bytes = response_bytes(resp.body)
+        collect_js_body(JsBody::new(resp.body.body()))
             .await
-            .map_err(|_| ServeError::Fallback("chunk body read failed"))?;
-
-        // Background put — never blocks the client response, and put failures
-        // only cost a future re-fetch. Entries are immutable by construction
-        // (ETag + chunk size in the key), hence the year-long TTL.
-        let put_key = key.to_string();
-        let put_bytes = bytes.clone();
-        plan.ctx.wait_until(async move {
-            let headers = worker::Headers::new();
-            let _ = headers.set("cache-control", "public, max-age=31536000, immutable");
-            let _ = headers.set("content-type", "application/octet-stream");
-            if let Ok(resp) = worker::Response::from_bytes(put_bytes) {
-                let _ = worker::Cache::default()
-                    .put(put_key.as_str(), resp.with_headers(headers))
-                    .await;
-            }
-        });
-
-        Ok(bytes)
+            .map(|b| b.to_vec())
+            .map_err(|_| "chunk body read failed")
     }
 
     /// Clone the (already allowlist-filtered) forward request with our own
@@ -500,13 +518,31 @@ mod wasm_impl {
     }
 
     fn put_meta(plan: &CachePlan, meta_key: &str, meta: &ObjectMeta) {
-        let (key, json) = (meta_key.to_string(), serde_json::to_string(meta));
+        if let Ok(json) = serde_json::to_vec(meta) {
+            background_put(
+                plan,
+                meta_key.to_string(),
+                json,
+                "application/json",
+                format!("max-age={META_TTL_SECS}"),
+            );
+        }
+    }
+
+    /// Fire-and-forget cache write via `waitUntil` — never blocks or fails the
+    /// client response; a failed put just costs a future re-fetch.
+    fn background_put(
+        plan: &CachePlan,
+        key: String,
+        body: Vec<u8>,
+        content_type: &'static str,
+        cache_control: String,
+    ) {
         plan.ctx.wait_until(async move {
-            let Ok(json) = json else { return };
             let headers = worker::Headers::new();
-            let _ = headers.set("content-type", "application/json");
-            let _ = headers.set("cache-control", &format!("max-age={META_TTL_SECS}"));
-            if let Ok(resp) = worker::Response::ok(json) {
+            let _ = headers.set("content-type", content_type);
+            let _ = headers.set("cache-control", &cache_control);
+            if let Ok(resp) = worker::Response::from_bytes(body) {
                 let _ = worker::Cache::default()
                     .put(key.as_str(), resp.with_headers(headers))
                     .await;
@@ -524,15 +560,14 @@ mod wasm_impl {
         total_chunks: u64,
     ) -> ForwardResponse<web_sys::Response> {
         let mut headers = HeaderMap::new();
-        // All headers come from the meta entry — one consistent generation.
-        set_header(&mut headers, ETAG.as_str(), &meta.etag);
+        // Replay origin entity headers (content-type, content-encoding, etag,
+        // content-disposition, x-amz-meta-*, …) captured at probe time — one
+        // consistent generation, matching what the direct path would send.
+        for (name, value) in &meta.headers {
+            set_header(&mut headers, name, value);
+        }
+        // Range framing + cache signalling override any stored copies.
         set_header(&mut headers, ACCEPT_RANGES.as_str(), "bytes");
-        if let Some(ct) = &meta.content_type {
-            set_header(&mut headers, CONTENT_TYPE.as_str(), ct);
-        }
-        if let Some(lm) = &meta.last_modified {
-            set_header(&mut headers, LAST_MODIFIED.as_str(), lm);
-        }
         set_header(
             &mut headers,
             CONTENT_LENGTH.as_str(),
@@ -569,29 +604,16 @@ mod wasm_impl {
         }
     }
 
-    /// Local 416 — the meta entry alone proves the range is unsatisfiable, so
-    /// no backend round-trip is spent confirming it.
-    fn range_not_satisfiable(len: u64) -> ForwardResponse<web_sys::Response> {
-        let mut headers = HeaderMap::new();
-        set_header(
-            &mut headers,
-            CONTENT_RANGE.as_str(),
-            &format!("bytes */{len}"),
-        );
-        set_header(&mut headers, X_CACHE, "HIT");
-        ForwardResponse {
-            status: 416,
-            headers,
-            body: web_sys::Response::new().unwrap(),
-            content_length: Some(0),
-        }
-    }
-
     // ── Small helpers ───────────────────────────────────────────────
 
-    fn set_header(headers: &mut HeaderMap, name: &'static str, value: &str) {
-        if let Ok(v) = HeaderValue::from_str(value) {
-            headers.insert(name, v);
+    /// Insert a header from string name + value, silently skipping any that
+    /// won't parse (so a malformed stored value can't fail the whole response).
+    fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
+        if let (Ok(n), Ok(v)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
+            headers.insert(n, v);
         }
     }
 
@@ -609,14 +631,5 @@ mod wasm_impl {
         let mut resp = cache.get(key, false).await.ok().flatten()?;
         let text = resp.text().await.ok()?;
         serde_json::from_str(&text).ok()
-    }
-
-    /// Buffer a backend response body (≤ one chunk) via `arrayBuffer()`.
-    async fn response_bytes(resp: web_sys::Response) -> Result<Vec<u8>, ()> {
-        let promise = resp.array_buffer().map_err(|_| ())?;
-        let buf = wasm_bindgen_futures::JsFuture::from(promise)
-            .await
-            .map_err(|_| ())?;
-        Ok(js_sys::Uint8Array::new(&buf).to_vec())
     }
 }

@@ -71,7 +71,6 @@ multistore-cf-workers = { version = "0.6.4", features = ["azure"] }
 # mention their types.
 bytes = "1"
 object_store = { version = "0.13", default-features = false }
-wasm-bindgen-futures = "0.4"
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none

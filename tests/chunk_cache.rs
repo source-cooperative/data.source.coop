@@ -168,14 +168,24 @@ fn object_meta_roundtrips_json() {
     let meta = ObjectMeta {
         etag: "\"abc\"".into(),
         len: 42,
-        content_type: Some("image/tiff".into()),
-        last_modified: None,
+        headers: vec![
+            ("content-type".into(), "image/tiff".into()),
+            ("content-encoding".into(), "gzip".into()),
+        ],
     };
     let back: ObjectMeta = serde_json::from_str(&serde_json::to_string(&meta).unwrap()).unwrap();
     assert_eq!(back.etag, meta.etag);
     assert_eq!(back.len, meta.len);
-    assert_eq!(back.content_type, meta.content_type);
-    assert_eq!(back.last_modified, None);
+    assert_eq!(back.headers, meta.headers);
+}
+
+#[test]
+fn parse_range_rejects_leading_plus() {
+    // Non-RFC-9110 sign must be refused (not silently accepted by u64::parse),
+    // so it bypasses to origin rather than diverging into a 206.
+    assert_eq!(parse_range("bytes=+0-+9"), None);
+    assert_eq!(parse_range("bytes=+5-"), None);
+    assert_eq!(parse_range("bytes=-+5"), None);
 }
 
 // ── constants sanity ────────────────────────────────────────────────

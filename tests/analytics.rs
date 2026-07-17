@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{hash_ip, strip_range_unit, RequestEvent};
+use analytics::{cache_status_token, hash_ip, strip_range_unit, RequestEvent};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -117,4 +117,15 @@ fn strip_range_unit_drops_bytes_prefix() {
     // unit is not silently mangled).
     assert_eq!(strip_range_unit(""), "");
     assert_eq!(strip_range_unit("items=0-5"), "items=0-5");
+}
+
+#[test]
+fn cache_status_token_keeps_only_known_tokens() {
+    assert_eq!(cache_status_token("HIT"), "HIT");
+    assert_eq!(cache_status_token("MISS"), "MISS");
+    assert_eq!(cache_status_token("BYPASS"), "BYPASS");
+    // Foreign CDN values and empties collapse to "" so blob10 stays clean.
+    assert_eq!(cache_status_token("Hit from cloudfront"), "");
+    assert_eq!(cache_status_token("hit"), "");
+    assert_eq!(cache_status_token(""), "");
 }
