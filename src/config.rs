@@ -124,6 +124,16 @@ fn build_config(env: &Env) -> AppConfig {
         },
     };
 
+    // Kill switch / rollout gate for chunk-aligned edge caching of object
+    // bytes (see `chunk_cache`). Unset → disabled; only "true"/"1" enable.
+    let chunk_cache_enabled = env
+        .var("CHUNK_CACHE_ENABLED")
+        .map(|v| {
+            let v = v.to_string();
+            v == "true" || v == "1"
+        })
+        .unwrap_or(false);
+
     // Salt for hashing client IPs in analytics. Optional: when unset we still
     // hash (so raw IPs never land in the dataset), but without a secret salt the
     // small IPv4 space is brute-forceable, so prod should set it.
@@ -143,6 +153,7 @@ fn build_config(env: &Env) -> AppConfig {
         auth_audiences,
         sts_max_session_duration_secs,
         ip_hash_salt,
+        chunk_cache_enabled,
     }
 }
 
@@ -164,6 +175,9 @@ pub struct AppConfig {
     /// Secret salt for hashing client IPs before they enter analytics. Empty
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,
+    /// Whether object GETs on public products may be served through the
+    /// chunk-aligned edge cache. From `CHUNK_CACHE_ENABLED`; default off.
+    pub chunk_cache_enabled: bool,
 }
 
 pub struct OidcConfig {

@@ -117,6 +117,9 @@ jobs:
             echo "AUTH_ISSUER=https://token.actions.githubusercontent.com"
             echo "AUTH_AUDIENCE=source-data-proxy-ci"
             echo "SOURCE_API_URL=http://localhost:9000"
+            # Exercise the chunk-aligned edge cache (issue #188) in the
+            # integration tier; miniflare implements caches.default locally.
+            echo "CHUNK_CACHE_ENABLED=true"
           } > .dev.vars
       - name: Mint caller identity token (GitHub OIDC)
         # Fork PRs run without id-token permission; the credentialed write

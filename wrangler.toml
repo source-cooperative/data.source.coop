@@ -21,7 +21,10 @@ AUTH_ISSUER = "https://auth.source.coop"
 LOG_LEVEL = "WARN" 
 OIDC_PROVIDER_ISSUER = "https://data.source.coop" 
 OIDC_PROVIDER_KID = "data-proxy-1" 
-SOURCE_API_URL = "https://source.coop" 
+SOURCE_API_URL = "https://source.coop"
+# Chunk-aligned edge caching of object bytes (issue #188). Staging-first
+# rollout: off in prod until the staging soak looks good, then flip to "true".
+CHUNK_CACHE_ENABLED = "false"
 # Ceiling for client-requested /.sts DurationSeconds (seconds). 43200 = 12h,
 # 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
 # more than 1h; this only raises the cap.
@@ -81,6 +84,7 @@ OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
 SOURCE_API_URL = "https://staging.source.coop"
 STS_MAX_SESSION_DURATION_SECS = "43200"  # 12h ceiling for client-requested /.sts DurationSeconds
+CHUNK_CACHE_ENABLED = "true"  # chunk-aligned edge cache (issue #188), soaking on staging
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"

@@ -14,6 +14,7 @@ fn event<'a>() -> RequestEvent<'a> {
         range: "0-1023", // already stripped of the "bytes=" unit prefix
         country: "US",
         content_type: "application/octet-stream",
+        cache_status: "HIT",
         bytes_sent: 1024.0,
         status_code: 200.0,
         duration_ms: 42.5,
@@ -41,6 +42,7 @@ fn blobs_in_schema_order() {
             "application/octet-stream", // blob7: content_type
             "deadbeef",                 // blob8: client_ip_hash
             "0-1023",                   // blob9: range (bytes= prefix stripped)
+            "HIT",                      // blob10: cache_status (chunk cache)
         ]
     );
 }

@@ -172,3 +172,70 @@ def test_object_access_via_path():
     """HEAD /{account}/{product}/{key} should return 200."""
     resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
+
+
+# --- Chunk-aligned edge cache (issue #188) ---
+# Only meaningful when the worker runs with CHUNK_CACHE_ENABLED=true (CI does);
+# with it off, x-cache is absent and these assertions still hold vacuously
+# where written to tolerate that.
+
+
+def test_chunk_cache_roundtrip():
+    """Same range twice: byte-identical bodies, valid 206 framing, and an
+    x-cache disposition when the chunk cache is enabled."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    headers = {"Range": "bytes=100-1123"}
+    first = requests.get(url, headers=headers)
+    second = requests.get(url, headers=headers)
+    assert first.status_code == 206
+    assert second.status_code == 206
+    assert len(first.content) == 1024
+    assert first.content == second.content
+    for resp in (first, second):
+        assert resp.headers.get("content-range", "").startswith("bytes 100-1123/")
+        assert "etag" in resp.headers
+        x_cache = resp.headers.get("x-cache")
+        if x_cache is not None:
+            # Local cache semantics may not produce a HIT, but the header must
+            # always be a known disposition.
+            assert x_cache in ("HIT", "MISS", "BYPASS")
+
+
+def test_chunk_cache_matches_direct_bytes():
+    """A chunk-assembled range must equal the same slice of the full object."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    full = requests.get(url, headers={"Range": "bytes=0-4095"})
+    slice_ = requests.get(url, headers={"Range": "bytes=1000-1999"})
+    assert full.status_code == 206 and slice_.status_code == 206
+    assert slice_.content == full.content[1000:2000]
+
+
+def test_chunk_cache_suffix_range():
+    """Suffix ranges (the parquet-footer pattern) resolve via cached metadata."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    resp = requests.get(url, headers={"Range": "bytes=-1024"})
+    assert resp.status_code == 206
+    assert len(resp.content) == 1024
+    total = int(resp.headers["content-range"].rsplit("/", 1)[1])
+    assert resp.headers["content-range"] == f"bytes {total - 1024}-{total - 1}/{total}"
+
+
+def test_chunk_cache_range_beyond_eof_is_416():
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    head = requests.head(url)
+    length = int(head.headers["content-length"])
+    resp = requests.get(url, headers={"Range": f"bytes={length + 10}-{length + 20}"})
+    assert resp.status_code == 416
+
+
+def test_chunk_cache_conditional_request_bypasses():
+    """Conditional requests keep exact origin semantics (direct path)."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    etag = requests.head(url).headers["etag"]
+    resp = requests.get(
+        url, headers={"Range": "bytes=0-99", "If-None-Match": etag}
+    )
+    assert resp.status_code == 304
+    x_cache = resp.headers.get("x-cache")
+    if x_cache is not None:
+        assert x_cache == "BYPASS"

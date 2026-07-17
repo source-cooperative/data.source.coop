@@ -22,6 +22,10 @@ pub struct RequestEvent<'a> {
     pub range: &'a str,
     pub country: &'a str,
     pub content_type: &'a str,
+    /// Chunk-cache disposition from the `x-cache` response header:
+    /// `HIT` / `MISS` / `BYPASS`, empty when the chunk cache wasn't in play
+    /// (writes, HEAD, special paths, private products, feature disabled).
+    pub cache_status: &'a str,
     pub bytes_sent: f64,
     pub status_code: f64,
     pub duration_ms: f64,
@@ -33,7 +37,9 @@ impl RequestEvent<'_> {
         format!("{}/{}", self.account_id, self.product_id)
     }
 
-    /// Blob columns in Analytics Engine schema order (blob1..blob9).
+    /// Blob columns in Analytics Engine schema order (blob1..blob10).
+    /// Positions are load-bearing (dashboards address blobs by index), so new
+    /// columns are append-only.
     ///
     ///   blob1: account_id
     ///   blob2: product_id
@@ -44,7 +50,8 @@ impl RequestEvent<'_> {
     ///   blob7: content_type
     ///   blob8: client_ip_hash (HMAC-SHA256; empty when IP is unknown)
     ///   blob9: range (Range header, "bytes=" prefix stripped, empty if absent)
-    pub fn blobs(&self) -> [&str; 9] {
+    ///   blob10: cache_status (chunk cache: HIT/MISS/BYPASS, empty if n/a)
+    pub fn blobs(&self) -> [&str; 10] {
         [
             self.account_id,
             self.product_id,
@@ -56,6 +63,7 @@ impl RequestEvent<'_> {
             self.content_type,
             self.client_ip_hash,
             self.range,
+            self.cache_status,
         ]
     }
 
@@ -171,6 +179,13 @@ pub(crate) fn log_analytics(
 
     let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
     let range = strip_range_unit(header_str(headers, "range"));
+    // Stamped by the chunk cache (see `chunk_cache`); absent → empty.
+    let cache_status = response
+        .headers()
+        .get("x-cache")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     log_request(
         env,
@@ -184,6 +199,7 @@ pub(crate) fn log_analytics(
             range,
             country: header_str(headers, "cf-ipcountry"),
             content_type: &content_type,
+            cache_status: &cache_status,
             bytes_sent,
             status_code: response.status() as f64,
             duration_ms,

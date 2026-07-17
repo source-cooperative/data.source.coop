@@ -10,6 +10,7 @@
 mod analytics;
 mod authz;
 mod backend_auth;
+mod chunk_cache;
 mod config;
 mod handlers;
 mod location;
@@ -20,6 +21,7 @@ mod sts;
 
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
+use chunk_cache::{CachePlan, ChunkCachingBackend};
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
@@ -118,6 +120,9 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
+    // Shared with the chunk cache for background `cache.put`s via `waitUntil`;
+    // `&ctx` call sites below still work through deref coercion.
+    let ctx = std::rc::Rc::new(ctx);
     let max_level = init_tracing(&env);
     let config = load_config(&env);
 
@@ -253,6 +258,45 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .route("/", IndexHandler)
         .route("/{bucket}", AccountListHandler::new(registry.clone()));
 
+    // ── Chunk-cache plan ───────────────────────────────────────────
+    // Present only for object GETs (no query — presigned/S3-op requests keep
+    // their exact semantics on the direct path) on a product whose *anonymous*
+    // view is public. That check is the same product fetch the gateway itself
+    // performs — edge-cached for PRODUCT_CACHE_SECS — and fails closed: any
+    // error, unknown visibility, or disabled product means no caching. The
+    // gateway still authorizes every request; the plan only decides whether
+    // the backend fetch may ride the chunk cache. See `chunk_cache`.
+    let chunk_plan = match (config.chunk_cache_enabled
+        && parts.method == http::Method::GET
+        && !is_special_path
+        && parts.query.as_deref().unwrap_or("").is_empty())
+    .then(|| extract_path_segments(&parts.path))
+    {
+        Some((Some(account), Some(product), Some(_key))) => {
+            let host = req
+                .url()
+                .parse::<http::Uri>()
+                .ok()
+                .and_then(|u| u.host().map(str::to_string));
+            match host {
+                Some(host) => source_api::cache::get_or_fetch_product(
+                    &config.api_base_url,
+                    account,
+                    product,
+                    &api_auth,
+                    &request_id,
+                    None,
+                )
+                .await
+                .ok()
+                .filter(|p| p.is_public())
+                .map(|_| CachePlan::new(&host, &parts.path, ctx.clone())),
+                None => None,
+            }
+        }
+        _ => None,
+    };
+
     // ── Backend federation middleware ─────────────────────────────
     // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
     // assertion, exchange it at AWS STS (AssumeRoleWithWebIdentity) over fetch,
@@ -275,7 +319,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
 
     let gateway = ProxyGateway::new(
-        WorkerBackend,
+        ChunkCachingBackend::new(WorkerBackend, chunk_plan),
         MappedRegistry::new(registry, mapping.clone()),
         NoopCredentialRegistry,
         None,

@@ -1733,6 +1733,7 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.2.2"
 dependencies = [
+ "bytes",
  "console_error_panic_hook",
  "getrandom 0.4.2",
  "hmac",
@@ -1743,6 +1744,7 @@ dependencies = [
  "multistore-oidc-provider",
  "multistore-path-mapping",
  "multistore-sts",
+ "object_store",
  "percent-encoding",
  "reqwest",
  "serde",
@@ -1750,6 +1752,7 @@ dependencies = [
  "sha2",
  "tracing",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
  "worker",
  "worker-macros",
