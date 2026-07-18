@@ -5,6 +5,10 @@ workers_dev = true
 [vars]
 LOG_LEVEL = "DEBUG"
 SOURCE_API_URL = "https://staging.source.coop"
+# Chunk-aligned edge cache (issue #188). Preview is staging-equivalent and
+# staging runs it on, so enable it here too — otherwise previews can't exercise
+# the cache path and x-cache never appears on a ranged GET.
+CHUNK_CACHE_ENABLED = "true"
 
 # Sign the proxy's on-behalf-of API token (and AWS federation assertion) as the
 # canonical staging proxy, not this ephemeral preview hostname: staging's API and
