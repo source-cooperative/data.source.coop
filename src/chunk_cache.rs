@@ -190,6 +190,7 @@ pub use wasm_impl::{CachePlan, ChunkCachingBackend};
 mod wasm_impl {
     use super::*;
     use bytes::Bytes;
+    use futures::StreamExt;
     use http::header::{
         HeaderName, HeaderValue, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, ETAG, IF_MATCH,
         RANGE,
@@ -207,6 +208,27 @@ mod wasm_impl {
 
     const X_CACHE: &str = "x-cache";
     const X_CACHE_CHUNKS: &str = "x-cache-chunks";
+
+    /// Max concurrent in-flight chunk fetches in the streamed path. Kept small:
+    /// each origin miss opens a subrequest, bounded by the 6-simultaneous-open-
+    /// connection limit, and hits are edge-local anyway.
+    const STREAM_CONCURRENCY: usize = 4;
+
+    /// One chunk's owned work item for the streamed multi-chunk path. Owned (not
+    /// borrowed) so the assembly stream satisfies `Response::from_stream`'s
+    /// `'static` bound.
+    struct ChunkJob {
+        inner: WorkerBackend,
+        plan: CachePlan,
+        meta_key: String,
+        etag: String,
+        fetch_req: ForwardRequest,
+        key: String,
+        cb_start: u64,
+        cb_end: u64,
+        from: usize,
+        to: usize,
+    }
 
     /// Everything the chunk cache needs that the backend call can't see:
     /// content identity from the client path, and the fetch event context for
@@ -297,12 +319,21 @@ mod wasm_impl {
         }
     }
 
-    /// The plan is built for object GETs only; here we additionally refuse
-    /// conditional requests so their precondition semantics stay on the direct
-    /// path. (`If-Range` is intentionally absent: multistore's GetObject header
-    /// allowlist never forwards it, so it cannot reach this backend.)
+    /// The plan is built for object GETs only; here we additionally require a
+    /// `Range` header and refuse conditional requests.
+    ///
+    /// Ranged-only is deliberate: cloud-native geospatial reads (COG tiles,
+    /// GeoParquet footers, PMTiles directories, Zarr chunks) are all ranged and
+    /// carry the cross-client reuse this cache exists to serve. Full-object GETs
+    /// are bulk downloads (`aws s3 cp`, rclone) — throughput-bound, single-touch,
+    /// and worst-case for the assemble-then-respond path — so they stay on the
+    /// direct stream (and whole-object caching, if wanted, belongs in the native
+    /// CDN cache, not here). Conditional requests keep their precondition
+    /// semantics on the direct path. (`If-Range` is intentionally absent:
+    /// multistore's GetObject allowlist never forwards it, so it can't reach us.)
     fn eligible(request: &ForwardRequest) -> bool {
         request.method == http::Method::GET
+            && request.headers.contains_key(RANGE)
             && ![
                 "if-match",
                 "if-none-match",
@@ -318,15 +349,19 @@ mod wasm_impl {
         inner: &WorkerBackend,
         request: &ForwardRequest,
     ) -> Result<ForwardResponse<web_sys::Response>, &'static str> {
-        let range_spec = match request.headers.get(RANGE) {
-            Some(v) => Some(
-                v.to_str()
-                    .ok()
-                    .and_then(parse_range)
-                    .ok_or("unparseable or multi-range")?,
-            ),
-            None => None,
-        };
+        // Eligibility guarantees a `Range` header; parse it (bypass anything the
+        // aligned-chunk path can't serve: multi-range, non-bytes, garbage).
+        let range_spec = request
+            .headers
+            .get(RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_range)
+            .ok_or("unparseable or multi-range")?;
+        // `bytes=0-` (open-ended from zero) is a full-object transfer wearing a
+        // Range header — bypass it like a full-object GET (see `eligible`).
+        if range_spec == RangeSpec::From(0) {
+            return Err("full-object transfer (bytes=0-)");
+        }
 
         let cache = worker::Cache::default();
         let meta_key = meta_key(&plan.prefix);
@@ -349,69 +384,203 @@ mod wasm_impl {
         // adjudicate against the *live* object. Synthesizing a 416 here would be
         // wrong for up to META_TTL_SECS after the object grew (the origin would
         // return 206), and would drop S3's parseable InvalidRange error body.
-        let (start, end) = resolve_range(range_spec.as_ref(), meta.len)
+        let (start, end) = resolve_range(Some(&range_spec), meta.len)
             .ok_or("range unsatisfiable vs cached meta")?;
         if end - start + 1 > MAX_CACHEABLE_SPAN {
             return Err("span exceeds cacheable threshold");
         }
 
-        // ── Gather chunks: cache hit or backend ranged GET ──────────────
-        // ponytail: sequential chunk fetch; parallelize if spans grow beyond
-        // the couple-of-chunks windowed reads this is built for.
         let (first, last) = chunk_index_range(start, end, CHUNK_SIZE);
-        let mut body = Vec::with_capacity((end - start + 1) as usize);
         let total_chunks = last - first + 1;
-        let mut hits = 0u64;
-        for index in first..=last {
-            let key = chunk_key(&plan.prefix, &meta.etag, CHUNK_SIZE, index);
-            let (cb_start, cb_end) = chunk_bounds(index, CHUNK_SIZE, meta.len);
-            let expected = cb_end - cb_start + 1;
-            let (bytes, from_cache) = match cache.get(key.as_str(), false).await.ok().flatten() {
-                Some(mut hit) => (
-                    hit.bytes().await.map_err(|_| "cached chunk read failed")?,
-                    true,
-                ),
-                None => (
-                    fetch_chunk(inner, request, &cache, &meta_key, &meta, cb_start, cb_end).await?,
-                    false,
-                ),
-            };
-            // A wrong-length chunk must never be stitched — nor left cached under
-            // its immutable key, or it poisons this generation forever. Evict a
-            // poisoned entry; a bad backend body just bypasses.
-            if bytes.len() as u64 != expected {
-                if from_cache {
-                    let _ = cache.delete(key.as_str(), false).await;
-                }
-                return Err("chunk length mismatch");
-            }
-            let from = (start.max(cb_start) - cb_start) as usize;
-            let to = (end.min(cb_end) - cb_start + 1) as usize;
-            body.extend_from_slice(&bytes[from..to]);
-            if from_cache {
-                hits += 1;
-            } else {
-                // Cache the validated chunk in the background; move the Vec (the
-                // client's slice is already copied into `body`, so no clone).
-                background_put(
-                    plan,
-                    key,
-                    bytes,
-                    "application/octet-stream",
-                    "public, max-age=31536000, immutable".to_string(),
-                );
-            }
+
+        // Single chunk (the common footer/tile read): buffer and respond, with
+        // accurate HIT/MISS and no stream setup. A hit range-slices the Cache
+        // API (fix #1) so only the requested bytes leave cache, not the 4 MiB
+        // block.
+        if first == last {
+            let (cb_start, cb_end) = chunk_bounds(first, CHUNK_SIZE, meta.len);
+            let key = chunk_key(&plan.prefix, &meta.etag, CHUNK_SIZE, first);
+            let fetch_req = sub_request(
+                request,
+                &format!("bytes={cb_start}-{cb_end}"),
+                Some(&meta.etag),
+            );
+            let (bytes, hit) = resolve_chunk(
+                inner.clone(),
+                plan.clone(),
+                meta_key.clone(),
+                meta.etag.clone(),
+                fetch_req,
+                key,
+                cb_start,
+                cb_end,
+                (start - cb_start) as usize,
+                (end - cb_start + 1) as usize,
+            )
+            .await?;
+            return Ok(buffered_response(start, end, &meta, bytes, hit as u64, 1));
         }
 
-        Ok(build_response(
-            range_spec.is_some(),
+        // Multi-chunk (large ranged read, e.g. a DuckDB column pull): stream the
+        // assembly so bytes flush after the *first* chunk resolves instead of
+        // after the whole span buffers (fix #2). `buffered` overlaps origin
+        // misses at bounded concurrency and emits in order, so no chunk is
+        // yielded before it's validated. Trade: once bytes have flushed, a
+        // later-chunk failure can only truncate the response (client retry), not
+        // bypass — correctness still holds via per-chunk length + ETag checks.
+        let content_length = end - start + 1;
+        let jobs: Vec<ChunkJob> = (first..=last)
+            .map(|index| {
+                let (cb_start, cb_end) = chunk_bounds(index, CHUNK_SIZE, meta.len);
+                ChunkJob {
+                    inner: inner.clone(),
+                    plan: plan.clone(),
+                    meta_key: meta_key.clone(),
+                    etag: meta.etag.clone(),
+                    fetch_req: sub_request(
+                        request,
+                        &format!("bytes={cb_start}-{cb_end}"),
+                        Some(&meta.etag),
+                    ),
+                    key: chunk_key(&plan.prefix, &meta.etag, CHUNK_SIZE, index),
+                    cb_start,
+                    cb_end,
+                    from: (start.max(cb_start) - cb_start) as usize,
+                    to: (end.min(cb_end) - cb_start + 1) as usize,
+                }
+            })
+            .collect();
+
+        let stream = futures::stream::iter(jobs)
+            .map(|job| async move {
+                resolve_chunk(
+                    job.inner,
+                    job.plan,
+                    job.meta_key,
+                    job.etag,
+                    job.fetch_req,
+                    job.key,
+                    job.cb_start,
+                    job.cb_end,
+                    job.from,
+                    job.to,
+                )
+                .await
+                .map(|(bytes, _hit)| bytes)
+                .map_err(|e| worker::Error::RustError(e.to_string()))
+            })
+            .buffered(STREAM_CONCURRENCY);
+
+        let ws: web_sys::Response = worker::Response::from_stream(stream)
+            .map_err(|_| "stream build failed")?
+            .into();
+        Ok(streamed_response(
             start,
             end,
             &meta,
-            body,
-            hits,
+            content_length,
+            ws,
             total_chunks,
         ))
+    }
+
+    /// Resolve one chunk to the client's slice `[from, to)` of it: a
+    /// range-sliced Cache API hit, or a backend fetch of the full aligned chunk
+    /// (validated, cached whole as prefetch, sliced for the response). Returns
+    /// `(client_slice, was_hit)`. Owned params so it composes into the `'static`
+    /// assembly stream.
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_chunk(
+        inner: WorkerBackend,
+        plan: CachePlan,
+        meta_key: String,
+        etag: String,
+        fetch_req: ForwardRequest,
+        key: String,
+        cb_start: u64,
+        cb_end: u64,
+        from: usize,
+        to: usize,
+    ) -> Result<(Vec<u8>, bool), &'static str> {
+        let cache = worker::Cache::default();
+        let expected = cb_end - cb_start + 1;
+        if let Some(bytes) = cache_get_chunk(&cache, &key, from, to, expected).await {
+            return Ok((bytes, true));
+        }
+        // Miss: fetch the whole aligned chunk (the over-fetch is prefetch for
+        // adjacent reads), validate its length, cache it whole, return only the
+        // client's slice.
+        let full = fetch_chunk(&inner, fetch_req, &cache, &meta_key, &etag).await?;
+        if full.len() as u64 != expected {
+            return Err("chunk length mismatch (backend)");
+        }
+        let slice = full[from..to].to_vec();
+        background_put(
+            &plan,
+            key,
+            full,
+            "application/octet-stream",
+            "public, max-age=31536000, immutable".to_string(),
+        );
+        Ok((slice, false))
+    }
+
+    /// Range-sliced Cache API lookup for one chunk: ask for just bytes
+    /// `[from, to)` of the cached block. Cloudflare honors `Range` on a cached
+    /// response and returns a server-side-sliced 206, so a warm read pulls the
+    /// requested bytes rather than the whole 4 MiB block (fix #1); a runtime
+    /// that ignores `Range` (e.g. miniflare) returns the full 200 and we slice
+    /// in wasm. A cached chunk whose total length disagrees with `expected` is
+    /// poison — evict it and report a miss so the caller re-fetches a clean copy.
+    async fn cache_get_chunk(
+        cache: &worker::Cache,
+        key: &str,
+        from: usize,
+        to: usize,
+        expected: u64,
+    ) -> Option<Vec<u8>> {
+        let req = build_range_request(key, from, to)?;
+        let mut resp = cache.get(&req, false).await.ok().flatten()?;
+        let want = to - from;
+        match resp.status_code() {
+            206 => {
+                let total_ok = resp
+                    .headers()
+                    .get("content-range")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| parse_content_range_total(&v))
+                    == Some(expected);
+                if let Ok(bytes) = resp.bytes().await {
+                    if total_ok && bytes.len() == want {
+                        return Some(bytes);
+                    }
+                }
+            }
+            200 => {
+                // Runtime ignored `Range` and returned the full body — slice here.
+                if let Ok(bytes) = resp.bytes().await {
+                    if bytes.len() as u64 == expected {
+                        return Some(bytes[from..to].to_vec());
+                    }
+                }
+            }
+            _ => {} // 416 (chunk shorter than range) or odd status → evict below
+        }
+        let _ = cache.delete(key, false).await;
+        None
+    }
+
+    /// Build a GET `Request` to the chunk key URL carrying
+    /// `Range: bytes=from-(to-1)` (relative to the cached chunk body) for a
+    /// range-sliced Cache API lookup.
+    fn build_range_request(key: &str, from: usize, to: usize) -> Option<worker::Request> {
+        let mut req = worker::Request::new(key, worker::Method::Get).ok()?;
+        req.headers_mut()
+            .ok()?
+            .set("range", &format!("bytes={from}-{}", to - 1))
+            .ok()?;
+        Some(req)
     }
 
     /// Learn ETag + length with a 1-byte ranged GET. (HEAD would fail SigV4 —
@@ -455,30 +624,24 @@ mod wasm_impl {
         Ok(ObjectMeta { etag, len, headers })
     }
 
-    /// Fetch one aligned chunk from the backend. Validates status + ETag (a
-    /// drift means the object changed → evict meta and bypass, so
-    /// mixed-generation stitching is impossible); the caller validates length
-    /// and caches the chunk.
+    /// Fetch one aligned chunk from the backend via the pre-built ranged
+    /// sub-request. Validates status + ETag (a drift means the object changed →
+    /// evict meta and bypass, so mixed-generation stitching is impossible); the
+    /// caller validates length and caches the chunk.
     async fn fetch_chunk(
         inner: &WorkerBackend,
-        request: &ForwardRequest,
+        fetch_req: ForwardRequest,
         cache: &worker::Cache,
         meta_key: &str,
-        meta: &ObjectMeta,
-        cb_start: u64,
-        cb_end: u64,
+        etag: &str,
     ) -> Result<Vec<u8>, &'static str> {
-        let range = format!("bytes={cb_start}-{cb_end}");
         let resp = inner
-            .forward(
-                sub_request(request, &range, Some(&meta.etag)),
-                JsBody::new(None),
-            )
+            .forward(fetch_req, JsBody::new(None))
             .await
             .map_err(|_| "backend chunk fetch failed")?;
 
         let fresh = resp.status == 206
-            && header_string(&resp.headers, ETAG.as_str()).as_deref() == Some(meta.etag.as_str());
+            && header_string(&resp.headers, ETAG.as_str()).as_deref() == Some(etag);
         if !fresh {
             let _ = cache.delete(meta_key, false).await;
             return Err("object changed under chunk fetch");
@@ -550,8 +713,41 @@ mod wasm_impl {
         });
     }
 
-    fn build_response(
-        is_range: bool,
+    /// Headers shared by both response paths: replay the origin entity headers
+    /// captured at probe time (content-type, content-encoding, etag,
+    /// content-disposition, x-amz-meta-*, …) — one consistent generation,
+    /// matching the direct path — then override range framing + cache signalling.
+    fn cache_headers(
+        start: u64,
+        end: u64,
+        meta: &ObjectMeta,
+        content_length: u64,
+        x_cache: &str,
+        chunks: &str,
+    ) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in &meta.headers {
+            set_header(&mut headers, name, value);
+        }
+        set_header(&mut headers, ACCEPT_RANGES.as_str(), "bytes");
+        set_header(
+            &mut headers,
+            CONTENT_LENGTH.as_str(),
+            &content_length.to_string(),
+        );
+        set_header(&mut headers, X_CACHE, x_cache);
+        set_header(&mut headers, X_CACHE_CHUNKS, chunks);
+        set_header(
+            &mut headers,
+            CONTENT_RANGE.as_str(),
+            &format!("bytes {start}-{end}/{}", meta.len),
+        );
+        headers
+    }
+
+    /// Single-chunk buffered 206. HIT/MISS is exact (one chunk, resolved before
+    /// the response is built).
+    fn buffered_response(
         start: u64,
         end: u64,
         meta: &ObjectMeta,
@@ -559,47 +755,55 @@ mod wasm_impl {
         hits: u64,
         total_chunks: u64,
     ) -> ForwardResponse<web_sys::Response> {
-        let mut headers = HeaderMap::new();
-        // Replay origin entity headers (content-type, content-encoding, etag,
-        // content-disposition, x-amz-meta-*, …) captured at probe time — one
-        // consistent generation, matching what the direct path would send.
-        for (name, value) in &meta.headers {
-            set_header(&mut headers, name, value);
-        }
-        // Range framing + cache signalling override any stored copies.
-        set_header(&mut headers, ACCEPT_RANGES.as_str(), "bytes");
-        set_header(
-            &mut headers,
-            CONTENT_LENGTH.as_str(),
-            &body.len().to_string(),
-        );
+        let content_length = body.len() as u64;
         // `x-cache: HIT` is reserved for "every byte came from cache".
-        let status_label = if hits == total_chunks { "HIT" } else { "MISS" };
-        set_header(&mut headers, X_CACHE, status_label);
-        set_header(
-            &mut headers,
-            X_CACHE_CHUNKS,
+        let x_cache = if hits == total_chunks { "HIT" } else { "MISS" };
+        let headers = cache_headers(
+            start,
+            end,
+            meta,
+            content_length,
+            x_cache,
             &format!("{hits}/{total_chunks}"),
         );
-        let status = if is_range {
-            set_header(
-                &mut headers,
-                CONTENT_RANGE.as_str(),
-                &format!("bytes {start}-{end}/{}", meta.len),
-            );
-            206
-        } else {
-            200
-        };
-
-        let content_length = body.len() as u64;
         let uint8 = js_sys::Uint8Array::from(body.as_slice());
         let ws = web_sys::Response::new_with_opt_buffer_source(Some(&uint8))
             .unwrap_or_else(|_| web_sys::Response::new().unwrap());
         ForwardResponse {
-            status,
+            status: 206,
             headers,
             body: ws,
+            content_length: Some(content_length),
+        }
+    }
+
+    /// Multi-chunk streamed 206. Headers must flush before any chunk resolves,
+    /// so per-chunk HIT/MISS can't be reported: `x-cache: MISS` is the
+    /// conservative floor (never over-claims a hit) and `x-cache-chunks:
+    /// stream/N` flags the path. Large multi-chunk reads are the minority;
+    /// single-chunk reads (footers, tiles) keep exact HIT/MISS. Content-Length
+    /// is exact — the client span is known up front — so the 206 framing is
+    /// correct despite the body streaming.
+    fn streamed_response(
+        start: u64,
+        end: u64,
+        meta: &ObjectMeta,
+        content_length: u64,
+        body: web_sys::Response,
+        total_chunks: u64,
+    ) -> ForwardResponse<web_sys::Response> {
+        let headers = cache_headers(
+            start,
+            end,
+            meta,
+            content_length,
+            "MISS",
+            &format!("stream/{total_chunks}"),
+        );
+        ForwardResponse {
+            status: 206,
+            headers,
+            body,
             content_length: Some(content_length),
         }
     }

@@ -18,6 +18,9 @@ fn parse_bounded_open_and_suffix_ranges() {
     );
     assert_eq!(parse_range("bytes=100-"), Some(RangeSpec::From(100)));
     assert_eq!(parse_range("bytes=-4096"), Some(RangeSpec::Suffix(4096)));
+    // `bytes=0-` parses to From(0); serve_chunked bypasses that exact value as a
+    // full-object transfer, so lock the shape the bypass check keys on.
+    assert_eq!(parse_range("bytes=0-"), Some(RangeSpec::From(0)));
 }
 
 #[test]

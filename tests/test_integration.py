@@ -265,3 +265,68 @@ def test_chunk_cache_conditional_request_bypasses():
     x_cache = resp.headers.get("x-cache")
     if x_cache is not None:
         assert x_cache == "BYPASS"
+
+
+def _cache_enabled(url):
+    """True iff the worker stamps x-cache (CHUNK_CACHE_ENABLED=true)."""
+    return requests.get(url, headers={"Range": "bytes=0-0"}).headers.get(
+        "x-cache"
+    ) is not None
+
+
+def test_chunk_cache_full_object_get_bypasses():
+    """Only ranged reads are cached. A full-object GET (no Range) is a bulk
+    transfer — it bypasses to the direct stream, not the chunk path."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    if not _cache_enabled(url):
+        pytest.skip("chunk cache disabled")
+    resp = requests.get(url)
+    assert resp.status_code == 200
+    assert resp.headers.get("x-cache") == "BYPASS"
+
+
+def test_chunk_cache_open_ended_from_zero_bypasses():
+    """`bytes=0-` is a full-object transfer wearing a Range header; it bypasses
+    like a full-object GET rather than populating the cache."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    if not _cache_enabled(url):
+        pytest.skip("chunk cache disabled")
+    resp = requests.get(url, headers={"Range": "bytes=0-"})
+    assert resp.status_code in (200, 206)
+    assert resp.headers.get("x-cache") == "BYPASS"
+
+
+def test_chunk_cache_multichunk_range_streams_correct_bytes():
+    """A range spanning multiple 4 MiB chunks is streamed (not buffered) and
+    must assemble byte-identically to the same slice fetched directly."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    # 0..=8 MiB-1 spans chunks 0,1,2 (>1 chunk) -> streamed path.
+    span = requests.get(url, headers={"Range": "bytes=0-8388607"})
+    assert span.status_code == 206
+    assert len(span.content) == 8 * 1024 * 1024
+    # A small slice out of the same region, fetched independently, must match.
+    slice_ = requests.get(url, headers={"Range": "bytes=5000000-5001023"})
+    assert slice_.content == span.content[5000000:5001024]
+    x_chunks = span.headers.get("x-cache-chunks")
+    if x_chunks is not None:
+        # Multi-chunk streamed responses report the streamed path + chunk count.
+        assert x_chunks.startswith("stream/")
+
+
+def test_chunk_cache_footer_ranges_share_chunk():
+    """Overlapping suffix ranges (bytes=-100 then bytes=-8) resolve from the
+    same cached tail chunk — the parquet-footer reuse pattern — and a warm
+    sub-read is a HIT returning the correct tail bytes."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    if not _cache_enabled(url):
+        pytest.skip("chunk cache disabled")
+    full_tail = requests.get(url, headers={"Range": "bytes=-100"})
+    assert full_tail.status_code == 206 and len(full_tail.content) == 100
+    # Warm the tail chunk, then a narrower suffix must hit it and match.
+    for _ in range(20):
+        r = requests.get(url, headers={"Range": "bytes=-8"})
+        if r.headers.get("x-cache") == "HIT":
+            assert r.content == full_tail.content[-8:]
+            return
+        time.sleep(0.25)
+    pytest.fail("narrow suffix never served from the shared tail chunk")
