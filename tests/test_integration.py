@@ -5,7 +5,9 @@ Requires the worker to be running at the URL specified by PROXY_URL
 """
 
 import os
+import time
 
+import pytest
 import requests
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
@@ -226,6 +228,30 @@ def test_chunk_cache_range_beyond_eof_is_416():
     length = int(head.headers["content-length"])
     resp = requests.get(url, headers={"Range": f"bytes={length + 10}-{length + 20}"})
     assert resp.status_code == 416
+
+
+def test_chunk_cache_serves_a_hit():
+    """Effectiveness smoke test: a repeated range must actually be served from
+    the edge cache (x-cache: HIT), not just carry a valid disposition. The write
+    lands via ctx.wait_until after the MISS returns, so poll briefly for it.
+
+    Skips when the feature is off (no x-cache header) rather than passing
+    vacuously — a disabled cache is not a working cache."""
+    url = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}"
+    headers = {"Range": "bytes=0-1023"}
+
+    first = requests.get(url, headers=headers)
+    if first.headers.get("x-cache") is None:
+        pytest.skip("chunk cache disabled (CHUNK_CACHE_ENABLED != true)")
+
+    for _ in range(20):
+        resp = requests.get(url, headers=headers)
+        if resp.headers.get("x-cache") == "HIT":
+            assert resp.status_code == 206
+            assert resp.content == first.content  # HIT bytes == MISS bytes
+            return
+        time.sleep(0.25)
+    pytest.fail("range never served from cache (x-cache: HIT) within 5s")
 
 
 def test_chunk_cache_conditional_request_bypasses():
