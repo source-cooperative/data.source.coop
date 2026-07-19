@@ -1733,7 +1733,9 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.2.2"
 dependencies = [
+ "bytes",
  "console_error_panic_hook",
+ "futures",
  "getrandom 0.4.2",
  "hmac",
  "http",
@@ -1743,6 +1745,7 @@ dependencies = [
  "multistore-oidc-provider",
  "multistore-path-mapping",
  "multistore-sts",
+ "object_store",
  "percent-encoding",
  "reqwest",
  "serde",

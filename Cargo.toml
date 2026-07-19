@@ -27,6 +27,10 @@ name = "authz"
 path = "tests/authz.rs"
 
 [[test]]
+name = "chunk_cache"
+path = "tests/chunk_cache.rs"
+
+[[test]]
 name = "object_path"
 path = "tests/object_path.rs"
 
@@ -62,6 +66,14 @@ tracing = "0.1"
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
 multistore-cf-workers = { version = "0.6.4", features = ["azure"] }
+# Already transitive via multistore; named directly only because the
+# ProxyBackend trait signatures (delegated by chunk_cache's wrapper backend)
+# mention their types.
+bytes = "1"
+object_store = { version = "0.13", default-features = false }
+# Stream combinators (stream::iter, StreamExt::{map, buffered}) for streamed
+# multi-chunk assembly. Already transitive via worker; named here to `use` it.
+futures = { version = "0.3", default-features = false, features = ["std"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
