@@ -32,7 +32,7 @@ path = "tests/object_path.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.6.3", features = ["azure"] }
+multistore = { version = "0.6.3", features = ["azure", "gcp"] }
 multistore-oidc-provider = "0.6.3"
 multistore-path-mapping = "0.6.3"
 multistore-sts = "0.6.3"
@@ -57,7 +57,13 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.6.3", features = ["azure"] }
+# object_store's GCS credential signing calls ring's SystemRandom, whose
+# SecureRandom impl on wasm32-unknown-unknown is gated behind ring's
+# `wasm32_unknown_unknown_js` feature (enables getrandom 0.2's js backend).
+# ring is transitive (via object_store); this direct entry only turns the
+# feature on for the wasm target.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+multistore-cf-workers = { version = "0.6.3", features = ["azure", "gcp"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
