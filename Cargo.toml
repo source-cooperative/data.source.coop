@@ -36,10 +36,10 @@ path = "tests/fixtures.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.6.4", features = ["azure"] }
-multistore-oidc-provider = "0.6.4"
-multistore-path-mapping = "0.6.4"
-multistore-sts = "0.6.4"
+multistore = { version = "0.7.0", features = ["azure"] }
+multistore-oidc-provider = "0.7.0"
+multistore-path-mapping = "0.7.0"
+multistore-sts = "0.7.0"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -61,12 +61,12 @@ tracing = "0.1"
 # Pulled in transitively via object_store -> rand. getrandom doesn't support
 # wasm32-unknown-unknown unless the `wasm_js` backend is enabled, so opt in here.
 getrandom = { version = "0.4", features = ["wasm_js"] }
-multistore-cf-workers = { version = "0.6.4", features = ["azure"] }
+multistore-cf-workers = { version = "0.7.0", features = ["azure"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
-# unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none
-# of which are feature-gated -- so no explicit feature list is required.
-reqwest = { version = "0.12", default-features = false }
+# unnecessary here. The `form` feature gates `.form()`, which the STS
+# `post_form` call in FetchHttpExchange needs.
+reqwest = { version = "0.13", default-features = false, features = ["form"] }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
@@ -78,5 +78,5 @@ web-sys = { version = "0.3", features = [
   "Response",
   "ResponseInit",
 ] }
-worker = { version = "=0.7.4", features = ["http"] }
-worker-macros = { version = "=0.7.4", features = ["http"] }
+worker = { version = "=0.7.5", features = ["http"] }
+worker-macros = { version = "=0.7.5", features = ["http"] }
