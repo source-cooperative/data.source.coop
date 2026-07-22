@@ -256,7 +256,8 @@ async fn resolve_product(
 /// Map a connection's raw `provider` to its multistore `backend_type`
 /// (`s3`/`az`/`gcs`) and the provider-specific `backend_options`. Doing the
 /// provider match once keeps the type and its options in a single source of
-/// truth. (`gcs` carries no options yet.)
+/// truth. The GCS arm sets `bucket_name` (multistore's GCS store requires it,
+/// same as the s3 arm).
 fn build_backend_options(
     details: &DataConnectionDetails,
 ) -> Result<(String, HashMap<String, String>), ProxyError> {
@@ -284,7 +285,12 @@ fn build_backend_options(
             }
             "az"
         }
-        "gcs" | "gs" => "gcs",
+        "gcs" | "gs" => {
+            if let Some(ref bucket) = details.bucket {
+                options.insert("bucket_name".to_string(), bucket.clone());
+            }
+            "gcs"
+        }
         other => {
             return Err(ProxyError::Internal(format!(
                 "unsupported provider: {}",
