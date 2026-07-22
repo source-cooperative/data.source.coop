@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "source-data-proxy"
-version = "2.2.2"
+version = "2.3.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.2",
