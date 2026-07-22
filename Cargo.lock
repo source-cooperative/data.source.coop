@@ -1904,6 +1904,7 @@ dependencies = [
  "multistore-sts",
  "percent-encoding",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
