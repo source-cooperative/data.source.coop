@@ -1,0 +1,14 @@
+{
+  "product_id": "write-probe",
+  "disabled": false,
+  "visibility": "public",
+  "metadata": {
+    "mirrors": {
+      "ci-write-probe": {
+        "connection_id": "ci-write-probe",
+        "prefix": "ci-tests/write-probe/"
+      }
+    },
+    "primary_mirror": "ci-write-probe"
+  }
+}

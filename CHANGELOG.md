@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.2.2](https://github.com/source-cooperative/data.source.coop/compare/v2.2.1...v2.2.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* bump multistore to 0.6.4 (multipart SignatureDoesNotMatch on keys with `=`) ([#181](https://github.com/source-cooperative/data.source.coop/issues/181)) ([c08261d](https://github.com/source-cooperative/data.source.coop/commit/c08261d2e7c800af7069ac073c80dd65db2cf64d))
+* **ci:** stub the Source API; hermetic PR gate with authenticated write, contract, and failure-mode tests ([#183](https://github.com/source-cooperative/data.source.coop/issues/183)) ([a811d78](https://github.com/source-cooperative/data.source.coop/commit/a811d78a9d2f159e85196cac3c4f49a1d76f6db9))
+
+## [2.2.1](https://github.com/source-cooperative/data.source.coop/compare/v2.2.0...v2.2.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* correct prod auth audiences ([5d216e6](https://github.com/source-cooperative/data.source.coop/commit/5d216e6eba0ca61116d2af243a94fe9b3a21d3bd))
+
 ## [2.2.0](https://github.com/source-cooperative/data.source.coop/compare/v2.1.2...v2.2.0) (2026-07-01)
 
 

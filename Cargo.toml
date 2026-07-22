@@ -2,7 +2,7 @@
 authors = ["Anthony Lukach <anthonylukach@gmail.com>"]
 edition = "2021"
 name = "source-data-proxy"
-version = "2.2.0"
+version = "2.2.2"
 
 [lib]
 crate-type = ["cdylib"]
@@ -30,12 +30,16 @@ path = "tests/authz.rs"
 name = "object_path"
 path = "tests/object_path.rs"
 
+[[test]]
+name = "fixtures"
+path = "tests/fixtures.rs"
+
 [dependencies]
 # Multistore
-multistore = { version = "0.6.3", features = ["azure", "gcp"] }
-multistore-oidc-provider = "0.6.3"
-multistore-path-mapping = "0.6.3"
-multistore-sts = "0.6.3"
+multistore = { version = "0.6.4", features = ["azure", "gcp"] }
+multistore-oidc-provider = "0.6.4"
+multistore-path-mapping = "0.6.4"
+multistore-sts = "0.6.4"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -63,7 +67,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # ring is transitive (via object_store); this direct entry only turns the
 # feature on for the wasm target.
 ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
-multistore-cf-workers = { version = "0.6.3", features = ["azure", "gcp"] }
+multistore-cf-workers = { version = "0.6.4", features = ["azure", "gcp"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. We only use `Client::new()`, `.send()` and `.text()`, none

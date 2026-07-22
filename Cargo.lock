@@ -908,9 +908,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "facecd283c97bbfeae86449f3584291b0156e654c1ea9001ccb30ebe90aafacb"
+checksum = "86eb9b4fe4f3fe3ad2e5cc20eb44a98b923bfaa7f91d8e4805ed14629f6d9dfe"
 dependencies = [
  "async-trait",
  "base64",
@@ -924,7 +924,7 @@ dependencies = [
  "md-5",
  "object_store",
  "percent-encoding",
- "quick-xml 0.37.5",
+ "quick-xml 0.41.0",
  "serde",
  "serde_json",
  "sha2",
@@ -936,9 +936,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b9ff732526e42e84a3a6e4a528556302f2948fbce5cf4d0becba9bc8a40929c"
+checksum = "6a0fab92f0c54a7e6e8205a85a2e15003cdffc94e07b7239a92aa5eaf105b676"
 dependencies = [
  "async-trait",
  "bytes",
@@ -961,15 +961,15 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c757e792932c6e7c54fb042e32dc1fec2ba409b45d05787a82940c6facac10b2"
+checksum = "7a82f9e8db5ea578d9fb5aaf689bdaa9bc99bec7eaf84ee3327d5a3434801a0c"
 dependencies = [
  "base64",
  "chrono",
  "futures",
  "multistore",
- "quick-xml 0.37.5",
+ "quick-xml 0.41.0",
  "rsa",
  "serde",
  "serde_json",
@@ -981,9 +981,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "789ea21e12f7de7d942e2fd7ab3dde32a12a022ee9e4bbd56fb3e38a472b1c81"
+checksum = "65abc86a4c4cccffb6263e6bd5498dc6fc902567f2347857349cf53cbfa48698"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -992,15 +992,15 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.6.3"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97738f3e60e60f283358d5e5bcf92e21d388d71345f989e92ab988d05b9472be"
+checksum = "e597937a4ff9bf3217c52c9e7cb9f5a752ce788160322cce69117712cf08aa83"
 dependencies = [
  "aes-gcm",
  "base64",
  "chrono",
  "multistore",
- "quick-xml 0.37.5",
+ "quick-xml 0.41.0",
  "rand 0.8.6",
  "reqwest",
  "rsa",
@@ -1250,9 +1250,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.37.5"
+version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
 dependencies = [
  "memchr",
  "serde",
@@ -1260,9 +1260,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.39.4"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
  "serde",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "source-data-proxy"
-version = "2.2.0"
+version = "2.2.2"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.2",
