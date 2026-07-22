@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0](https://github.com/source-cooperative/data.source.coop/compare/v2.2.2...v2.3.0) (2026-07-22)
+
+
+### Features
+
+* **backend:** enable GCS backend (multistore gcp + wasm-compatible signing) ([#191](https://github.com/source-cooperative/data.source.coop/issues/191)) ([33f2b25](https://github.com/source-cooperative/data.source.coop/commit/33f2b253e55c1973f5fd4cffad797edef8937146))
+
+
+### Bug Fixes
+
+* **gcs:** pass bucket_name to multistore GCS store ([#193](https://github.com/source-cooperative/data.source.coop/issues/193)) ([0efb66f](https://github.com/source-cooperative/data.source.coop/commit/0efb66fefbf0a88eccfdff212b0c54ed986f0ecc))
+
 ## [2.2.2](https://github.com/source-cooperative/data.source.coop/compare/v2.2.1...v2.2.2) (2026-07-14)
 
 
