@@ -355,19 +355,18 @@ def test_anonymous_copy_is_denied():
 
 
 @needs_token
-def test_copy_source_is_path_mapped():
-    """multistore#128 wiring pin: `x-amz-copy-source` names its source in
-    client coordinates (`/account/product/key`), but the registry only knows
-    mapped bucket names. Unless the proxy passes the *mapped* source alongside
-    the client-signed header (`RequestInfo::with_copy_source`), the source
-    resolves to a bucket the registry has never heard of and every copy dies
-    as 404 NoSuchBucket — long before the backend is consulted.
+def test_copy_reaches_the_federation_seam():
+    """A credentialed CopyObject is parsed and dispatched as a copy, and fails
+    closed at federation like every other write — a bounded, parseable S3
+    error rather than a hang or a silent success.
 
-    So the assertion is on the failure *mode*, not on success: CI's throwaway
-    signing key means federation can never succeed here (see
-    test_federated_write_fails_closed), but a copy that reaches the federation
-    seam at all proves the source resolved. NoSuchBucket/NoSuchKey means the
-    mapping regressed."""
+    Scope, measured rather than assumed: this does NOT pin the copy-source
+    path mapping. Federation is attempted against the destination before the
+    source is resolved, so a copy fails identically here whether or not
+    `RequestInfo::with_copy_source` is wired up — verified by deleting the
+    wiring and watching this test still pass. The mapping's real regression
+    test is native: `copy_source_is_folded_into_the_internal_bucket_name` in
+    tests/object_path.rs, which does fail without it."""
     import botocore.exceptions
 
     client = s3_client(retries={"max_attempts": 1})
@@ -379,13 +378,11 @@ def test_copy_source_is_path_mapped():
         )
     code = exc.value.response["Error"].get("Code")
     assert code, "unparseable error response"
-    assert code not in {"NoSuchBucket", "NotImplemented"}, (
-        f"{code}: the copy source was not mapped into the registry's namespace "
-        "— is RequestInfo::with_copy_source still wired up in src/lib.rs?"
-    )
-    assert code not in {"SignatureDoesNotMatch", "InvalidRequest"}, (
-        f"{code}: the client-signed x-amz-copy-source header was mutated; only "
-        "the out-of-band mapped value may differ from what the client sent"
+    # NotImplemented would mean the copy was rejected as a cross-store copy;
+    # SignatureDoesNotMatch would mean the client-signed x-amz-copy-source
+    # header got mutated instead of the mapped value being passed alongside it.
+    assert code not in {"NotImplemented", "SignatureDoesNotMatch", "InvalidRequest"}, (
+        f"{code}: rejected before the federation seam this test pins"
     )
 
 
