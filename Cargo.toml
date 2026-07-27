@@ -86,3 +86,13 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.5", features = ["http"] }
 worker-macros = { version = "=0.7.5", features = ["http"] }
+
+# ponytail: temporary — exercise the unreleased CopyObject fixes queued for
+# multistore 0.7.1 (developmentseed/multistore#128, #129). Drop this block once
+# 0.7.1 is published; the version requirements above already accept it.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "main" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "main" }
