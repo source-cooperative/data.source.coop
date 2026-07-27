@@ -342,6 +342,53 @@ def test_federated_write_fails_closed(op):
     )
 
 
+def test_anonymous_copy_is_denied():
+    """A copy is a write, so it dies at the authz gate without credentials —
+    before any source resolution or backend call."""
+    resp = requests.put(
+        f"{PROXY_URL}/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/copy-dest.txt",
+        headers={
+            "x-amz-copy-source": f"/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/{HIVE_KEY_DIR}/src.pmtiles"
+        },
+    )
+    assert resp.status_code == 403
+
+
+@needs_token
+def test_copy_source_is_path_mapped():
+    """multistore#128 wiring pin: `x-amz-copy-source` names its source in
+    client coordinates (`/account/product/key`), but the registry only knows
+    mapped bucket names. Unless the proxy passes the *mapped* source alongside
+    the client-signed header (`RequestInfo::with_copy_source`), the source
+    resolves to a bucket the registry has never heard of and every copy dies
+    as 404 NoSuchBucket — long before the backend is consulted.
+
+    So the assertion is on the failure *mode*, not on success: CI's throwaway
+    signing key means federation can never succeed here (see
+    test_federated_write_fails_closed), but a copy that reaches the federation
+    seam at all proves the source resolved. NoSuchBucket/NoSuchKey means the
+    mapping regressed."""
+    import botocore.exceptions
+
+    client = s3_client(retries={"max_attempts": 1})
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.copy_object(
+            Bucket=WRITE_ACCOUNT,
+            Key=f"{WRITE_PRODUCT}/{HIVE_KEY_DIR}/copy-dest.pmtiles",
+            CopySource=f"{WRITE_ACCOUNT}/{WRITE_PRODUCT}/{HIVE_KEY_DIR}/copy-src.pmtiles",
+        )
+    code = exc.value.response["Error"].get("Code")
+    assert code, "unparseable error response"
+    assert code not in {"NoSuchBucket", "NotImplemented"}, (
+        f"{code}: the copy source was not mapped into the registry's namespace "
+        "— is RequestInfo::with_copy_source still wired up in src/lib.rs?"
+    )
+    assert code not in {"SignatureDoesNotMatch", "InvalidRequest"}, (
+        f"{code}: the client-signed x-amz-copy-source header was mutated; only "
+        "the out-of-band mapped value may differ from what the client sent"
+    )
+
+
 @needs_token
 def test_corrupted_session_token_rejected():
     """A SigV4 request whose sealed SessionToken has been tampered with must

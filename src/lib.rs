@@ -316,6 +316,18 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .map(|u| u.path().to_string())
         .unwrap_or_else(|_| rewrite.signing_path.clone());
 
+    // `CopyObject` names its source in `x-amz-copy-source` rather than the URL,
+    // in client coordinates (`/account/product/key`). The registry only knows
+    // mapped bucket names, so an unmapped source resolves to a bucket it has
+    // never heard of and every copy fails with 404 NoSuchBucket. The client
+    // signed that header, so it must not be mutated — the mapped value rides
+    // alongside it and signature verification still uses the header as sent.
+    let mapped_copy_source = parts
+        .headers
+        .get("x-amz-copy-source")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| mapping.rewrite_copy_source(v));
+
     let request_info = RequestInfo::new(
         &parts.method,
         &rewrite.path,
@@ -325,7 +337,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     )
     .with_signing_path(&signing_path)
     .with_signing_query(rewrite.signing_query.as_deref())
-    .with_form_body(parts.form_body.as_deref());
+    .with_form_body(parts.form_body.as_deref())
+    .with_copy_source(mapped_copy_source.as_deref());
 
     let start_ms = js_sys::Date::now();
     let response = gateway
