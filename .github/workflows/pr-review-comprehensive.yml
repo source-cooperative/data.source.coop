@@ -1,7 +1,9 @@
 name: Claude Auto Review
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    # No ready_for_review: drafts are already reviewed on opened/synchronize, so
+    # flipping to ready re-runs the same review against an unchanged diff.
+    types: [opened, synchronize, reopened]
     # Skip when a PR touches workflow files: the action can't validate/run
     # against modified workflows and fails with "401 Unauthorized - Workflow
     # validation failed".
