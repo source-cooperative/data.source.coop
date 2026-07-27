@@ -122,7 +122,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     let config = load_config(&env);
 
     // ── Parse request ──────────────────────────────────────────────
-    let (mut parts, js_body) = RequestParts::from_web_sys(&req)
+    let (mut parts, mut js_body) = RequestParts::from_web_sys(&req)
         .map_err(|e| worker::Error::RustError(format!("invalid request: {e}")))?;
 
     // The router matches `/.sts` exactly; a trailing-slash variant would
@@ -130,6 +130,20 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     if parts.path == "/.sts/" {
         parts.path.pop();
     }
+
+    // AWS SDKs send query-protocol operations — STS `AssumeRoleWithWebIdentity`
+    // among them — as a form-encoded POST body with no query string at all, and
+    // the STS route handler reads its parameters from `RequestInfo::form_body`.
+    // Collect that body up front or SDK clients fall through to the S3 pipeline
+    // unhandled. A no-op passthrough for every other request shape (and for a
+    // form POST with a missing or oversized `Content-Length`, which is streamed
+    // rather than buffered into WASM memory), and the returned body is rebuilt
+    // from the collected bytes so a mislabeled S3 write — `Content-Type` is
+    // client-controlled — still reaches the gateway with its payload intact.
+    js_body = parts
+        .absorb_form_body(js_body)
+        .await
+        .map_err(|e| worker::Error::RustError(format!("invalid request body: {e}")))?;
 
     let request_id = extract_request_id(&parts.headers);
 
@@ -310,7 +324,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         None,
     )
     .with_signing_path(&signing_path)
-    .with_signing_query(rewrite.signing_query.as_deref());
+    .with_signing_query(rewrite.signing_query.as_deref())
+    .with_form_body(parts.form_body.as_deref());
 
     let start_ms = js_sys::Date::now();
     let response = gateway
