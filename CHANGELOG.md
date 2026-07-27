@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.3.0](https://github.com/source-cooperative/data.source.coop/compare/v2.2.2...v2.3.0) (2026-07-27)
+
+
+### Features
+
+* **backend:** enable GCS backend (multistore gcp + wasm-compatible signing) ([#191](https://github.com/source-cooperative/data.source.coop/issues/191)) ([33f2b25](https://github.com/source-cooperative/data.source.coop/commit/33f2b253e55c1973f5fd4cffad797edef8937146))
+* **s3:** enforce conditional-write preconditions on PutObject ([003db0d](https://github.com/source-cooperative/data.source.coop/commit/003db0dbb6c2f877fa13da4e11286e9334fd0769))
+* **s3:** support server-side CopyObject via x-amz-copy-source ([97d5121](https://github.com/source-cooperative/data.source.coop/commit/97d51212c6c31bf7b79513bb49b8c7ac11a3ca66))
+* **sts:** accept ARN-shaped alias for the _default role ([#185](https://github.com/source-cooperative/data.source.coop/issues/185)) ([8da7e72](https://github.com/source-cooperative/data.source.coop/commit/8da7e72400cbb8173e9c23170b3ae21086bf81a6))
+* **sts:** accept AssumeRoleWithWebIdentity from form-encoded POST bodies ([#196](https://github.com/source-cooperative/data.source.coop/issues/196)) ([f77e8d2](https://github.com/source-cooperative/data.source.coop/commit/f77e8d2500d027ae54fcbf088081f652df439a4d))
+
+
+### Bug Fixes
+
+* **gcs:** pass bucket_name to multistore GCS store ([#193](https://github.com/source-cooperative/data.source.coop/issues/193)) ([0efb66f](https://github.com/source-cooperative/data.source.coop/commit/0efb66fefbf0a88eccfdff212b0c54ed986f0ecc))
+
 ## [2.2.2](https://github.com/source-cooperative/data.source.coop/compare/v2.2.1...v2.2.2) (2026-07-14)
 
 
