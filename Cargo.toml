@@ -34,6 +34,10 @@ path = "tests/object_path.rs"
 name = "fixtures"
 path = "tests/fixtures.rs"
 
+[[test]]
+name = "federation"
+path = "tests/federation.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.7.0", features = ["azure", "gcp"] }
@@ -48,6 +52,9 @@ serde_json = "1"
 # HTTP
 http = "1"
 percent-encoding = "2"
+
+# Timestamps (backend credential expiry — matches multistore's own chrono types)
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Hashing (HMAC-SHA256 client-IP hashing for analytics privacy)
 hmac = "0.12"
