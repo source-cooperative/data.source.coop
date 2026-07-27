@@ -338,7 +338,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     .with_signing_path(&signing_path)
     .with_signing_query(rewrite.signing_query.as_deref())
     .with_form_body(parts.form_body.as_deref())
-    ;// TEETH-CHECK: with_copy_source removed on purpose
+    .with_copy_source(mapped_copy_source.as_deref());
 
     let start_ms = js_sys::Date::now();
     let response = gateway
