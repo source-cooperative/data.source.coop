@@ -53,16 +53,19 @@ needs_wrong_aud_token = pytest.mark.skipif(
 )
 
 
-def sts_exchange(token):
-    """POST /.sts with the given web identity token; return the raw response."""
-    return requests.post(
-        f"{PROXY_URL}/.sts",
-        params={
-            "Action": "AssumeRoleWithWebIdentity",
-            "RoleArn": "_default",
-            "WebIdentityToken": token,
-        },
-    )
+def sts_exchange(token, *, form_body=False):
+    """POST /.sts with the given web identity token; return the raw response.
+
+    `form_body` sends the parameters the way AWS SDKs do — form-encoded in the
+    request body, with no query string — instead of in the query string."""
+    params = {
+        "Action": "AssumeRoleWithWebIdentity",
+        "RoleArn": "_default",
+        "WebIdentityToken": token,
+    }
+    if form_body:
+        return requests.post(f"{PROXY_URL}/.sts", data=params)
+    return requests.post(f"{PROXY_URL}/.sts", params=params)
 
 
 @functools.lru_cache(maxsize=1)
@@ -201,6 +204,33 @@ def test_sts_exchange_issues_credentials():
     assert access_key.startswith("STSPRXY")
     assert secret_key
     assert session_token
+
+
+@needs_token
+def test_sts_exchange_accepts_a_form_encoded_body():
+    """The same exchange, sent the way an AWS SDK sends it: parameters
+    form-encoded in the POST body rather than in the query string."""
+    resp = sts_exchange(ID_TOKEN, form_body=True)
+    assert resp.status_code == 200, (
+        f"form-encoded /.sts exchange failed ({resp.status_code}): {resp.text[:300]}"
+    )
+    fields = {el.tag.rpartition("}")[2]: el.text for el in ET.fromstring(resp.text).iter()}
+    assert fields["AccessKeyId"].startswith("STSPRXY")
+
+
+def test_sts_form_encoded_body_reaches_the_sts_handler():
+    """Routing check that needs no identity token: a form-encoded POST must be
+    dispatched to STS — which then rejects this token — rather than falling
+    through to the S3 pipeline. Without the body being collected before
+    dispatch, the STS handler never sees the `Action` param and never matches,
+    so the failure mode is a non-STS error rather than a 200."""
+    resp = sts_exchange("not-a-jwt", form_body=True)
+    assert resp.status_code == 400, (
+        f"expected an STS rejection ({resp.status_code}): {resp.text[:300]}"
+    )
+    assert "InvalidIdentityToken" in resp.text, (
+        f"request did not reach the STS handler: {resp.text[:300]}"
+    )
 
 
 @needs_token
