@@ -36,10 +36,10 @@ path = "tests/fixtures.rs"
 
 [dependencies]
 # Multistore
-multistore = { version = "0.7.1", features = ["azure", "gcp"] }
-multistore-oidc-provider = "0.7.1"
-multistore-path-mapping = "0.7.1"
-multistore-sts = "0.7.1"
+multistore = { version = "0.7.2", features = ["azure", "gcp"] }
+multistore-oidc-provider = "0.7.2"
+multistore-path-mapping = "0.7.2"
+multistore-sts = "0.7.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -67,7 +67,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 # ring is transitive (via object_store); this direct entry only turns the
 # feature on for the wasm target.
 ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
-multistore-cf-workers = { version = "0.7.1", features = ["azure", "gcp"] }
+multistore-cf-workers = { version = "0.7.2", features = ["azure", "gcp"] }
 # On wasm32-unknown-unknown reqwest selects its browser `fetch` backend by
 # target arch (not a cargo feature), so the default TLS/backend features are
 # unnecessary here. The `form` feature gates `.form()`, which the STS
@@ -86,22 +86,3 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.5", features = ["http"] }
 worker-macros = { version = "=0.7.5", features = ["http"] }
-
-# ── TEMPORARY: verify multistore 0.7.2 before it is cut ──────────────
-# The credential-cache fix this branch needs (developmentseed/multistore#133)
-# is merged to multistore `main` but not yet published; release-please has it
-# queued as 0.7.2 in multistore#134. Point at the exact commit that release will
-# be cut from, so the PR preview exercises the real upstream code on a live
-# Workers deployment — the only place this failure mode is observable.
-#
-# Pinned to a rev, not `branch = "main"`: a branch would let an unrelated merge
-# silently change what the preview builds and invalidate the verification.
-#
-# REMOVE BEFORE MERGE — replace with `version = "0.7.2"` on the dependencies
-# above once multistore#134 lands. This must not reach production.
-[patch.crates-io]
-multistore = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
-multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
-multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
-multistore-sts = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
-multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }

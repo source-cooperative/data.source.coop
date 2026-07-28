@@ -1034,8 +1034,9 @@ dependencies = [
 
 [[package]]
 name = "multistore"
-version = "0.7.1"
-source = "git+https://github.com/developmentseed/multistore?rev=11a5556c910209a91284eaeef5421f7d726ea998#11a5556c910209a91284eaeef5421f7d726ea998"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbf0d34cce7e97df06f76b1a711d6bd655ce079dc7b32bea049d2432cfa2780d"
 dependencies = [
  "async-trait",
  "base64",
@@ -1062,8 +1063,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-cf-workers"
-version = "0.7.1"
-source = "git+https://github.com/developmentseed/multistore?rev=11a5556c910209a91284eaeef5421f7d726ea998#11a5556c910209a91284eaeef5421f7d726ea998"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8d3c198c3e31ea7903e15f7af15c10b5d5b1c62f16b62a00e458872d5ae1d72"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1088,8 +1090,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-oidc-provider"
-version = "0.7.1"
-source = "git+https://github.com/developmentseed/multistore?rev=11a5556c910209a91284eaeef5421f7d726ea998#11a5556c910209a91284eaeef5421f7d726ea998"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03ecb56666012a49cc8fdbaf60564337b04c1f89230bace11240604c4ddf56ef"
 dependencies = [
  "base64",
  "chrono",
@@ -1106,8 +1109,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-path-mapping"
-version = "0.7.1"
-source = "git+https://github.com/developmentseed/multistore?rev=11a5556c910209a91284eaeef5421f7d726ea998#11a5556c910209a91284eaeef5421f7d726ea998"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e0738451d593e53eafdb2e33f7c2ceef622d2d8b21a42f59e389649a2c294d"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -1116,8 +1120,9 @@ dependencies = [
 
 [[package]]
 name = "multistore-sts"
-version = "0.7.1"
-source = "git+https://github.com/developmentseed/multistore?rev=11a5556c910209a91284eaeef5421f7d726ea998#11a5556c910209a91284eaeef5421f7d726ea998"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "449762c5aac6de3ca7f96430dc6af2e668b1f93c041e58aa181148bb5dd7bebb"
 dependencies = [
  "aes-gcm",
  "base64",
