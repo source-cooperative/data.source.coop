@@ -34,10 +34,6 @@ path = "tests/object_path.rs"
 name = "fixtures"
 path = "tests/fixtures.rs"
 
-[[test]]
-name = "federation"
-path = "tests/federation.rs"
-
 [dependencies]
 # Multistore
 multistore = { version = "0.7.0", features = ["azure", "gcp"] }
@@ -52,17 +48,6 @@ serde_json = "1"
 # HTTP
 http = "1"
 percent-encoding = "2"
-
-# Timestamps (backend credential expiry — matches multistore's own chrono types).
-# `wasmbind` is required, not optional: without it `Utc::now()` compiles to the
-# `SystemTime::now()` branch, which on wasm32-unknown-unknown is std's
-# unimplemented stub and panics at runtime. It is in chrono's default features
-# (which we turn off), and is only present today because multistore depends on
-# chrono with defaults on — so name it here rather than rely on that holding.
-chrono = { version = "0.4", default-features = false, features = [
-  "clock",
-  "wasmbind",
-] }
 
 # Hashing (HMAC-SHA256 client-IP hashing for analytics privacy)
 hmac = "0.12"
@@ -101,3 +86,22 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.5", features = ["http"] }
 worker-macros = { version = "=0.7.5", features = ["http"] }
+
+# ── TEMPORARY: verify multistore 0.7.2 before it is cut ──────────────
+# The credential-cache fix this branch needs (developmentseed/multistore#133)
+# is merged to multistore `main` but not yet published; release-please has it
+# queued as 0.7.2 in multistore#134. Point at the exact commit that release will
+# be cut from, so the PR preview exercises the real upstream code on a live
+# Workers deployment — the only place this failure mode is observable.
+#
+# Pinned to a rev, not `branch = "main"`: a branch would let an unrelated merge
+# silently change what the preview builds and invalidate the verification.
+#
+# REMOVE BEFORE MERGE — replace with `version = "0.7.2"` on the dependencies
+# above once multistore#134 lands. This must not reach production.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", rev = "11a5556c910209a91284eaeef5421f7d726ea998" }
