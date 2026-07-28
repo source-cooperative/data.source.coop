@@ -92,7 +92,10 @@ fn never_serves_a_credential_about_to_expire() {
     store("arn:about-to-expire", SUBJECT, creds(2));
     // First caller claims the renewal and leaves the near-expired credential.
     assert!(wants_exchange("arn:about-to-expire", SUBJECT));
-    // A concurrent caller must mint rather than sign with 2s of runway.
+    // A concurrent caller overtakes that live claim rather than signing with 2s
+    // of runway — deliberate, and the reason several exchanges can run at once
+    // right at the edge of expiry.
+    assert!(wants_exchange("arn:about-to-expire", SUBJECT));
     assert!(wants_exchange("arn:about-to-expire", SUBJECT));
 }
 

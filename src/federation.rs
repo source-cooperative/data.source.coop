@@ -29,11 +29,23 @@
 //! why this works where a lock cannot.
 //!
 //! Only a genuinely empty or expired entry makes concurrent requests each
-//! exchange. Collapsing *those* would mean waiting, and the one way to wait on
-//! Workers without being cancelled is polling a real timer — which costs about
-//! as long as the exchange it avoids, while adding a spin loop and a dependency
-//! on the claimant surviving. The duplication is bounded to one burst per
-//! isolate cold start, against an STS endpoint provisioned for it.
+//! exchange, with no cap beyond how many arrive before the first one stores.
+//! Collapsing *those* would mean waiting, and the one way to wait on Workers
+//! without being cancelled is polling a real timer — which costs about as long
+//! as the exchange it avoids, while adding a spin loop and a dependency on the
+//! claimant surviving.
+//!
+//! One cold isolate's burst is small. A deploy or mass eviction is the case to
+//! watch: it cools every isolate at once, so the bursts coincide fleet-wide and
+//! reach STS together, where throttling would become a 502 for each request in
+//! the burst. The mitigation is an L2 tier (Cache API / KV) inside the exchange,
+//! not a bigger in-memory cache — that tier is exactly what a deploy discards.
+//! See #175, which builds one.
+//!
+//! Inside [`MIN_SERVE_SECS`] a live claim is deliberately overtaken, so a few
+//! exchanges can run at once right at the edge of expiry: nothing safe is left
+//! to serve, and the alternatives are making the request wait or failing one
+//! that could have succeeded.
 //!
 //! Upstreamed as developmentseed/multistore#133; delete this module and go back
 //! to `AwsBackendAuth` once that releases.
@@ -156,9 +168,14 @@ pub(crate) fn lookup(role_arn: &str, subject: &str) -> Action {
         return Action::Serve(entry.creds.clone());
     }
     // Either we're first into the lead window, the previous claim went stale, or
-    // the credential is too near expiry to hand out. Claim and exchange — when
-    // there is nothing usable left this gates no one, since concurrent requests
-    // have no credential to serve either.
+    // the credential is now inside MIN_SERVE_SECS and too near expiry to hand
+    // out.
+    //
+    // That last case deliberately ignores a live claim, so in the final
+    // MIN_SERVE_SECS a claimant can be overtaken and several exchanges run at
+    // once. Intended: nothing safe is left to serve, so the alternatives are
+    // making the request wait (which the module docs rule out) or failing one
+    // that could have succeeded. Bounded to the requests arriving in that window.
     entry.renewing_since = Some(now);
     Action::Exchange
 }
