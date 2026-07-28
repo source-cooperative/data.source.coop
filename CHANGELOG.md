@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.2](https://github.com/source-cooperative/data.source.coop/compare/v2.3.1...v2.3.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **deps:** bump multistore to 0.7.2 to stop federated reads hanging ([#197](https://github.com/source-cooperative/data.source.coop/issues/197)) ([02ddcff](https://github.com/source-cooperative/data.source.coop/commit/02ddcff625d9417e48e1a3b085ac77234d760681))
+
 ## [2.3.1](https://github.com/source-cooperative/data.source.coop/compare/v2.3.0...v2.3.1) (2026-07-28)
 
 
