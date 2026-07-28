@@ -47,7 +47,7 @@ const OIDC_OPTION_KEYS: [&str; 3] = ["auth_type", "oidc_role_arn", "oidc_subject
 
 type Creds = Arc<BackendCredentials>;
 
-/// Isolate-shared credentials, keyed by role ARN.
+/// Isolate-shared credentials, keyed by [`cache_key`].
 ///
 /// A `std::sync::Mutex` rather than an async one, deliberately: the guard is
 /// only ever held for a map get/insert and never across an `.await`, which is
@@ -55,7 +55,22 @@ type Creds = Arc<BackendCredentials>;
 /// single-threaded, so the lock is never actually contended.
 static CACHE: OnceLock<Mutex<HashMap<String, Creds>>> = OnceLock::new();
 
-pub(crate) fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Creds>> {
+/// Cache identity for a federation exchange: the role *and* the subject the
+/// assertion is minted for.
+///
+/// Keying on the role ARN alone (which multistore's `AwsBackendAuth` did) is
+/// unsound when two connections point at the same role: the role's trust policy
+/// conditions on the assertion's `sub` (`scv1:conn:{id}`), so a connection whose
+/// subject that policy would *reject* could instead be served another
+/// connection's cached credentials — succeeding where STS would have said no.
+/// The subject is part of the identity being cached, so it belongs in the key.
+fn cache_key(role_arn: &str, subject: &str) -> String {
+    // `\u{1f}` (unit separator) can't occur in an ARN or in a subject, so the
+    // join is unambiguous without escaping either half.
+    format!("{role_arn}\u{1f}{subject}")
+}
+
+fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Creds>> {
     CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -66,13 +81,18 @@ pub(crate) fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Creds>> 
         .unwrap_or_else(|e| e.into_inner())
 }
 
-/// Cached credentials for `role_arn`, if they are still comfortably unexpired.
-pub(crate) fn cached(role_arn: &str) -> Option<Creds> {
+/// Cached credentials for `role_arn` as `subject`, if still comfortably unexpired.
+pub(crate) fn cached(role_arn: &str, subject: &str) -> Option<Creds> {
     let cutoff = Utc::now() + Duration::seconds(REFRESH_LEAD_SECS);
     cache()
-        .get(role_arn)
+        .get(&cache_key(role_arn, subject))
         .filter(|creds| creds.expiration > cutoff)
         .cloned()
+}
+
+/// Cache `creds` as the credentials for `role_arn` assumed as `subject`.
+pub(crate) fn store(role_arn: &str, subject: &str, creds: Creds) {
+    cache().insert(cache_key(role_arn, subject), creds);
 }
 
 /// Sanitize an OIDC subject into an AWS `RoleSessionName` (`[\w+=,.@-]{2,64}`).
@@ -126,7 +146,7 @@ impl<H: HttpExchange> AwsFederation<H> {
     /// Cached credentials for `role_arn`, minting and exchanging a fresh
     /// assertion on a miss.
     async fn credentials(&self, role_arn: &str, subject: &str) -> Result<Creds, ProxyError> {
-        if let Some(creds) = cached(role_arn) {
+        if let Some(creds) = cached(role_arn, subject) {
             return Ok(creds);
         }
         let token = self
@@ -137,7 +157,7 @@ impl<H: HttpExchange> AwsFederation<H> {
         // attributes each exchange to the originating connection.
         exchange.session_name = session_name(subject);
         let creds: Creds = Arc::new(exchange.exchange(&self.http, &token).await?);
-        cache().insert(role_arn.to_string(), creds.clone());
+        store(role_arn, subject, creds.clone());
         Ok(creds)
     }
 }

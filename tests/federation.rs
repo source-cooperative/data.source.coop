@@ -6,9 +6,11 @@
 mod federation;
 
 use chrono::{Duration, Utc};
-use federation::{cache, cached, session_name};
+use federation::{cached, session_name, store};
 use multistore::types::BackendCredentials;
 use std::sync::Arc;
+
+const SUBJECT: &str = "scv1:conn:abc";
 
 fn creds(expires_in_secs: i64) -> Arc<BackendCredentials> {
     Arc::new(BackendCredentials {
@@ -26,22 +28,22 @@ fn creds(expires_in_secs: i64) -> Arc<BackendCredentials> {
 
 #[test]
 fn returns_credentials_that_are_comfortably_unexpired() {
-    cache().insert("arn:fresh".into(), creds(3600));
+    store("arn:fresh", SUBJECT, creds(3600));
     assert_eq!(
-        cached("arn:fresh").map(|c| c.access_key_id.clone()),
+        cached("arn:fresh", SUBJECT).map(|c| c.access_key_id.clone()),
         Some("ASIAEXAMPLE".to_string())
     );
 }
 
 #[test]
 fn misses_on_an_unknown_role() {
-    assert!(cached("arn:never-stored").is_none());
+    assert!(cached("arn:never-stored", SUBJECT).is_none());
 }
 
 #[test]
 fn treats_expired_credentials_as_a_miss() {
-    cache().insert("arn:expired".into(), creds(-1));
-    assert!(cached("arn:expired").is_none());
+    store("arn:expired", SUBJECT, creds(-1));
+    assert!(cached("arn:expired", SUBJECT).is_none());
 }
 
 /// The refresh lead is the point of the freshness check: credentials that are
@@ -49,8 +51,26 @@ fn treats_expired_credentials_as_a_miss() {
 /// request that could outlive them.
 #[test]
 fn treats_nearly_expired_credentials_as_a_miss() {
-    cache().insert("arn:nearly-expired".into(), creds(30));
-    assert!(cached("arn:nearly-expired").is_none());
+    store("arn:nearly-expired", SUBJECT, creds(30));
+    assert!(cached("arn:nearly-expired", SUBJECT).is_none());
+}
+
+// ── cache key identity ─────────────────────────────────────────────
+
+/// The role's trust policy conditions on the assertion's `sub`, so a second
+/// connection pointing at the same role must not be served the first one's
+/// credentials — that would succeed where STS would have refused.
+#[test]
+fn does_not_share_credentials_between_subjects_on_one_role() {
+    store("arn:shared-role", "scv1:conn:allowed", creds(3600));
+    assert!(cached("arn:shared-role", "scv1:conn:allowed").is_some());
+    assert!(cached("arn:shared-role", "scv1:conn:other").is_none());
+}
+
+#[test]
+fn does_not_share_credentials_between_roles_for_one_subject() {
+    store("arn:role-a", SUBJECT, creds(3600));
+    assert!(cached("arn:role-b", SUBJECT).is_none());
 }
 
 // ── RoleSessionName sanitization ───────────────────────────────────
