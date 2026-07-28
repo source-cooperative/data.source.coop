@@ -344,17 +344,35 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     // Production runs at LOG_LEVEL=WARN, so the `info` line above — and the
     // `info_span` carrying method/path — are both silenced. That leaves a 5xx
-    // with no worker-side record at all, which is how the edge-generated 520s on
-    // large streamed PUTs ended up undiagnosable: Cloudflare logs the URL and
-    // nothing else. Re-emit at WARN, with the span fields inlined since the span
-    // itself is disabled at this level.
+    // with no worker-side record at all, which is how the 520s on large streamed
+    // PUTs ended up undiagnosable: Cloudflare logs the URL and nothing else.
+    // Re-emit at WARN, with the span fields inlined since the span itself is
+    // disabled at this level.
+    //
+    // The response headers are the relayed *backend* headers: on a forwarded
+    // request the gateway passes the upstream status through verbatim, and
+    // `RESPONSE_HEADER_DENYLIST` strips only hop-by-hop, auth and proxy-routing
+    // names — so `server` and the `x-amz-*` ids survive. That is what
+    // distinguishes the three candidates for a relayed 520 that S3 itself never
+    // emits: `server: AmazonS3` plus a request id means S3 answered and the
+    // status is real; a `cf-ray` on the response means the subrequest's status
+    // was minted inside Cloudflare's egress path; neither means the runtime
+    // synthesised it with no upstream reply at all.
     if status >= 500 {
+        let h = response.headers();
+        let hv = |name: &str| h.get(name).ok().flatten().unwrap_or_default();
         tracing::warn!(
             status,
             duration_ms,
             method = %parts.method,
             path = %parts.path,
             content_length = header_str(&parts.headers, "content-length"),
+            resp_server = %hv("server"),
+            resp_cf_ray = %hv("cf-ray"),
+            resp_amz_request_id = %hv("x-amz-request-id"),
+            resp_amz_id_2 = %hv("x-amz-id-2"),
+            resp_content_type = %hv("content-type"),
+            resp_content_length = %hv("content-length"),
             "server error response"
         );
     }
