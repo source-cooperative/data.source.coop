@@ -339,7 +339,25 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .await
         .into_web_sys();
     let duration_ms = js_sys::Date::now() - start_ms;
-    tracing::info!(status = response.status(), duration_ms, "response");
+    let status = response.status();
+    tracing::info!(status, duration_ms, "response");
+
+    // Production runs at LOG_LEVEL=WARN, so the `info` line above — and the
+    // `info_span` carrying method/path — are both silenced. That leaves a 5xx
+    // with no worker-side record at all, which is how the edge-generated 520s on
+    // large streamed PUTs ended up undiagnosable: Cloudflare logs the URL and
+    // nothing else. Re-emit at WARN, with the span fields inlined since the span
+    // itself is disabled at this level.
+    if status >= 500 {
+        tracing::warn!(
+            status,
+            duration_ms,
+            method = %parts.method,
+            path = %parts.path,
+            content_length = header_str(&parts.headers, "content-length"),
+            "server error response"
+        );
+    }
 
     // ── Extract path segments (used by analytics + location broadcast) ──
     let (account, product, key) = extract_path_segments(&parts.path);
