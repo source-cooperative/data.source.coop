@@ -47,32 +47,9 @@ jobs:
     if: vars.FEDERATION_TEST_ACCOUNT != '' && vars.FEDERATION_TEST_PRODUCT != '' && vars.FEDERATION_TEST_KEY != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      # Only used to mint the caller identity for the copy-source authz test,
-      # and only when FEDERATION_TEST_AUDIENCE is set (see below).
-      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: Mint caller identity token (GitHub OIDC)
-        # Dormant like the rest of this job: the copy-source authz test needs a
-        # caller the *deployed* worker will accept, so the audience must match
-        # that deployment's AUTH_AUDIENCE — which is not CI's
-        # `source-data-proxy-ci`. Left unset, no token is minted and that one
-        # test skips; the rest of the suite is unaffected.
-        if: vars.FEDERATION_TEST_AUDIENCE != ''
-        run: |
-          set -euo pipefail
-          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${{ vars.FEDERATION_TEST_AUDIENCE }}" \
-            | jq -r '.value')
-          if [ -z "$token" ] || [ "$token" = "null" ]; then
-            echo "::error::FEDERATION_TEST_AUDIENCE is set but minting returned no token"
-            exit 1
-          fi
-          echo "::add-mask::$token"
-          echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
       - name: Run federation smoke tests
         env:
           PROXY_URL: ${{ needs.deploy.outputs.deploy_url }}
@@ -81,6 +58,14 @@ jobs:
           FEDERATION_TEST_KEY: ${{ vars.FEDERATION_TEST_KEY }}
           FEDERATION_RESTRICTED_PRODUCT: ${{ vars.FEDERATION_RESTRICTED_PRODUCT }}
           FEDERATION_WRITE_PRODUCT: ${{ vars.FEDERATION_WRITE_PRODUCT }}
+          # Caller identity for the copy-source authz test. NOT a GitHub OIDC
+          # token: this job talks to the *deployed* worker, whose AUTH_ISSUER is
+          # Ory (https://auth.staging.source.coop), so a GitHub-minted token
+          # fails issuer verification no matter its audience. Must be issued by
+          # that issuer, with an `aud` among staging's AUTH_AUDIENCE client_ids
+          # (see wrangler.toml [env.staging.vars]) and a subject holding write
+          # on FEDERATION_WRITE_PRODUCT. Unset, that one test skips.
+          CI_WRITE_ID_TOKEN: ${{ secrets.FEDERATION_CALLER_TOKEN }}
         # boto3: the copy-source authz test signs SigV4 through the AWS SDK
         # rather than hand-rolling requests.
         run: uvx --with requests --with boto3 pytest tests/test_federation.py -v

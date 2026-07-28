@@ -26,8 +26,17 @@ deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
                              reads its private backend)
   FEDERATION_WRITE_PRODUCT   product id, in the same account, that the caller
                              identified by CI_WRITE_ID_TOKEN may *write*. Used
-                             only by the copy-source authorization test, which
-                             also needs that token (see test_writes.py)
+                             only by the copy-source authorization test
+  CI_WRITE_ID_TOKEN          that caller's identity token. Unlike in ci.yml,
+                             this is NOT a GitHub Actions OIDC token: these
+                             tests hit a deployed worker whose AUTH_ISSUER is
+                             Ory (e.g. https://auth.staging.source.coop), so a
+                             GitHub-minted token fails issuer verification
+                             whatever its audience. It must come from that
+                             issuer, carry an ``aud`` among the deployment's
+                             AUTH_AUDIENCE client_ids (wrangler.toml
+                             ``[env.staging.vars]``), and belong to a subject
+                             holding write on FEDERATION_WRITE_PRODUCT
 """
 
 import os
@@ -98,8 +107,8 @@ def test_restricted_product_denied_to_anonymous():
     not (ACCOUNT and RESTRICTED_PRODUCT and WRITE_PRODUCT and ID_TOKEN),
     reason=(
         "copy-source authz target not configured (set FEDERATION_TEST_ACCOUNT/"
-        "FEDERATION_RESTRICTED_PRODUCT/FEDERATION_WRITE_PRODUCT and "
-        "CI_WRITE_ID_TOKEN against a deployed proxy)"
+        "FEDERATION_RESTRICTED_PRODUCT/FEDERATION_WRITE_PRODUCT and an "
+        "issuer-appropriate CI_WRITE_ID_TOKEN against a deployed proxy)"
     ),
 )
 def test_copy_source_authorization_is_enforced():
