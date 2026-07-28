@@ -16,12 +16,19 @@
 //! behind one connection (one role ARN, hence one lock), so a single cold
 //! isolate took out every concurrent read on it.
 //!
-//! The fix is to keep no async lock on the request path at all. Fresh
-//! credentials are read from a plain map under a sync lock that is never held
-//! across an `.await`; a miss runs its own exchange. Concurrent misses each do
-//! their own `AssumeRoleWithWebIdentity` rather than queueing behind one — a
-//! handful of duplicate STS calls per isolate per credential lifetime, which is
-//! the price of never parking a request on another request's I/O.
+//! The fix is to keep no async lock on the request path at all. Credentials
+//! live in a plain map under a sync lock that is never held across an `.await`,
+//! and a request that has nothing usable runs its own exchange rather than
+//! queueing behind one.
+//!
+//! That leaves a duplicate-work window, which [`lookup`] narrows to the case
+//! where duplication is unavoidable. A *renewal* is single-flighted without
+//! anyone blocking: the credential is still valid inside the refresh lead, so
+//! one request claims the exchange while the rest keep serving what they
+//! already have. Latecomers never need the refresher's result, which is exactly
+//! why this works where a lock cannot. Only a genuinely empty or expired entry
+//! makes concurrent requests each exchange — a cold isolate, where there is no
+//! usable credential to serve and nothing to single-flight *to*.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -47,13 +54,31 @@ const OIDC_OPTION_KEYS: [&str; 3] = ["auth_type", "oidc_role_arn", "oidc_subject
 
 type Creds = Arc<BackendCredentials>;
 
+/// A cached credential plus whether someone is already renewing it.
+struct Entry {
+    creds: Creds,
+    /// Set by the request that claimed the renewal for this key, so the others
+    /// keep serving `creds` (still valid) instead of piling onto STS. Cleared
+    /// when a renewal stores its result, or fails.
+    renewing: bool,
+}
+
+/// What a caller should do for a given key.
+#[derive(Debug)]
+pub(crate) enum Action {
+    /// Use these credentials as-is; no exchange needed.
+    Serve(Creds),
+    /// Nothing usable, or this caller claimed the renewal: run the exchange.
+    Exchange,
+}
+
 /// Isolate-shared credentials, keyed by [`cache_key`].
 ///
 /// A `std::sync::Mutex` rather than an async one, deliberately: the guard is
 /// only ever held for a map get/insert and never across an `.await`, which is
 /// what keeps a waiting request from being cancelled as hung. Workers is
 /// single-threaded, so the lock is never actually contended.
-static CACHE: OnceLock<Mutex<HashMap<String, Creds>>> = OnceLock::new();
+static CACHE: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
 
 /// Cache identity for a federation exchange: the role *and* the subject the
 /// assertion is minted for.
@@ -70,7 +95,7 @@ fn cache_key(role_arn: &str, subject: &str) -> String {
     format!("{role_arn}\u{1f}{subject}")
 }
 
-fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Creds>> {
+fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Entry>> {
     CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -81,18 +106,55 @@ fn cache() -> std::sync::MutexGuard<'static, HashMap<String, Creds>> {
         .unwrap_or_else(|e| e.into_inner())
 }
 
-/// Cached credentials for `role_arn` as `subject`, if still comfortably unexpired.
-pub(crate) fn cached(role_arn: &str, subject: &str) -> Option<Creds> {
-    let cutoff = Utc::now() + Duration::seconds(REFRESH_LEAD_SECS);
-    cache()
-        .get(&cache_key(role_arn, subject))
-        .filter(|creds| creds.expiration > cutoff)
-        .cloned()
+/// Decide what a caller should do for `role_arn` as `subject`, claiming the
+/// renewal slot when this caller is the one that must run the exchange.
+///
+/// Not a lock: no caller ever waits on another. A credential inside the refresh
+/// lead has not actually expired, so everyone but the claimant keeps using it
+/// and only the claimant pays for the exchange. Without this, the whole lead
+/// window is a miss for *every* concurrent request, and a busy isolate renews
+/// with a burst of simultaneous `AssumeRoleWithWebIdentity` calls (which AWS may
+/// then throttle into 502s) once per credential lifetime.
+pub(crate) fn lookup(role_arn: &str, subject: &str) -> Action {
+    let now = Utc::now();
+    let mut map = cache();
+    let Some(entry) = map.get_mut(&cache_key(role_arn, subject)) else {
+        return Action::Exchange;
+    };
+    if entry.creds.expiration > now + Duration::seconds(REFRESH_LEAD_SECS) {
+        return Action::Serve(entry.creds.clone());
+    }
+    // Inside the lead but genuinely still valid, and someone is already on it.
+    if entry.creds.expiration > now && entry.renewing {
+        return Action::Serve(entry.creds.clone());
+    }
+    // Either we're first into the lead window, or the credential has actually
+    // expired and there is nothing safe left to serve. Claim the slot — when
+    // expired this does not gate anyone (they have no usable credential either),
+    // it just records that a renewal is under way.
+    entry.renewing = true;
+    Action::Exchange
 }
 
-/// Cache `creds` as the credentials for `role_arn` assumed as `subject`.
+/// Release the renewal slot after a failed exchange, so the next request retries
+/// instead of waiting out the lead window. Retries stay serialized: whoever
+/// retries claims the slot again via [`lookup`].
+fn release(role_arn: &str, subject: &str) {
+    if let Some(entry) = cache().get_mut(&cache_key(role_arn, subject)) {
+        entry.renewing = false;
+    }
+}
+
+/// Cache `creds` as the credentials for `role_arn` assumed as `subject`,
+/// releasing the renewal slot.
 pub(crate) fn store(role_arn: &str, subject: &str, creds: Creds) {
-    cache().insert(cache_key(role_arn, subject), creds);
+    cache().insert(
+        cache_key(role_arn, subject),
+        Entry {
+            creds,
+            renewing: false,
+        },
+    );
 }
 
 /// Sanitize an OIDC subject into an AWS `RoleSessionName` (`[\w+=,.@-]{2,64}`).
@@ -144,19 +206,27 @@ impl<H: HttpExchange> AwsFederation<H> {
     }
 
     /// Cached credentials for `role_arn`, minting and exchanging a fresh
-    /// assertion on a miss.
+    /// assertion when [`lookup`] says this request must.
     async fn credentials(&self, role_arn: &str, subject: &str) -> Result<Creds, ProxyError> {
-        if let Some(creds) = cached(role_arn, subject) {
-            return Ok(creds);
+        match lookup(role_arn, subject) {
+            Action::Serve(creds) => return Ok(creds),
+            Action::Exchange => {}
         }
         let token = self
             .signer
-            .sign(subject, &self.issuer, &self.audience, &[])?;
+            .sign(subject, &self.issuer, &self.audience, &[])
+            .inspect_err(|_| release(role_arn, subject))?;
         let mut exchange = AwsExchange::new(role_arn.to_string());
         // Name the assumed-role session after the subject so CloudTrail
         // attributes each exchange to the originating connection.
         exchange.session_name = session_name(subject);
-        let creds: Creds = Arc::new(exchange.exchange(&self.http, &token).await?);
+        let creds = match exchange.exchange(&self.http, &token).await {
+            Ok(creds) => Arc::new(creds),
+            Err(e) => {
+                release(role_arn, subject);
+                return Err(e.into());
+            }
+        };
         store(role_arn, subject, creds.clone());
         Ok(creds)
     }

@@ -53,8 +53,16 @@ serde_json = "1"
 http = "1"
 percent-encoding = "2"
 
-# Timestamps (backend credential expiry — matches multistore's own chrono types)
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Timestamps (backend credential expiry — matches multistore's own chrono types).
+# `wasmbind` is required, not optional: without it `Utc::now()` compiles to the
+# `SystemTime::now()` branch, which on wasm32-unknown-unknown is std's
+# unimplemented stub and panics at runtime. It is in chrono's default features
+# (which we turn off), and is only present today because multistore depends on
+# chrono with defaults on — so name it here rather than rely on that holding.
+chrono = { version = "0.4", default-features = false, features = [
+  "clock",
+  "wasmbind",
+] }
 
 # Hashing (HMAC-SHA256 client-IP hashing for analytics privacy)
 hmac = "0.12"

@@ -6,11 +6,23 @@
 mod federation;
 
 use chrono::{Duration, Utc};
-use federation::{cached, session_name, store};
+use federation::{lookup, session_name, store, Action};
 use multistore::types::BackendCredentials;
 use std::sync::Arc;
 
 const SUBJECT: &str = "scv1:conn:abc";
+
+/// The access key `lookup` would serve, or `None` if it wants an exchange.
+fn served(role_arn: &str, subject: &str) -> Option<String> {
+    match lookup(role_arn, subject) {
+        Action::Serve(creds) => Some(creds.access_key_id.clone()),
+        Action::Exchange => None,
+    }
+}
+
+fn wants_exchange(role_arn: &str, subject: &str) -> bool {
+    served(role_arn, subject).is_none()
+}
 
 fn creds(expires_in_secs: i64) -> Arc<BackendCredentials> {
     Arc::new(BackendCredentials {
@@ -27,32 +39,63 @@ fn creds(expires_in_secs: i64) -> Arc<BackendCredentials> {
 // key rather than clearing shared state.
 
 #[test]
-fn returns_credentials_that_are_comfortably_unexpired() {
+fn serves_credentials_that_are_comfortably_unexpired() {
     store("arn:fresh", SUBJECT, creds(3600));
     assert_eq!(
-        cached("arn:fresh", SUBJECT).map(|c| c.access_key_id.clone()),
+        served("arn:fresh", SUBJECT),
         Some("ASIAEXAMPLE".to_string())
     );
 }
 
 #[test]
-fn misses_on_an_unknown_role() {
-    assert!(cached("arn:never-stored", SUBJECT).is_none());
+fn exchanges_for_an_unknown_role() {
+    assert!(wants_exchange("arn:never-stored", SUBJECT));
 }
 
+/// An expired credential must never be served, even though a renewal is
+/// recorded as under way — there is nothing safe left to hand out.
 #[test]
-fn treats_expired_credentials_as_a_miss() {
+fn never_serves_an_expired_credential() {
     store("arn:expired", SUBJECT, creds(-1));
-    assert!(cached("arn:expired", SUBJECT).is_none());
+    assert!(wants_exchange("arn:expired", SUBJECT));
+    assert!(wants_exchange("arn:expired", SUBJECT));
 }
 
-/// The refresh lead is the point of the freshness check: credentials that are
-/// *technically* still valid but about to expire must not be handed to a backend
-/// request that could outlive them.
+// ── renewal single-flight ──────────────────────────────────────────
+
+/// Inside the refresh lead the credential is still valid, so exactly one caller
+/// takes the exchange and everyone else keeps serving what they have. Without
+/// this, a busy isolate renews with a burst of simultaneous STS calls.
 #[test]
-fn treats_nearly_expired_credentials_as_a_miss() {
-    store("arn:nearly-expired", SUBJECT, creds(30));
-    assert!(cached("arn:nearly-expired", SUBJECT).is_none());
+fn only_the_first_caller_in_the_refresh_lead_exchanges() {
+    store("arn:renewing", SUBJECT, creds(30));
+
+    assert!(
+        wants_exchange("arn:renewing", SUBJECT),
+        "first caller claims the renewal"
+    );
+    for _ in 0..10 {
+        assert_eq!(
+            served("arn:renewing", SUBJECT),
+            Some("ASIAEXAMPLE".to_string()),
+            "later callers serve the still-valid credential instead of piling on"
+        );
+    }
+}
+
+/// A renewed credential is served straight from the cache again, and the
+/// renewal slot is released so the *next* lead window gets its own single flight.
+#[test]
+fn storing_a_renewal_releases_the_slot() {
+    store("arn:renewed", SUBJECT, creds(30));
+    assert!(wants_exchange("arn:renewed", SUBJECT));
+
+    store("arn:renewed", SUBJECT, creds(3600));
+    assert!(served("arn:renewed", SUBJECT).is_some());
+
+    // Age back into the lead: a caller must be able to claim it again.
+    store("arn:renewed", SUBJECT, creds(30));
+    assert!(wants_exchange("arn:renewed", SUBJECT));
 }
 
 // ── cache key identity ─────────────────────────────────────────────
@@ -63,14 +106,14 @@ fn treats_nearly_expired_credentials_as_a_miss() {
 #[test]
 fn does_not_share_credentials_between_subjects_on_one_role() {
     store("arn:shared-role", "scv1:conn:allowed", creds(3600));
-    assert!(cached("arn:shared-role", "scv1:conn:allowed").is_some());
-    assert!(cached("arn:shared-role", "scv1:conn:other").is_none());
+    assert!(served("arn:shared-role", "scv1:conn:allowed").is_some());
+    assert!(wants_exchange("arn:shared-role", "scv1:conn:other"));
 }
 
 #[test]
 fn does_not_share_credentials_between_roles_for_one_subject() {
     store("arn:role-a", SUBJECT, creds(3600));
-    assert!(cached("arn:role-b", SUBJECT).is_none());
+    assert!(wants_exchange("arn:role-b", SUBJECT));
 }
 
 // ── RoleSessionName sanitization ───────────────────────────────────
