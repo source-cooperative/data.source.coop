@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.3](https://github.com/source-cooperative/data.source.coop/compare/v2.3.2...v2.3.3) (2026-07-28)
+
+
+### Bug Fixes
+
+* **observability:** log 5xx responses at WARN ([#201](https://github.com/source-cooperative/data.source.coop/issues/201)) ([371cb5a](https://github.com/source-cooperative/data.source.coop/commit/371cb5a1fc573ac4ec458b110c098b6a0326116f))
+
 ## [2.3.2](https://github.com/source-cooperative/data.source.coop/compare/v2.3.1...v2.3.2) (2026-07-28)
 
 
