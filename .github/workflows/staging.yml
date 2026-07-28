@@ -58,14 +58,14 @@ jobs:
           FEDERATION_TEST_KEY: ${{ vars.FEDERATION_TEST_KEY }}
           FEDERATION_RESTRICTED_PRODUCT: ${{ vars.FEDERATION_RESTRICTED_PRODUCT }}
           FEDERATION_WRITE_PRODUCT: ${{ vars.FEDERATION_WRITE_PRODUCT }}
-          # Caller identity for the copy-source authz test. NOT a GitHub OIDC
-          # token: this job talks to the *deployed* worker, whose AUTH_ISSUER is
-          # Ory (https://auth.staging.source.coop), so a GitHub-minted token
-          # fails issuer verification no matter its audience. Must be issued by
-          # that issuer, with an `aud` among staging's AUTH_AUDIENCE client_ids
-          # (see wrangler.toml [env.staging.vars]) and a subject holding write
-          # on FEDERATION_WRITE_PRODUCT. Unset, that one test skips.
-          CI_WRITE_ID_TOKEN: ${{ secrets.FEDERATION_CALLER_TOKEN }}
+          # No CI_WRITE_ID_TOKEN is supplied, so the copy-source authz test
+          # skips here. Wiring one is a design decision that hasn't been made:
+          # this job talks to the *deployed* worker, whose AUTH_ISSUER is Ory,
+          # so the token must come from that issuer — and an Ory ID token is
+          # short-lived, so it cannot simply be parked in a repo secret. It
+          # needs a step that mints one per run from a durable credential
+          # (a service-account client_id/secret or refresh token). See the
+          # CI_WRITE_ID_TOKEN notes in tests/test_federation.py.
         # boto3: the copy-source authz test signs SigV4 through the AWS SDK
         # rather than hand-rolling requests.
         run: uvx --with requests --with boto3 pytest tests/test_federation.py -v

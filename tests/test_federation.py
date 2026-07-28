@@ -36,7 +36,13 @@ deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
                              issuer, carry an ``aud`` among the deployment's
                              AUTH_AUDIENCE client_ids (wrangler.toml
                              ``[env.staging.vars]``), and belong to a subject
-                             holding write on FEDERATION_WRITE_PRODUCT
+                             holding write on FEDERATION_WRITE_PRODUCT.
+                             Not yet wired into staging.yml: an Ory ID token is
+                             short-lived, so it cannot be parked in a repo
+                             secret — supplying it needs a step that mints one
+                             per run from a durable credential (a
+                             service-account client_id/secret or a refresh
+                             token). Until that exists this test skips
 """
 
 import os
