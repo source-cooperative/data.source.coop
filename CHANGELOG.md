@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/source-cooperative/data.source.coop/compare/v2.3.0...v2.3.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **s3:** adapt CopyObject to multistore's copy-source path mapping ([#198](https://github.com/source-cooperative/data.source.coop/issues/198)) ([40acbcb](https://github.com/source-cooperative/data.source.coop/commit/40acbcb7504085172bb6c8eb80ad8112053b671e))
+
 ## [2.3.0](https://github.com/source-cooperative/data.source.coop/compare/v2.2.2...v2.3.0) (2026-07-27)
 
 
