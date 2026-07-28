@@ -27,22 +27,22 @@ deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
   FEDERATION_WRITE_PRODUCT   product id, in the same account, that the caller
                              identified by CI_WRITE_ID_TOKEN may *write*. Used
                              only by the copy-source authorization test
-  CI_WRITE_ID_TOKEN          that caller's identity token. Unlike in ci.yml,
-                             this is NOT a GitHub Actions OIDC token: these
-                             tests hit a deployed worker whose AUTH_ISSUER is
-                             Ory (e.g. https://auth.staging.source.coop), so a
-                             GitHub-minted token fails issuer verification
-                             whatever its audience. It must come from that
-                             issuer, carry an ``aud`` among the deployment's
-                             AUTH_AUDIENCE client_ids (wrangler.toml
-                             ``[env.staging.vars]``), and belong to a subject
-                             holding write on FEDERATION_WRITE_PRODUCT.
-                             Not yet wired into staging.yml: an Ory ID token is
-                             short-lived, so it cannot be parked in a repo
-                             secret — supplying it needs a step that mints one
-                             per run from a durable credential (a
-                             service-account client_id/secret or a refresh
-                             token). Until that exists this test skips
+  CI_WRITE_ID_TOKEN          that caller's identity token — a GitHub Actions
+                             OIDC token, minted per run by staging.yml (short-
+                             lived by design, never stored) once
+                             FEDERATION_TEST_AUDIENCE is set.
+
+                             Dormant until Source registers GitHub as a valid
+                             IdP so products can accept writes from GitHub
+                             Actions. That needs the deployment's AUTH_ISSUER to
+                             accept GitHub's issuer — today it is a single Ory
+                             URL, and ``src/config.rs`` reads AUTH_ISSUER as one
+                             String (unlike the comma-separated AUTH_AUDIENCE),
+                             so it is a code change as well as config — and the
+                             audience Source expects to be set as
+                             FEDERATION_TEST_AUDIENCE. Until then this test
+                             skips. The caller must also hold write on
+                             FEDERATION_WRITE_PRODUCT
 """
 
 import os
