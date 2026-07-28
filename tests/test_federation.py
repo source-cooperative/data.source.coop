@@ -24,6 +24,10 @@ deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
                              same account, used by the authz/confused-deputy test
                              (an anonymous caller must be denied before federation
                              reads its private backend)
+  FEDERATION_WRITE_PRODUCT   product id, in the same account, that the caller
+                             identified by CI_WRITE_ID_TOKEN may *write*. Used
+                             only by the copy-source authorization test, which
+                             also needs that token (see test_writes.py)
 """
 
 import os
@@ -36,6 +40,8 @@ ACCOUNT = os.environ.get("FEDERATION_TEST_ACCOUNT")
 PRODUCT = os.environ.get("FEDERATION_TEST_PRODUCT")
 KEY = os.environ.get("FEDERATION_TEST_KEY")
 RESTRICTED_PRODUCT = os.environ.get("FEDERATION_RESTRICTED_PRODUCT")
+WRITE_PRODUCT = os.environ.get("FEDERATION_WRITE_PRODUCT")
+ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
 
 
 @pytest.mark.skipif(
@@ -85,4 +91,50 @@ def test_restricted_product_denied_to_anonymous():
     assert resp.status_code in (401, 403, 404), (
         "anonymous caller was not denied a restricted federated product "
         f"(status {resp.status_code}); federation may have served private data"
+    )
+
+
+@pytest.mark.skipif(
+    not (ACCOUNT and RESTRICTED_PRODUCT and WRITE_PRODUCT and ID_TOKEN),
+    reason=(
+        "copy-source authz target not configured (set FEDERATION_TEST_ACCOUNT/"
+        "FEDERATION_RESTRICTED_PRODUCT/FEDERATION_WRITE_PRODUCT and "
+        "CI_WRITE_ID_TOKEN against a deployed proxy)"
+    ),
+)
+def test_copy_source_authorization_is_enforced():
+    """The confused-deputy guard for `CopyObject`: holding write on the
+    destination must not let a caller read a product they aren't entitled to.
+
+    A copy is authorized in two halves — the destination as a write, the source
+    as a synthetic `GetObject`. This names a source the caller cannot read and a
+    destination they can write, so only the source half can deny it. A success
+    would mean CopyObject is a hole around product authorization: read any
+    restricted product by copying it somewhere readable.
+
+    Deliberately here and not in the CI integration tier, where it could not
+    fail: federation is attempted against the destination before the source is
+    resolved, so on CI's throwaway signing key every copy dies at federation
+    first — and `AccessDenied` is itself one of the federation error codes, so
+    the assertion below would pass without proving anything. It needs a
+    deployment where the destination write genuinely succeeds, which is what
+    this suite provides.
+    """
+    import botocore.exceptions
+
+    from test_writes import s3_client  # /.sts exchange + SigV4, see its module docstring
+
+    client = s3_client(retries={"max_attempts": 1})
+    # A success raises nothing and fails here as DID NOT RAISE — the outcome
+    # this test exists to catch.
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.copy_object(
+            Bucket=ACCOUNT,
+            Key=f"{WRITE_PRODUCT}/copy-authz-probe.txt",
+            CopySource=f"{ACCOUNT}/{RESTRICTED_PRODUCT}/{KEY or 'any-key'}",
+        )
+    status = exc.value.response["ResponseMetadata"]["HTTPStatusCode"]
+    assert status in (401, 403, 404), (
+        f"copy from a restricted source was not denied (status {status}); "
+        "CopyObject may be bypassing source authorization"
     )
