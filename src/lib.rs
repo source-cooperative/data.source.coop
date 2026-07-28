@@ -35,7 +35,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use object_path::{extract_path_segments, is_keyless_write};
+use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -316,6 +316,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .map(|u| u.path().to_string())
         .unwrap_or_else(|_| rewrite.signing_path.clone());
 
+    // See `object_path::mapped_copy_source`: the copy source must be mapped
+    // into the registry's namespace, without mutating the header the client
+    // signed over.
+    let copy_source = mapped_copy_source(&parts.headers, &mapping);
+
     let request_info = RequestInfo::new(
         &parts.method,
         &rewrite.path,
@@ -325,7 +330,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     )
     .with_signing_path(&signing_path)
     .with_signing_query(rewrite.signing_query.as_deref())
-    .with_form_body(parts.form_body.as_deref());
+    .with_form_body(parts.form_body.as_deref())
+    .with_copy_source(copy_source.as_deref());
 
     let start_ms = js_sys::Date::now();
     let response = gateway

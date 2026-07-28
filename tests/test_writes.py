@@ -342,6 +342,50 @@ def test_federated_write_fails_closed(op):
     )
 
 
+def test_anonymous_copy_is_denied():
+    """A copy is a write, so it dies at the authz gate without credentials —
+    before any source resolution or backend call."""
+    resp = requests.put(
+        f"{PROXY_URL}/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/copy-dest.txt",
+        headers={
+            "x-amz-copy-source": f"/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/{HIVE_KEY_DIR}/src.pmtiles"
+        },
+    )
+    assert resp.status_code == 403
+
+
+@needs_token
+def test_copy_reaches_the_federation_seam():
+    """A credentialed CopyObject is parsed and dispatched as a copy, and fails
+    closed at federation like every other write — a bounded, parseable S3
+    error rather than a hang or a silent success.
+
+    Scope, measured rather than assumed: this does NOT pin the copy-source
+    path mapping. Federation is attempted against the destination before the
+    source is resolved, so a copy fails identically here whether or not
+    `RequestInfo::with_copy_source` is wired up — verified by deleting the
+    wiring and watching this test still pass. The mapping's real regression
+    test is native: `copy_source_is_folded_into_the_internal_bucket_name` in
+    tests/object_path.rs, which does fail without it."""
+    import botocore.exceptions
+
+    client = s3_client(retries={"max_attempts": 1})
+    with pytest.raises(botocore.exceptions.ClientError) as exc:
+        client.copy_object(
+            Bucket=WRITE_ACCOUNT,
+            Key=f"{WRITE_PRODUCT}/{HIVE_KEY_DIR}/copy-dest.pmtiles",
+            CopySource=f"{WRITE_ACCOUNT}/{WRITE_PRODUCT}/{HIVE_KEY_DIR}/copy-src.pmtiles",
+        )
+    code = exc.value.response["Error"].get("Code")
+    assert code, "unparseable error response"
+    # NotImplemented would mean the copy was rejected as a cross-store copy;
+    # SignatureDoesNotMatch would mean the client-signed x-amz-copy-source
+    # header got mutated instead of the mapped value being passed alongside it.
+    assert code not in {"NotImplemented", "SignatureDoesNotMatch", "InvalidRequest"}, (
+        f"{code}: rejected before the federation seam this test pins"
+    )
+
+
 @needs_token
 def test_corrupted_session_token_rejected():
     """A SigV4 request whose sealed SessionToken has been tampered with must
