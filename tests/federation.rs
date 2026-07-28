@@ -6,7 +6,7 @@
 mod federation;
 
 use chrono::{Duration, Utc};
-use federation::{lookup, session_name, store, Action};
+use federation::{lookup, mark_renewing_since, session_name, store, Action};
 use multistore::types::BackendCredentials;
 use std::sync::Arc;
 
@@ -81,6 +81,32 @@ fn only_the_first_caller_in_the_refresh_lead_exchanges() {
             "later callers serve the still-valid credential instead of piling on"
         );
     }
+}
+
+/// A credential too close to expiry is never served, even with a renewal
+/// claimed. Signing with it risks S3 rejecting an expired token mid-flight,
+/// which reaches the caller as a misleading `AccessDenied` rather than a
+/// retryable server-side error.
+#[test]
+fn never_serves_a_credential_about_to_expire() {
+    store("arn:about-to-expire", SUBJECT, creds(2));
+    // First caller claims the renewal and leaves the near-expired credential.
+    assert!(wants_exchange("arn:about-to-expire", SUBJECT));
+    // A concurrent caller must mint rather than sign with 2s of runway.
+    assert!(wants_exchange("arn:about-to-expire", SUBJECT));
+}
+
+/// A claimant that never completes — a request cancelled mid-exchange — must not
+/// pin the key as renewing until the credential expires, which would leave every
+/// concurrent request to stampede at once when it does.
+#[test]
+fn reclaims_an_abandoned_renewal() {
+    store("arn:abandoned", SUBJECT, creds(30));
+    mark_renewing_since("arn:abandoned", SUBJECT, Utc::now() - Duration::seconds(31));
+    assert!(
+        wants_exchange("arn:abandoned", SUBJECT),
+        "a stale claim should be re-takeable"
+    );
 }
 
 /// A renewed credential is served straight from the cache again, and the

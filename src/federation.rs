@@ -26,9 +26,17 @@
 //! anyone blocking: the credential is still valid inside the refresh lead, so
 //! one request claims the exchange while the rest keep serving what they
 //! already have. Latecomers never need the refresher's result, which is exactly
-//! why this works where a lock cannot. Only a genuinely empty or expired entry
-//! makes concurrent requests each exchange — a cold isolate, where there is no
-//! usable credential to serve and nothing to single-flight *to*.
+//! why this works where a lock cannot.
+//!
+//! Only a genuinely empty or expired entry makes concurrent requests each
+//! exchange. Collapsing *those* would mean waiting, and the one way to wait on
+//! Workers without being cancelled is polling a real timer — which costs about
+//! as long as the exchange it avoids, while adding a spin loop and a dependency
+//! on the claimant surviving. The duplication is bounded to one burst per
+//! isolate cold start, against an STS endpoint provisioned for it.
+//!
+//! Upstreamed as developmentseed/multistore#133; delete this module and go back
+//! to `AwsBackendAuth` once that releases.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -48,19 +56,34 @@ use multistore_oidc_provider::{BackendCredentials, HttpExchange};
 /// refresh lead.
 const REFRESH_LEAD_SECS: i64 = 60;
 
+/// Never serve a credential with less than this much life left, even while a
+/// renewal is in flight: the backend request it signs still has to be sent and
+/// answered. Below this the request mints its own instead — S3 rejects an
+/// expired credential with `ExpiredToken`, which reaches the caller as a
+/// misleading `AccessDenied` rather than a retryable server-side error.
+const MIN_SERVE_SECS: i64 = 5;
+
+/// Treat a renewal claim older than this as abandoned and let another request
+/// take it. A claimant cancelled between claiming and storing would otherwise
+/// leave the key marked as renewing until the credential expires, at which point
+/// every concurrent request exchanges at once — the burst the claim exists to
+/// prevent. Comfortably above `STS_REQUEST_TIMEOUT`, so a live-but-slow exchange
+/// is never mistaken for an abandoned one.
+const CLAIM_TIMEOUT_SECS: i64 = 30;
+
 /// Backend option keys consumed by this middleware — stripped once resolved so
 /// they never reach the store builder.
 const OIDC_OPTION_KEYS: [&str; 3] = ["auth_type", "oidc_role_arn", "oidc_subject"];
 
 type Creds = Arc<BackendCredentials>;
 
-/// A cached credential plus whether someone is already renewing it.
+/// A cached credential and the renewal claim on it, if any.
 struct Entry {
     creds: Creds,
-    /// Set by the request that claimed the renewal for this key, so the others
-    /// keep serving `creds` (still valid) instead of piling onto STS. Cleared
-    /// when a renewal stores its result, or fails.
-    renewing: bool,
+    /// When a request claimed the renewal of `creds`, so the others keep serving
+    /// it (still valid) instead of piling onto STS. `None` when no renewal is in
+    /// flight; see [`CLAIM_TIMEOUT_SECS`] for how a stuck claim is reaped.
+    renewing_since: Option<chrono::DateTime<Utc>>,
 }
 
 /// What a caller should do for a given key.
@@ -124,37 +147,54 @@ pub(crate) fn lookup(role_arn: &str, subject: &str) -> Action {
     if entry.creds.expiration > now + Duration::seconds(REFRESH_LEAD_SECS) {
         return Action::Serve(entry.creds.clone());
     }
-    // Inside the lead but genuinely still valid, and someone is already on it.
-    if entry.creds.expiration > now && entry.renewing {
+    // Inside the lead, someone is already on it, and there is enough life left
+    // for the backend request this signs to complete.
+    let claimed = entry
+        .renewing_since
+        .is_some_and(|at| now < at + Duration::seconds(CLAIM_TIMEOUT_SECS));
+    if claimed && entry.creds.expiration > now + Duration::seconds(MIN_SERVE_SECS) {
         return Action::Serve(entry.creds.clone());
     }
-    // Either we're first into the lead window, or the credential has actually
-    // expired and there is nothing safe left to serve. Claim the slot — when
-    // expired this does not gate anyone (they have no usable credential either),
-    // it just records that a renewal is under way.
-    entry.renewing = true;
+    // Either we're first into the lead window, the previous claim went stale, or
+    // the credential is too near expiry to hand out. Claim and exchange — when
+    // there is nothing usable left this gates no one, since concurrent requests
+    // have no credential to serve either.
+    entry.renewing_since = Some(now);
     Action::Exchange
 }
 
-/// Release the renewal slot after a failed exchange, so the next request retries
-/// instead of waiting out the lead window. Retries stay serialized: whoever
-/// retries claims the slot again via [`lookup`].
+/// Release the renewal claim after a failed exchange, so the next request
+/// retries instead of coasting on a credential nobody is renewing.
+///
+/// Retries are serialized only while the credential is still servable: the next
+/// request claims via [`lookup`] and the rest keep serving. Once it drops below
+/// [`MIN_SERVE_SECS`] there is nothing safe to serve, so every concurrent
+/// request exchanges — which is the correct behaviour, not a lapse.
 fn release(role_arn: &str, subject: &str) {
     if let Some(entry) = cache().get_mut(&cache_key(role_arn, subject)) {
-        entry.renewing = false;
+        entry.renewing_since = None;
     }
 }
 
 /// Cache `creds` as the credentials for `role_arn` assumed as `subject`,
-/// releasing the renewal slot.
+/// releasing the renewal claim.
 pub(crate) fn store(role_arn: &str, subject: &str, creds: Creds) {
     cache().insert(
         cache_key(role_arn, subject),
         Entry {
             creds,
-            renewing: false,
+            renewing_since: None,
         },
     );
+}
+
+/// Mark a renewal as claimed at `at`. Test-only seam for the abandoned-claim
+/// path, which is otherwise only reachable by a request dying mid-exchange.
+#[cfg(test)]
+pub(crate) fn mark_renewing_since(role_arn: &str, subject: &str, at: chrono::DateTime<Utc>) {
+    if let Some(entry) = cache().get_mut(&cache_key(role_arn, subject)) {
+        entry.renewing_since = Some(at);
+    }
 }
 
 /// Sanitize an OIDC subject into an AWS `RoleSessionName` (`[\w+=,.@-]{2,64}`).
