@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.4](https://github.com/source-cooperative/data.source.coop/compare/v2.3.3...v2.3.4) (2026-07-28)
+
+
+### Bug Fixes
+
+* **observability:** log relayed backend identity on 5xx ([#204](https://github.com/source-cooperative/data.source.coop/issues/204)) ([97e4e25](https://github.com/source-cooperative/data.source.coop/commit/97e4e25ae33e353272d9359361edfc7440fbbe94))
+
 ## [2.3.3](https://github.com/source-cooperative/data.source.coop/compare/v2.3.2...v2.3.3) (2026-07-28)
 
 
