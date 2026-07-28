@@ -47,9 +47,37 @@ jobs:
     if: vars.FEDERATION_TEST_ACCOUNT != '' && vars.FEDERATION_TEST_PRODUCT != '' && vars.FEDERATION_TEST_KEY != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # Mints the caller identity for the copy-source authz test; see below.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Mint caller identity token (GitHub OIDC)
+        # A GitHub Actions OIDC token, minted per run — short-lived by design
+        # and never stored, unlike a token parked in a repo secret.
+        #
+        # Dormant until Source registers GitHub as a valid IdP, so that products
+        # can accept writes from GitHub Actions. Two things must land first:
+        # the deployment's AUTH_ISSUER must accept GitHub's issuer (today it is
+        # a single Ory URL — src/config.rs reads AUTH_ISSUER as one String,
+        # unlike the comma-separated AUTH_AUDIENCE, so this needs a code change
+        # too), and the audience Source expects must be set as
+        # FEDERATION_TEST_AUDIENCE. Until then no token is minted and the
+        # copy-source authz test skips; the rest of the suite is unaffected.
+        if: vars.FEDERATION_TEST_AUDIENCE != ''
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=${{ vars.FEDERATION_TEST_AUDIENCE }}" \
+            | jq -r '.value')
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "::error::FEDERATION_TEST_AUDIENCE is set but minting returned no token"
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
       - name: Run federation smoke tests
         env:
           PROXY_URL: ${{ needs.deploy.outputs.deploy_url }}
@@ -57,4 +85,9 @@ jobs:
           FEDERATION_TEST_PRODUCT: ${{ vars.FEDERATION_TEST_PRODUCT }}
           FEDERATION_TEST_KEY: ${{ vars.FEDERATION_TEST_KEY }}
           FEDERATION_RESTRICTED_PRODUCT: ${{ vars.FEDERATION_RESTRICTED_PRODUCT }}
-        run: uvx --with requests pytest tests/test_federation.py -v
+          FEDERATION_WRITE_PRODUCT: ${{ vars.FEDERATION_WRITE_PRODUCT }}
+          # Set by the mint step above, and only when it runs.
+          CI_WRITE_ID_TOKEN: ${{ env.CI_WRITE_ID_TOKEN }}
+        # boto3: the copy-source authz test signs SigV4 through the AWS SDK
+        # rather than hand-rolling requests.
+        run: uvx --with requests --with boto3 pytest tests/test_federation.py -v
