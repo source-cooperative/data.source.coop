@@ -2,14 +2,15 @@
 
 **Date:** 2026-03-14
 **RFC:** RFC-001 §5
+**Language:** ASD-STE100 Simplified Technical English
 
 ---
 
 ## Context
 
-Source Cooperative's data proxy serves users globally, but most upstream data resides in AWS `us-west-2`. Users far from that region experience significant latency. Replicating data to additional regions is cost-prohibitive.
+The data proxy of Source Cooperative serves users around the world. But most of the upstream data is in the AWS region `us-west-2`. Users far from that region get much latency. To copy the data into more regions costs too much.
 
-The current proxy is a single ECS deployment. It works, but provides no edge presence for global users.
+The current proxy is one ECS deployment. It operates correctly, but it gives no edge presence to global users.
 
 ---
 
@@ -17,19 +18,19 @@ The current proxy is a single ECS deployment. It works, but provides no edge pre
 
 ### Cloudflare Workers
 
-The deployment target is Cloudflare Workers, with the proxy compiled to WebAssembly. Workers deploy to Cloudflare's edge network (330+ locations worldwide) automatically.
+The deployment target is Cloudflare Workers, and the proxy compiles to WebAssembly. Cloudflare deploys a Worker automatically to its edge network of more than 330 locations.
 
-Key properties:
+The primary properties are:
 
-- **Global distribution without operational overhead.** Requests are served from the location closest to the caller. Onward routing to upstream storage traverses the Cloudflare backbone rather than the public internet.
-- **Effectively no cold start.** Workers use V8 isolates (not containers). Cloudflare's "Shard and Conquer" consistent hashing achieves a 99.99% warm request rate.
-- **No Cloudflare-imposed egress fees.** Upstream object store egress fees still apply, but Cloudflare does not charge for bandwidth out of Workers.
-- **No wall-clock timeout.** CPU time limits apply per invocation, but streaming large objects is not killed mid-response due to elapsed time.
-- **Predictable, low cost.** $5/mo base, $0.30/M requests, $0.02/M CPU-ms; 10M requests + 30M CPU-ms included.
-- **WASM compatibility.** Rust compiles to WASM with mature toolchain support (`wasm-pack`, `worker-rs`).
+- **Global distribution with no operational work.** The network serves each request from the location nearest to the caller. Traffic to the upstream storage goes across the Cloudflare backbone and not across the public internet.
+- **Almost no cold start.** Workers use V8 isolates and not containers. The "Shard and Conquer" technique of Cloudflare uses consistent hashing and keeps 99.99% of the requests warm.
+- **No egress fees from Cloudflare.** The upstream object store continues to charge its egress fees, but Cloudflare does not charge for bandwidth out of a Worker.
+- **No wall-clock limit.** A CPU-time limit applies to each invocation. But the platform does not stop a large object in the middle of the response because too much time went by.
+- **Low and predictable cost.** The base plan costs $5 each month. Then requests cost $0.30 for each million, and CPU time costs $0.02 for each million milliseconds. The base plan includes 10 million requests and 30 million CPU milliseconds.
+- **WASM compatibility.** Rust compiles to WASM, and the toolchain (`wasm-pack`, `worker-rs`) is mature.
 
 > [!NOTE]
-> **Future extension: Regional ECS deployments.** For high-throughput, in-region workflows — data pipelines (Spark, Databricks, Polars) running in the same cloud region as the source data — routing through an edge node adds unnecessary hops and egress fees. Regional ECS deployments running the same Rust core could serve these workloads with lower latency and zero cross-region egress. Multistore is designed to support additional runtime targets without code divergence. This can be pursued when there is demonstrated demand.
+> **Future extension: Regional ECS deployments.** Some workflows have a high throughput and operate in one region. Examples are data pipelines (Spark, Databricks, Polars) that run in the same cloud region as the source data. For these workflows, an edge node adds unwanted hops and egress fees. A regional ECS deployment with the same Rust core can serve these workloads with less latency and no cross-region egress. Multistore can support more runtime targets with no divergence of the code. We can do this work when there is a demonstrated demand.
 
 ---
 
@@ -37,24 +38,24 @@ Key properties:
 
 **Benefits**
 
-- Global users experience lower latency without data replication
-- No Cloudflare egress fees for the majority of traffic
-- Effectively zero cold start
-- Single deployment target keeps operational surface small
+- Global users get less latency, and we do not copy the data.
+- Cloudflare charges no egress fees for most of the traffic.
+- There is almost no cold start.
+- One deployment target keeps the operational surface small.
 
-**Costs / Risks**
+**Costs and Risks**
 
-- WASM compilation constrains library choices (no `std` features that don't work in WASM)
-- In-region, high-throughput workflows (e.g. bulk ETL in `us-west-2`) route through the edge rather than staying within the region — this adds latency and may incur upstream egress fees that an in-region proxy would avoid
+- Compilation to WASM limits the choice of libraries. We cannot use a `std` feature that does not operate in WASM.
+- Some workflows have a high throughput in one region. An example is a bulk ETL job in `us-west-2`. These workflows go through the edge and do not stay in the region. This adds latency. It can also add upstream egress fees that a proxy in the same region would prevent.
 
 ---
 
 ## Alternatives Considered
 
-**Single ECS deployment (current model)** — rejected. Does not address global latency without data replication. No edge presence.
+**One ECS deployment (the current model)** — rejected. It does not decrease the global latency, and to decrease it we must copy the data. It has no edge presence.
 
-**CDN in front of ECS** — considered. A traditional CDN (CloudFront, Cloudflare) can cache static responses, but the proxy's responses are not cacheable in a general-purpose CDN sense (authenticated, per-user). The proxy logic must run at the edge, not just caching.
+**A CDN in front of ECS** — considered. A usual CDN (CloudFront or Cloudflare) caches static responses. But the responses of the proxy are authenticated and specific to one user, thus a general-purpose CDN cannot cache them. The logic of the proxy must operate at the edge, and not only the cache.
 
-**Workers + Regional ECS** — considered as the initial deployment. Simpler to start with Workers only and add regional ECS deployments when demand materialises. Multistore's architecture supports this without requiring upfront investment in a second deployment target.
+**Workers and regional ECS together** — considered as the first deployment. It is more simple to start with Workers only, and to add a regional ECS deployment when the demand occurs. The architecture of multistore supports this, thus we do not invest in a second deployment target now.
 
-**Lambda@Edge / CloudFront Functions** — considered. More limited runtime environment, tighter CPU and memory constraints, and AWS-specific. Workers offer a more capable and provider-neutral edge compute model.
+**Lambda@Edge or CloudFront Functions** — considered. Their runtime environment is more limited, their CPU and memory limits are tighter, and they are specific to AWS. Workers give a more capable edge compute model, and that model is neutral to the provider.

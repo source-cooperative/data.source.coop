@@ -2,32 +2,33 @@
 
 **Date:** 2026-03-14
 **RFC:** RFC-001 §6
+**Language:** ASD-STE100 Simplified Technical English
 
 ---
 
 ## Context
 
-The re-architected proxy must compile to WebAssembly for Cloudflare Workers (ADR-002). The language must also support native compilation from the same codebase to enable future deployment targets. The proxy handles security-sensitive operations: cryptographic signature verification, credential issuance, and access policy evaluation.
+The new proxy must compile to WebAssembly for Cloudflare Workers (ADR-002). The language must also compile the same codebase to a native target, for future deployment targets. The proxy does operations that are sensitive to security: it checks cryptographic signatures, issues credentials, and evaluates access policies.
 
-The current proxy is written in Rust. The Source Cooperative contributor community has more Rust experience than Go, and more Go experience than C++. Python is more widely known but is unsuitable for the WASM target.
+The current proxy is in Rust. The contributors to Source Cooperative know Rust better than Go, and Go better than C++. More people know Python, but Python is not applicable to the WASM target.
 
 ---
 
 ## Decision
 
-We continue with **Rust** as the implementation language.
+We continue to use **Rust** as the implementation language.
 
 ### Rationale
 
-**WASM maturity.** Rust has the most mature and production-ready toolchain for compiling to WebAssembly. The `worker-rs` crate provides idiomatic bindings to the Cloudflare Workers runtime. This is a well-trodden path, not a bet on emerging capability.
+**WASM maturity.** Rust has the most mature toolchain for compilation to WebAssembly. The `worker-rs` crate gives idiomatic bindings to the Cloudflare Workers runtime. This is a known path, and not a bet on a new capability.
 
-**Performance.** Rust's zero-cost abstractions and lack of garbage collection pauses make it well-suited to a proxy that streams large objects with tight latency requirements. This was already proven by the current proxy.
+**Performance.** Rust has zero-cost abstractions and no garbage collection pauses. Thus Rust is applicable to a proxy that transfers large objects and has tight latency limits. The current proxy already showed this.
 
-**Type system and correctness.** The proxy handles authentication tokens, credential issuance, cryptographic signature verification, and access policy evaluation. Rust's type system — and in particular its trait system — encodes invariants that would be runtime errors in other languages. This is increasingly valuable in a codebase where AI-assisted development is part of the workflow: a strong type system provides a correctness harness that catches generated code that compiles but violates domain constraints.
+**Type system and correctness.** The proxy operates on authentication tokens, credential issue, cryptographic signatures, and access policies. The type system of Rust, and specially its trait system, holds invariants that other languages can only check at runtime. This is more and more important in a codebase where AI helps to write the code. A strong type system finds generated code that compiles but that breaks the domain constraints.
 
-**Trait-based extensibility.** The Rust trait system is central to multistore's modularity goals. Traits allow the core proxy framework to define interfaces — for auth, authz, storage backend, middleware, configuration — that downstream users implement without forking the core.
+**Extensibility through traits.** The trait system of Rust is the basis of the modular design of multistore. Traits let the core framework specify interfaces for authentication, authorization, storage backends, middleware, and configuration. Downstream users then write their own implementations and do not fork the core.
 
-**Community familiarity.** Rust is the best fit given the actual pool of contributors.
+**Community knowledge.** Rust is the best fit for the actual group of contributors.
 
 ---
 
@@ -35,27 +36,27 @@ We continue with **Rust** as the implementation language.
 
 **Benefits**
 
-- Single codebase supports WASM and native compilation targets
-- Zero-cost abstractions and no GC pauses for high-throughput streaming
-- Trait system enables the modular, community-extensible architecture
-- Strong type system as a correctness harness for security-sensitive code
-- Continuity with the existing proxy — no rewrite learning curve for current contributors
+- One codebase compiles to WASM and to native targets.
+- Zero-cost abstractions and no GC pauses give a high throughput for streams.
+- The trait system makes the modular architecture possible, and the community can extend it.
+- The strong type system finds errors in code that is sensitive to security.
+- The work continues on the existing proxy. The current contributors do not learn a new language.
 
-**Costs / Risks**
+**Costs and Risks**
 
-- Steeper learning curve for new contributors compared to Go or Python
-- Longer compilation times than Go
-- WASM target constrains which crates and `std` features can be used in the shared core
-- Async runtime differs between Workers (`worker-rs` primitives) and native targets (`tokio`), requiring careful abstraction if additional deployment targets are added
+- New contributors learn Rust more slowly than Go or Python.
+- Compilation takes more time than in Go.
+- The WASM target limits which crates and which `std` features the shared core can use.
+- The async runtime is different for Workers (`worker-rs` primitives) and for native targets (`tokio`). If we add more deployment targets, we must abstract this difference carefully.
 
 ---
 
 ## Alternatives Considered
 
-**Go** — considered. Strong WASM support is emerging but less mature than Rust's. Lacks the trait system needed for the modularity goals. GC pauses are a concern for high-throughput streaming. Fewer Rust contributors would need to learn a new language than Go contributors.
+**Go** — considered. Its WASM support increases but is less mature than the Rust support. It has no trait system for the modular design. Its GC pauses are a risk for streams with a high throughput. Also, fewer Rust contributors must learn a new language than Go contributors.
 
-**TypeScript (native Workers language)** — considered. First-class Workers support, but limited performance for streaming workloads. No type-level enforcement of security invariants comparable to Rust's ownership and trait system.
+**TypeScript (the native language of Workers)** — considered. Workers support it fully, but its performance for streams is limited. Its types cannot hold the security invariants that the ownership and trait system of Rust can hold.
 
-**Python** — rejected. Does not compile to WASM. Runtime overhead unsuitable for a streaming proxy.
+**Python** — rejected. It does not compile to WASM. Its runtime overhead is too large for a streaming proxy.
 
-**C++** — rejected. Less community familiarity than Rust. Memory safety concerns for security-sensitive code. No comparable trait system for extensibility.
+**C++** — rejected. Fewer contributors know it than Rust. Memory safety is a risk in code that is sensitive to security. It has no equivalent trait system for extensibility.
