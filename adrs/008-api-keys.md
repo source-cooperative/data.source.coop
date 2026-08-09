@@ -3,31 +3,30 @@
 **Date:** 2026-04-01
 **RFC:** RFC-001
 **Depends on:** ADR-001, ADR-004, ADR-006
-**Language:** ASD-STE100 Simplified Technical English
 
 ---
 
 ## Context
 
-ADR-004 specifies the inbound authentication with OIDC federation. A caller sends a JWT from a trusted identity provider to `/.sts` and gets short-lived STS credentials in exchange. This operates correctly for a CI/CD platform with an ambient OIDC token, such as GitHub Actions or GitLab CI. It also operates correctly for an interactive user who can do a browser login at `auth.source.coop`.
+ADR-004 defines inbound authentication via OIDC federation: callers present a JWT from a trusted identity provider and exchange it at `/.sts` for short-lived STS credentials. This works well for CI/CD platforms with ambient OIDC tokens (GitHub Actions, GitLab CI, etc.) and for interactive users who can complete a browser-based login via `auth.source.coop`.
 
-But a large group of users has neither of these:
+However, a significant class of users has neither:
 
-- Researchers who run recurring batch jobs or cronjobs on a university HPC cluster (SLURM, PBS, or a traditional login node)
-- On-premises instruments or data loggers that send observations at a given interval
-- Legacy ETL systems in an environment with no supported OIDC issuer
+- Researchers running recurring batch jobs or cronjobs on university HPC clusters (SLURM, PBS, traditional login nodes)
+- On-premises instruments or data loggers that push observations on a schedule
+- Legacy ETL systems in environments without a supported OIDC issuer
 
-These users have Source Cooperative accounts. But their compute environments issue no OIDC token, and they cannot do a browser authentication at runtime. ADR-001 and ADR-004 both identify this gap as future work.
+These users have Source Cooperative accounts but operate in compute environments that do not issue OIDC tokens and cannot perform interactive browser authentication at runtime. ADR-001 and ADR-004 both identify this gap as future work.
 
 ---
 
 ## Decision
 
-### An API Key Is a Long-Lived JWT
+### API Keys as Long-Lived JWTs
 
-Source Cooperative issues each API key as a long-lived JWT. The data proxy signs the key with its own signing key. This is the same key that the proxy uses as an OIDC issuer for the outbound storage authentication (ADR-006). The proxy already publishes its JWKS and its `/.well-known/openid-configuration` document. Thus the same key material checks an API key JWT.
+Source Cooperative issues API keys as long-lived JWTs signed by the data proxy's own signing key — the same key the proxy uses as an OIDC issuer for outbound storage authentication (ADR-006). The proxy already publishes its JWKS and `/.well-known/openid-configuration`; API key JWTs are verifiable against the same key material.
 
-An API key JWT contains these claims:
+An API key JWT contains:
 
 ```json
 {
@@ -40,37 +39,37 @@ An API key JWT contains these claims:
 }
 ```
 
-- `iss` is the issuer URL of the proxy. It is not `auth.source.coop`, because that issuer is Ory Network. Source Cooperative cannot make a token from that issuer.
-- `sub` identifies the Source Cooperative account that owns the key.
-- `jti` is a unique key identifier. The proxy uses it to check for a revocation.
-- `exp` is optional. A key with no expiry stays valid until a person revokes it.
-- `type` distinguishes an API key JWT from the other tokens of the proxy, such as an outbound federation token.
+- `iss` is the proxy's own issuer URL, not `auth.source.coop` (which is Ory Network and outside Source Cooperative's control for token minting)
+- `sub` identifies the Source Cooperative account that owns the key
+- `jti` is a unique key identifier used for revocation checks
+- `exp` is optional — keys without an expiry are valid until explicitly revoked
+- `type` distinguishes API key JWTs from other tokens the proxy may issue (e.g. outbound federation tokens)
 
 ### Key Lifecycle
 
 **Creation:**
 
-A user makes an API key in the Source Cooperative UI or CLI:
+Users create API keys via the Source Cooperative UI or CLI:
 
 ```
 source keys create --label "ncar-cronjob" --role sc::my-org::role/publisher
 ```
 
-The system then does these steps:
-1. It makes a unique `jti`.
-2. It writes the key metadata to the policy store: the `jti`, the account ID, the label, the bound Role (optional), the creation time, and the expiry time (which can be empty).
-3. It makes the JWT and signs it.
-4. It returns the raw JWT to the user. The UI shows the JWT one time, and the platform does not keep it.
+The system:
+1. Generates a unique `jti`
+2. Stores key metadata in the policy store: `jti`, account ID, label, bound Role (optional), created-at, expires-at (nullable)
+3. Mints and signs the JWT
+4. Returns the raw JWT to the user — displayed once, never stored by the platform
 
 **Revocation:**
 
-A user revokes a key in the UI or CLI:
+Users revoke keys via the UI or CLI:
 
 ```
 source keys revoke <key_id>
 ```
 
-The system then marks the `jti` of that key as revoked in the policy store. The revocation becomes effective after the TTL of the `jti` cache (refer to the section below).
+Revocation marks the key's `jti` as revoked in the policy store. The revocation takes effect within the `jti` validation cache TTL (see below).
 
 **Management API:**
 
@@ -80,11 +79,11 @@ GET    /api/accounts/{account_id}/keys
 DELETE /api/accounts/{account_id}/keys/{key_id}
 ```
 
-The `GET` endpoint returns the key metadata: the ID, the label, the creation time, the expiry time, and the last use time. It never returns the JWT. Only an account owner or an organisation admin can manage a key.
+The `GET` endpoint returns key metadata (ID, label, created-at, expires-at, last-used-at) but never the JWT itself. Only account owners and org admins can manage keys.
 
 ### STS Exchange
 
-A caller exchanges an API key JWT at `/.sts/assume-role-with-web-identity`. This is the same flow as for any other OIDC token (ADR-004):
+API key JWTs are exchanged at `/.sts/assume-role-with-web-identity` using the same flow as any other OIDC token (ADR-004):
 
 ```
 Action=AssumeRoleWithWebIdentity
@@ -93,23 +92,23 @@ Action=AssumeRoleWithWebIdentity
 &RoleSessionName=ncar-daily-sync
 ```
 
-The STS exchange flow is the flow of ADR-004 with one more step:
+The STS exchange flow proceeds as defined in ADR-004 with one additional step:
 
-1. Read the `account_id` and the `role_name` from the `RoleArn`.
-2. Load the Role definition from the cache.
-3. Read the `iss` claim from the JWT. It is `https://data.source.coop`.
-4. Check the JWT signature against the JWKS of the proxy.
-5. Check `exp` (if it is present), `nbf`, and `iat`.
-6. **Check the `jti` in the policy store.** Make sure that no person revoked the key (cached, 30–60 s TTL).
-7. Evaluate the claim constraints of the IdP binding that agrees.
-8. Make sure that `DurationSeconds` is not more than the `max_session_duration` of the Role.
-9. Make the credentials and send the response.
+1. Parse `RoleArn` → extract `account_id` and `role_name`
+2. Load Role definition (cached)
+3. Extract `iss` from JWT → matches `https://data.source.coop`
+4. Verify JWT signature against the proxy's own JWKS
+5. Verify `exp` (if present), `nbf`, `iat`
+6. **Validate `jti` against the policy store** — confirm the key has not been revoked (cached, 30–60s TTL)
+7. Evaluate claim constraints for the matched IdP binding
+8. Validate `DurationSeconds` ≤ Role's `max_session_duration`
+9. Generate credentials and return response
 
-Step 6 is the only addition to the existing STS flow. The proxy omits this step for a token that is not an API key, thus for a token with no `"type": "api_key"` claim.
+Step 6 is the only addition to the existing STS flow. For non-API-key tokens (those without `"type": "api_key"`), this step is skipped.
 
-### Registration as a Platform IdP
+### Platform IdP Registration
 
-The system registers the issuer of the proxy as a platform IdP:
+The proxy's own issuer is registered as a platform IdP:
 
 ```json
 {
@@ -121,7 +120,7 @@ The system registers the issuer of the proxy as a platform IdP:
 }
 ```
 
-A caller can assume a Role with an API key only if that Role has an identity constraint for this IdP:
+Roles that should be assumable via API key must include an identity constraint binding for this IdP:
 
 ```json
 {
@@ -132,22 +131,22 @@ A caller can assume a Role with an API key only if that Role has an identity con
 }
 ```
 
-This uses the Role and identity constraint model of ADR-004 with no change. Each account owner permits API key access for each Role separately. A caller cannot assume a Role that has no `source-coop-api-key` binding.
+This reuses the existing Role and identity constraint model from ADR-004 without modification. Account owners explicitly opt in to API key access per Role — a Role without a `source-coop-api-key` binding cannot be assumed with an API key.
 
 ### Role Binding
 
-A user can bind an API key to one Role when the user makes the key. A bound key can assume only that Role. An unbound key can assume each Role of the account that has a `source-coop-api-key` identity constraint.
+API keys can optionally be bound to a specific Role at creation time. A bound key can only be used to assume that Role. An unbound key can assume any Role the account owns that has a `source-coop-api-key` identity constraint.
 
-A bound key does less damage if it leaks, because it can access only what its Role permits. We recommend a bound key for each automated workflow of high value.
+Bound keys reduce blast radius: if leaked, the key can only access what that specific Role permits. For high-value automated workflows, bound keys are recommended.
 
-### Cache and Revocation Latency
+### Caching and Revocation Latency
 
-The `jti` check uses the same cache infrastructure as the other policy store lookups (ADR-007):
+The `jti` validity check uses the same caching infrastructure as other policy store lookups (ADR-007):
 
-- An in-process cache with a TTL of 30–60 seconds
+- In-process cache with 30–60s TTL
 - Workers KV as a shared cache tier
 
-Thus a revocation becomes effective in 30 to 60 seconds. This latency is satisfactory for the target use cases, which are long cronjobs and batch pipelines. If a faster revocation becomes necessary, we can rotate the HMAC server secret of ADR-001. This makes all active STS sessions invalid immediately. It causes more disruption, but it is available as an emergency response.
+This means revocation takes effect within 30–60 seconds. For the target use case (long-running cronjobs, batch pipelines), this latency is acceptable. If faster revocation is needed, the HMAC server secret rotation mechanism from ADR-001 invalidates all active STS sessions immediately — a more disruptive but available emergency response.
 
 ---
 
@@ -155,30 +154,30 @@ Thus a revocation becomes effective in 30 to 60 seconds. This latency is satisfa
 
 **Benefits**
 
-- The design fills the authentication gap for environments with no OIDC and no browser access.
-- The proxy gets no new authentication path. An API key JWT uses the existing `/.sts` exchange.
-- The design uses the existing OIDC issuer infrastructure of the proxy, thus the signing key and the JWKS of ADR-006.
-- The design uses the existing Role and identity constraint model of ADR-004.
-- The revocation is explicit and auditable through the `jti` lookup.
-- An optional Role binding limits the damage from a leaked key.
+- Covers the authentication gap for environments without OIDC or browser access
+- No new auth path at the proxy layer — API key JWTs flow through the existing `/.sts` exchange
+- Reuses the proxy's existing OIDC issuer infrastructure (signing key, JWKS) from ADR-006
+- Reuses the existing Role and identity constraint model from ADR-004
+- Revocation is explicit and auditable via `jti` lookup
+- Optional Role binding limits blast radius of leaked keys
 
-**Costs and Risks**
+**Costs / Risks**
 
-- An API key JWT is a bearer token. Any person with the raw JWT can use it. A user must protect it like a password and keep it in an environment variable or a secret file, and not in the source control.
-- The `jti` check adds a policy store dependency to the STS exchange path of an API key token. A cache miss adds latency.
-- A key with no expiry stays valid until a person revokes it. If a user loses access to the management UI, for example when the user leaves a university, the key continues to exist. Then an organisation admin must revoke it.
-- The signing key of the proxy now has two functions: the outbound federation tokens (ADR-006) and the API key JWTs. A compromise of that key has an effect on both. The key rotation must include both functions.
+- API key JWTs are bearer tokens — anyone with the raw JWT can use it. Users must treat them like passwords (store in environment variables or secret files, not in source control)
+- The `jti` revocation check adds a policy store dependency to the STS exchange path for API key tokens. Cache misses add latency.
+- Keys without expiry are valid indefinitely until revoked. If a user loses access to the management UI (e.g. leaves a university), orphaned keys persist unless an org admin revokes them.
+- The proxy's signing key is now used for two purposes: outbound federation tokens (ADR-006) and API key JWTs. A signing key compromise affects both. Key rotation must account for both uses.
 
 ---
 
 ## Alternatives Considered
 
-**Long-lived tokens from Ory** — not possible. `auth.source.coop` is Ory Network, and Ory controls its own signing keys. Source Cooperative cannot make an arbitrary long-lived JWT from the issuer of Ory.
+**Ory-issued long-lived tokens** — not feasible. `auth.source.coop` is Ory Network, which controls its own signing keys. Source Cooperative cannot mint arbitrary long-lived JWTs from Ory's issuer.
 
-**The OAuth2 client credentials grant** — considered. This grant authenticates an application and not a user. Thus the `sub` claim of the token is the client ID and not a user identity. To map an OAuth2 client back to a Source Cooperative account, we must build a custom service account system on OAuth2.
+**OAuth2 client credentials grant** — considered. The client credentials grant authenticates an application, not a user — the resulting token's `sub` is the client ID, not a user identity. Mapping OAuth2 clients back to Source Cooperative accounts would require a bespoke service account system built on top of OAuth2.
 
-**Personal access tokens from Ory** — examined. The PAT or API key of Ory Network (`ory_pat_`) gives access to the project admin API, and it does not authenticate an end user. A user-scoped PAT is an [open feature request](https://github.com/ory/kratos/issues/1106) on Ory Kratos and is not available.
+**Ory personal access tokens** — investigated. Ory Network's PAT/API key concept (`ory_pat_`) is for project admin API access, not end-user authentication. User-scoped PATs are an [open feature request](https://github.com/ory/kratos/issues/1106) on Ory Kratos but not available.
 
-**Opaque API keys with a hash check** — considered. The platform makes a random secret, keeps a hash of it, and checks the key when it calculates the hash again. This operates correctly. But it needs a separate validation endpoint or a new authentication path at `/.sts`. The JWT approach prevents this. At the STS layer, an API key is the same as any other OIDC token. Thus there is no new endpoint and no new validation logic, except the `jti` check.
+**Opaque API keys with hash-based validation** — considered. The platform generates a random secret, stores a hash, and validates by re-hashing. This works but requires a dedicated validation endpoint or a new auth path at `/.sts`. The JWT approach avoids this by making API keys indistinguishable from other OIDC tokens at the STS layer — no new endpoint, no new validation logic beyond the `jti` check.
 
-**Long-lived refresh tokens from Ory** — considered as a short-term solution. The user does one `source login` with the device flow and keeps the refresh token. A cronjob then gets a new access token automatically. This needs no new infrastructure. But a refresh token expires, and then the unattended workflow fails silently. This is applicable as a temporary measure, but it is not a durable solution for a workload that continues indefinitely.
+**Long-lived Ory refresh tokens** — considered as a near-term workaround. The user performs a one-time `source login` (device flow) and stores the refresh token. Cronjobs silently refresh access tokens. This works without new infrastructure but refresh tokens expire eventually, causing silent failures in unattended workflows. Suitable as an interim measure but not a durable solution for indefinitely recurring workloads.
