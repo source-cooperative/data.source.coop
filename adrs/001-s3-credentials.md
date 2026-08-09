@@ -7,7 +7,13 @@
 
 ## Context
 
-Source Cooperative exposes a data proxy that must be consumable by the broadest possible range of data engineering tooling without requiring Source-specific client libraries. The S3 API has become the de facto standard protocol for object storage access. The ecosystem of compatible tooling is vast: AWS SDKs in every major language, CLI tools (`aws s3`, `rclone`), data frameworks (DuckDB, Polars, PyArrow, fsspec, GDAL/VSI), orchestration systems (Airflow, Dagster, Prefect), and notebook environments all speak S3 natively.
+Source Cooperative exposes a data proxy that must be consumable by the broadest possible range of data engineering tooling without requiring Source-specific client libraries. The S3 API has become the de facto standard protocol for object storage access. The ecosystem of compatible tooling is vast — all of the following speak S3 natively:
+
+- AWS SDKs in every major language
+- CLI tools (`aws s3`, `rclone`)
+- Data frameworks (DuckDB, Polars, PyArrow, fsspec, GDAL/VSI)
+- Orchestration systems (Airflow, Dagster, Prefect)
+- Notebook environments
 
 The current proxy implements S3 compatibility and issues long-lived static `Access Key ID` / `Secret Access Key` pairs per user. Long-lived static credentials are a persistent security liability: they are frequently stored in plaintext config files, are difficult to rotate, and have no ambient context about the caller's environment or intended scope. Several high-profile incidents in the Source Cooperative infrastructure (including a compromised IAM credential used to conduct an SES email campaign) underscore the operational risk of long-lived secrets.
 

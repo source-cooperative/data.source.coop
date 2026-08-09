@@ -46,7 +46,7 @@ The previous design used three fixed roles: `anonymous`, `authenticated_user`, a
 
 ### Per-Request Authorization
 
-Authorization proceeds in steps, with early exits to minimise lookups:
+Authorization proceeds in six steps, each of which can permit or deny immediately, so that the number of lookups stays small:
 
 **Step 1 — Identify the caller**
 
