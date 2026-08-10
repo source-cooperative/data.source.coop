@@ -1,7 +1,10 @@
 # ADR-001: S3 API Compatibility and Temporary-Credentials-Only Credential Model
 
+**Status:** Accepted — implemented
 **Date:** 2026-03-14
 **RFC:** RFC-001 §4
+**Implementation:** `src/lib.rs`, `src/config.rs`, `multistore-sts`
+**Implemented by:** #116 (proxy rebuild on multistore + Workers), #165 (configurable session TTL), #176 (encoded-path SigV4 verification), #181 / #198 (multipart and CopyObject signing fixes)
 
 ---
 
@@ -33,86 +36,65 @@ This is unchanged from the current proxy. S3 API compatibility is a non-negotiab
 
 **We do not issue or support long-lived static `Access Key ID` / `Secret Access Key` pairs.**
 
-All SigV4 credentials issued by Source Cooperative are temporary session credentials — the same triplet shape that AWS STS issues:
+The proxy has no credential store to consult: its `CredentialRegistry::get_credential` returns `None` unconditionally, so there is no code path by which a static key could be honoured. All SigV4 credentials issued by Source Cooperative are temporary session credentials — the same triplet shape that AWS STS issues:
 
 ```
-AccessKeyId     (e.g. "SCSTS1...")
-SecretAccessKey (HMAC-derived key)
-SessionToken    (signed JWT encoding identity, role, permissions, and expiry)
+AccessKeyId     (random identifier, generated per session)
+SecretAccessKey (random 40-character secret, generated per session)
+SessionToken    (sealed token carrying the credential set and its metadata)
 ```
 
-Callers obtain these credentials by exchanging a trusted identity token at the STS endpoint (`POST /.sts/assume-role-with-web-identity`) before making S3 API calls. The `AccessKeyId` is prefixed with `SCSTS` to identify STS-issued credentials and reserve namespace for future credential types (see [Permanent API Keys](#permanent-api-keys)).
+Callers obtain these credentials by exchanging a trusted identity token at the STS endpoint before making S3 API calls (see ADR-004).
 
-### Session Token Design
+### Session Token Design — Sealed Tokens
 
-The `SessionToken` is a signed JWT using ES256 (ECDSA P-256) asymmetric signing. Its payload contains:
+The `SessionToken` is an **AES-256-GCM sealed blob**: `base64url(nonce[12] || ciphertext+tag[16])`. The full credential set is serialised and encrypted into the token itself under a symmetric key (`SESSION_TOKEN_KEY`, a base64-encoded 32-byte key held as a Worker secret).
 
-```json
-{
-  "sub": "sc::my-org::role/github-publisher",
-  "account_id": "my-org",
-  "role_name": "github-publisher",
-  "assumed_by": "repo:my-org/my-repo:ref:refs/heads/main",
-  "assumed_by_issuer": "https://token.actions.githubusercontent.com",
-  "session_name": "my-ci-job-42",
-  "access_key_id": "SCSTS1...",
-  "permissions": [
-    {"actions": ["read", "write"], "resources": ["sc::my-org::product/climate-data/*"]}
-  ],
-  "iat": 1711100000,
-  "nbf": 1711100000,
-  "exp": 1711103600,
-  "aud": "data.source.coop",
-  "kid": "<signing key ID>"
-}
-```
+The sealed payload carries:
+
+| Field | Purpose |
+|---|---|
+| `access_key_id` | The identifier the caller signs with |
+| `secret_access_key` | The signing secret, recovered by unsealing |
+| `expiration` | Enforced at unseal time; an expired token fails closed |
+| `assumed_role_id` | The Role assumed at exchange time (currently always `_default`) |
+| `source_identity` | The original OIDC `sub` — the caller's Ory identity |
+| `allowed_scopes` | Scope ceiling sealed at mint time (currently empty — unlimited) |
 
 Key properties of this design:
 
-- **The `SecretAccessKey` is not in the token.** It is derived deterministically on each request: `SecretAccessKey = HMAC-SHA256(server_secret, AccessKeyId)`. The server reconstructs it by re-deriving from the `AccessKeyId`. This prevents a leaked SessionToken from directly yielding a complete credential set.
-- **`assumed_by` and `assumed_by_issuer`** preserve the original IdP subject for audit trails, even though the credentials act on behalf of the account.
-- **`permissions`** embed the Role's permission ceiling in the token, avoiding a per-request policy store lookup for Role evaluation. The account's underlying permissions are still resolved dynamically (see ADR-005).
-- **`nbf`** (not-before) prevents token use before the issued time. Set equal to `iat` at issuance; the verifier applies a 60-second clock skew tolerance.
-- **`permissions`** are readable by anyone who intercepts the SessionToken. This is acceptable: the permission ceiling reveals the Role's scope but does not grant access without the corresponding SecretAccessKey (which requires the server secret to derive).
-- **`kid`** in the JWT header supports signing key rotation.
+- **Verification is fully stateless.** The proxy decrypts the token on each request and recovers the `SecretAccessKey` directly. No database lookup, no key derivation, and no asymmetric verification on the request hot path — which matters on Workers, where in-memory state does not persist across invocations.
+- **The token is opaque to the caller.** Unlike a JWT, a client cannot read the sealed payload. Scope and identity metadata are not disclosed to whoever holds the credential.
+- **Scope is bound at mint time.** `allowed_scopes` is sealed when the credential is issued, so later configuration changes affect only newly minted credentials, never ones already in flight.
+- **`source_identity` preserves the original subject**, which is what the proxy presents to the policy store (see ADR-005).
+- **Authenticated encryption.** GCM provides integrity as well as confidentiality: a tampered token fails to decrypt rather than decoding into attacker-chosen values.
 
 ### SigV4 Verification Flow
 
-The proxy verifies incoming SigV4 requests by:
+1. Extract the `AccessKeyId` from the `Authorization` header
+2. Unseal the `SessionToken` from the `X-Amz-Security-Token` header, recovering the credential set
+3. Reject if the sealed `expiration` has passed
+4. Verify the SigV4 signature using the unsealed `SecretAccessKey`, over the percent-encoded request path as signed by the client
+5. Proceed to authorization (see ADR-005) using the token's `source_identity`
 
-1. Extracting the `AccessKeyId` from the `Authorization` header
-2. Detecting the `SCSTS` prefix to identify this as an STS credential. The digit following `SCSTS` is the HMAC key version (e.g., `SCSTS1...` uses key version 1), enabling key rotation without invalidating active sessions
-3. Deriving the `SecretAccessKey` via `HMAC-SHA256(server_secret[version], AccessKeyId)`
-4. Verifying the SigV4 signature using the derived secret
-5. Extracting and verifying the `SessionToken` JWT from the `X-Amz-Security-Token` header — checking ES256 signature, `exp`, `nbf` (with 60s clock skew tolerance), and `aud`
-6. Proceeding to authorization (see ADR-005) using the token's embedded identity and permissions
+### Session Lifetime
 
-No external database lookup is required to verify a request or reconstruct the signing key. The token and HMAC derivation together are self-contained.
+Client-requested `DurationSeconds` is clamped to `[900, STS_MAX_SESSION_DURATION_SECS]`. Production sets the ceiling to 43200 (12 hours); unset defaults to 3600 (1 hour). This matches the RFC's 15-minute-to-12-hour window.
 
-### Signing Key Management
+### Key Management and Revocation
 
-- **Asymmetric signing:** ES256 (ECDSA P-256). The private key is used only for token issuance; the public key is served at a JWKS endpoint for verification.
-- **Key storage:** Private key stored in KMS (AWS KMS or equivalent).
-- **Key rotation:** The `kid` header in issued JWTs allows multiple active signing keys. During rotation, new tokens are signed with the new key while tokens signed with the old key remain valid until they expire. The old key is retired after one `max_session_duration` interval.
-- **HMAC server secret:** A separate symmetric key used for SecretAccessKey derivation. Stored alongside the signing key in KMS. The initial implementation uses a single HMAC key version (`SCSTS1`). The version indicator in the AccessKeyId prefix is reserved for future key rotation support.
+- **`SESSION_TOKEN_KEY`** is a symmetric AES-256 key, held as a Worker secret and re-uploaded by CI on every deploy.
+- **Rotation invalidates all sessions.** A token sealed under an old key fails to decrypt and the client re-authenticates. This is the incident-response lever: there is no per-token revocation.
+- Short credential lifetimes (15 minutes to 12 hours) bound the exposure window of a leaked token.
 
 > [!NOTE]
-> **Future extension: HMAC key rotation.** The `SCSTS1` prefix embeds a key version indicator. When rotation is needed, the proxy can be updated to support multiple active key versions (e.g., `SCSTS1` → `SCSTS2`): new sessions are issued with the new version, the proxy derives the SecretAccessKey using the version indicated by the prefix, and the old key is retired after one `max_session_duration` interval beyond the last issuance. For incident response before rotation is implemented, replacing the single HMAC server secret invalidates all active sessions.
-
-### Revocation
+> **Deferred: per-token revocation.** Not implemented, and not straightforward under sealed tokens — there is no `jti` to deny-list without adding one to the sealed payload and consulting a store on every request, which would give up the statelessness this design is built on. The available response to a compromised credential is rotating `SESSION_TOKEN_KEY`, which signs out every active session.
 
 > [!NOTE]
-> **Deferred.** Per-token revocation (via a `jti` deny-list checked on every request) is not included in the initial implementation. Short-lived credentials (15 min to 12 hours) bound the exposure window of a compromised token. For incident response, rotating the HMAC server secret or the JWT signing key invalidates all active sessions.
->
-> Per-token revocation can be added later by: (1) adding a `jti` claim to the SessionToken, (2) storing revoked `jti` values in Cloudflare KV with TTLs matching remaining token lifetime, and (3) checking the deny-list on each authenticated request. This is a backwards-compatible addition — existing tokens without `jti` are simply not revocable.
+> **Deferred: long-lived API keys.** The proxy accepts only STS-issued session credentials and anonymous access. Environments with neither ambient OIDC tokens nor browser access — HPC clusters, on-premises instruments, legacy ETL — are not served. See ADR-013, which keeps the single authorization path by exchanging an API key at `/.sts` like any other token.
 
-### Accepted Trade-offs
-
-**HMAC derivation creates a shared secret dependency.** If the `server_secret` leaks, an attacker who also captures a SessionToken could derive the corresponding SecretAccessKey. This risk is bounded: the attacker needs both the server secret and a valid SessionToken (which requires the separate ES256 signing key to forge). The two secrets are independent.
-
-**Callers must perform a token exchange before making S3 API calls.** This is a one-time step per session. The existing `source-coop` CLI supports `credential_process` integration, making the exchange transparent for tools that use the AWS credential provider chain.
-
-**Documentation and CLI tooling must minimise the friction of the exchange step.** Users accustomed to copying a static key into a config file will encounter a new workflow. The `source-coop creds --role-arn <role>` command and GitHub Action handle this for the primary use cases.
+> [!NOTE]
+> **Deferred: signing-key versioning in the AccessKeyId.** The RFC reserved a version indicator in an `SCSTS`-prefixed AccessKeyId to support rotating credential keys without invalidating live sessions. The shipped AccessKeyId is an opaque random identifier with no embedded version, so staged rotation is not available; see the rotation note above.
 
 ---
 
@@ -122,26 +104,18 @@ No external database lookup is required to verify a request or reconstruct the s
 
 - No long-lived credentials anywhere in the system. Credentials expire automatically.
 - Full compatibility with the existing S3 tooling ecosystem — no client changes required.
-- The session token is stateless and self-verifying — no credential store on the hot path.
-- The SecretAccessKey never appears in the SessionToken, limiting the blast radius of token leakage.
-- Asymmetric signing (ES256) means verification requires only the public key; the private signing key has a minimal attack surface.
-- Short-lived credentials (15 min to 12 hours) limit blast radius, eliminating the need for per-token revocation in the initial implementation.
+- The session token is self-contained — no credential store on the hot path, and no per-request asymmetric cryptography.
+- The token is opaque: intercepting it reveals no identity or scope metadata.
 - Composable with OIDC workload identity federation (see ADR-004) — the exchange step is the same regardless of the upstream identity source.
 
 **Costs / Risks**
 
 - Callers must perform a token exchange before first use. This is new friction compared to the current static key model.
 - The `/.sts` exchange endpoint is on the critical path for session establishment. Its availability affects whether callers can obtain credentials.
-- The HMAC server secret is a high-value target. Its compromise, combined with a captured SessionToken, yields the corresponding SecretAccessKey.
-- No per-token revocation in the initial implementation. The only incident response option is rotating the server-wide HMAC secret or JWT signing key, which invalidates all active sessions. Per-token revocation can be added later (see [Revocation](#revocation)).
+- **`SESSION_TOKEN_KEY` is a single symmetric secret whose compromise affects every active session**, and which is necessarily present in the same environment that verifies requests. There is no asymmetric split between an issuing key and a verifying key.
+- No per-token revocation, and no staged key rotation — the only lever invalidates every session at once.
+- The sealed token carries the `SecretAccessKey` itself, so a leaked SessionToken plus its AccessKeyId is a complete credential set until it expires. (The RFC's HMAC-derivation design was chosen partly to avoid this; see Alternatives.)
 - S3 tooling that hardcodes static credential configuration (rather than using the SDK credential provider chain) may require workarounds.
-
----
-
-## Permanent API Keys
-
-> [!NOTE]
-> **Not included in the initial implementation.** The proxy supports only STS-issued session credentials and anonymous access. See ADR-008 for the API key design: long-lived JWTs signed by the proxy's own OIDC issuer, exchanged at `/.sts` for short-lived STS credentials like any other token. Covers environments without ambient OIDC tokens or browser access (university HPC clusters, on-premises instruments, legacy ETL systems).
 
 ---
 
@@ -149,8 +123,14 @@ No external database lookup is required to verify a request or reconstruct the s
 
 **Long-lived static credentials (current model)** — rejected. Persistent security liability; does not compose with workload identity federation; difficult to audit or rotate at scale.
 
-**Server-side session store for SecretAccessKey** — considered. Generating a random SecretAccessKey per session and storing it in a server-side store (KV or database) eliminates the HMAC shared secret risk entirely — there is no single key whose compromise affects all sessions. Rejected for now: adds a mandatory store read on every request for credential verification. The HMAC approach keeps verification fully stateless — the server derives the SecretAccessKey from the AccessKeyId without any external lookup. Can be revisited if the threat model changes or if a per-request store dependency is introduced for other reasons.
+**ES256-signed JWT session tokens with HMAC-derived secrets** — this was the original RFC-001 §4 proposal and is not what shipped. The design was: a `SessionToken` signed with ES256 (ECDSA P-256) carrying `account_id`, `role_name`, `permissions`, `assumed_by` and `kid`, with `SecretAccessKey = HMAC-SHA256(server_secret, AccessKeyId)` derived per request rather than stored in the token, and an `SCSTS{version}` AccessKeyId prefix enabling staged HMAC key rotation.
 
-**Symmetric signing (HS256)** — rejected. Would require the signing secret to be available on all verification endpoints, expanding the attack surface. ES256 limits the private key to the issuance path only.
+It was not implemented, for two reasons. First, `multistore-sts` supplies sealed tokens as its credential primitive, and adopting them kept the Source-specific code to a registry implementation rather than a parallel token stack. Second, the JWT design's main advantages — an embedded permission ceiling and an `assumed_by` audit claim — only pay off once Roles exist (ADR-010) and authorization reads a ceiling from the token (ADR-011); with a single unlimited `_default` Role, both claims would be constants.
+
+Its advantages remain real and unrealised: the `SecretAccessKey` never travelling inside the token, an asymmetric split between issuing and verifying keys, and `kid`-based rotation that does not sign out every session. **Revisit when ADR-010 and ADR-011 are implemented** — that is the point at which the token needs to carry a ceiling and an audit subject anyway, and the token format should be reconsidered as part of that work rather than separately.
+
+**Server-side session store for SecretAccessKey** — considered. Generating a random SecretAccessKey per session and storing it server-side eliminates any shared-key risk. Rejected: adds a mandatory store read on every request for credential verification. Sealed tokens keep verification stateless without that lookup.
+
+**Symmetric signing (HS256)** — rejected as a JWT variant. Would require the signing secret on all verification endpoints. Note that the shipped sealed-token design has the same property — a single symmetric secret — and accepts it for the statelessness gain.
 
 **Custom non-S3 protocol** — rejected. Would require Source-specific client libraries and break compatibility with the entire existing ecosystem of data tooling.

@@ -1,7 +1,10 @@
 # ADR-002: Runtime — Cloudflare Workers
 
+**Status:** Accepted — implemented
 **Date:** 2026-03-14
 **RFC:** RFC-001 §5
+**Implementation:** `wrangler.toml`, `src/lib.rs`
+**Implemented by:** #116 (rebuild on the Cloudflare Workers runtime)
 
 ---
 

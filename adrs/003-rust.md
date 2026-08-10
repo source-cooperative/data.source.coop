@@ -1,7 +1,10 @@
 # ADR-003: Rust as Implementation Language
 
+**Status:** Accepted — implemented
 **Date:** 2026-03-14
 **RFC:** RFC-001 §6
+**Implementation:** `Cargo.toml`, `src/`
+**Implemented by:** #116 (carried Rust forward through the WASM rebuild; the pre-Workers proxy was already Rust)
 
 ---
 

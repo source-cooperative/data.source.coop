@@ -1,267 +1,83 @@
-# ADR-005: Authorization Model — Role Ceiling with Dynamic Account Permission Resolution
+# ADR-005: Authorization — Delegated to the Source Cooperative API
 
+**Status:** Accepted — implemented
 **Date:** 2026-03-14
 **RFC:** RFC-001 §8
 **Depends on:** ADR-001, ADR-004
+**Implementation:** `src/authz.rs`, `src/source_api/registry.rs`, `src/source_api/auth.rs`; `source.coop:src/lib/api/oidc.ts`
+**Implemented by:** #116 (registry + API resolution), #149 (product visibility model), #162 (authorize and enable writes), #170 (extract `decide_backend_auth` + CI ordering test), #183 (hermetic API stub, contract and failure-mode tests) · source.coop#283 (OIDC auth), source.coop#284 (require auth for restricted products)
 
 ---
 
 ## Context
 
-ADR-001 establishes that session tokens are stateless JWTs. ADR-004 introduces account-owned Roles with embedded permission statements that define a ceiling on what the Role's credentials can access. This ADR defines how permissions are resolved at request time.
+ADR-004 issues a session credential carrying the caller's original OIDC subject. This ADR defines how the proxy decides whether a given request on a given product is permitted.
 
-Two properties drive the design:
-
-1. **The Role is a ceiling; account permissions are the grants.** The Role's permission statements (embedded in the SessionToken at exchange time) answer "what is the maximum scope of access for these credentials?" The per-account permission lookup answers "what can this account actually access?" The proxy enforces the intersection. A Role can narrow access but never widen it beyond what the account has.
-
-2. **Account permissions are dynamic.** A user who joins an organisation or receives a grant on a new dataset should see that change reflected immediately. Because account permissions are resolved per-request from the policy store (not frozen in the token), changes propagate within the cache TTL.
-
-This mirrors AWS IAM: the session token asserts role membership with embedded permission boundaries, and the role's current policies are evaluated live on each API call.
+The RFC proposed that the proxy evaluate an intersection locally: a permission ceiling embedded in the session token, intersected with the account's live grants from the policy store. That design depends on Roles carrying permission statements, which do not exist yet (ADR-010). What shipped instead is simpler and, for a single unlimited Role, equivalent: **the proxy does not evaluate policy at all — it delegates the decision to the Source Cooperative API by making every lookup on behalf of the caller.**
 
 ---
 
 ## Decision
 
-### Identity Model
+### Subject-Scoped Lookups Are the Authorization Mechanism
 
-The SessionToken (see ADR-001) carries these fields relevant to authorization:
+The proxy resolves each request by calling the Source Cooperative API *as the caller*. Every lookup carries a short-lived JWT whose `sub` is the caller's identity, and the API applies exactly the same permission resolution it applies to a request from the frontend.
 
-- `account_id` — the account whose permissions form the base grants
-- `role_name` — identifies the Role (for logging and ceiling lookup)
-- `permissions` — the Role's permission statements, embedded at exchange time (the ceiling)
-- `assumed_by` — the original IdP subject (for audit, not authorization)
-- `exp` — token expiry; checked before any policy evaluation
+Authorization is therefore a **property of the resolution path, not a separate check**: if the caller is not entitled to a product or its data connection, the subject-scoped fetch returns 404 or 403, which propagates as `BucketNotFound` or `AccessDenied` before the proxy ever reaches the backend. An anonymous caller sends no subject and sees only what the API serves unauthenticated.
 
-### How Roles Replace the Fixed Role Set
+This ordering is enforced by data dependency rather than by statement order: the connection value only exists once its subject-scoped fetch has succeeded, so an unauthorized caller cannot reach backend federation. That property is covered by unit tests on `decide_backend_auth` and end-to-end by `test_restricted_product_denied_to_anonymous`.
 
-The previous design used three fixed roles: `anonymous`, `authenticated_user`, and `admin`. These are replaced by user-defined Roles (see ADR-004). The equivalent behaviour is achieved through Role configuration:
+### Request Resolution
 
-**Anonymous access** does not use a Role at all. Requests without credentials are treated as anonymous. Anonymous callers can only read public products — no Role lookup, no account permission lookup.
+1. **Identify the caller.** Unsealing the session token yields `source_identity`, the original OIDC subject. Absent credentials mean anonymous.
+2. **Map the request.** `/{account}/{product}/{key}` is rewritten to an internal `account:product` bucket.
+3. **Fetch the product** (subject-scoped, cached 300s). A caller not entitled to it gets 404/403.
+4. **Fetch the referenced data connection by id** (subject-scoped, cached 300s). Resolving by id — rather than scanning a cached list — is what lets the API authorize this exact resource.
+5. **For writes only, fetch the caller's permissions** on the product (subject-scoped, cached 60s). Reads never consult them.
+6. **Decide, then federate.** `decide_backend_auth` applies the write gate and only then translates the connection's backend authentication into backend options.
 
-**Authenticated user access** uses the built-in `_default` Role, which has an unlimited ceiling (`"resources": ["*"]`). The account's actual permissions are the sole constraint. This is equivalent to the previous `authenticated_user` role.
+### The Write Gate
 
-**Admin access** is determined by account permissions in the policy store, not by a special role type. An account with admin-level grants simply has broader permissions that the Role ceiling does not restrict (when using the `_default` Role with `*` resources).
+Reads require nothing beyond a successful subject-scoped resolution. A write additionally requires all of:
 
-**Scoped access** is the new capability. A Role with specific permission statements (e.g., read-only on one product) creates a narrow ceiling. Even if the account has broad permissions, the credentials can only access what the Role allows.
+- **An authenticated caller.** Anonymous callers can never write — there is no subject to resolve permissions with.
+- **The `write` permission** on the product, from the API's `/permissions` endpoint.
+- **A connection that is not `read_only`.**
+- **A connection the proxy can actually sign as** — in practice an S3 web-identity role (ADR-006). An unsigned or unsupported connection cannot accept writes regardless of the caller's permissions.
 
-### Per-Request Authorization
+Write actions are classified by a **denylist** over the closed action set: everything that is not `GetObject`, `HeadObject`, or `ListBucket` is treated as a write. This is fail-safe by direction — a new read-only action added upstream would be harmlessly gated as a write until classified, never the reverse.
 
-Authorization proceeds in six steps, each of which can permit or deny immediately, so that the number of lookups stays small:
-
-**Step 1 — Identify the caller**
-
-- **No credentials** → anonymous. Only read actions on public products are permitted.
-- **STS credentials** (`SCSTS` prefix) → derive SecretAccessKey via HMAC, verify SigV4, decode SessionToken JWT.
-
-> [!NOTE]
-> **Future extension: Permanent API keys.** The initial implementation supports only STS credentials and anonymous access. Long-lived API keys may be needed in the future for workflows where neither workload identity federation nor interactive authentication via `auth.source.coop` is feasible — for example, on-premises instruments, legacy ETL systems, or environments without OIDC support. Rather than adding a second authorization path to the proxy, API keys would be exchanged for temporary STS credentials at the `/.sts` endpoint — the same way OIDC tokens are. The proxy's request-time authorization remains uniform: only short-lived STS credentials are accepted on S3 API calls.
-
-**Step 2 — Role action check (in-memory, no lookup)**
-
-For anonymous callers, only read actions are permitted (`GetObject`, `HeadObject`, `ListObjects`, `ListBuckets`). Deny writes immediately.
-
-For STS callers, check the SessionToken's embedded `permissions` array. If the requested action (read or write) on the requested resource does not match any permission statement, deny immediately. This is a local check against data already in the token — no network call.
-
-**Step 3 — Resource resolution**
-
-Map the S3 request to a Source Cooperative resource:
-- Bucket name → `account_id/product_name`
-- Object key → path within the product
-
-**Step 4 — Public resource early exit (cached, 60–300s TTL)**
-
-For read requests: if the product is public (`data_mode: open`), permit immediately. No further lookups. This is the fast path for the majority of traffic — public open data reads.
-
-**Step 5 — Account permission lookup (cached, 30–60s TTL)**
-
-For non-public resources or write operations:
-1. Fetch the account's permissions from the Source Cooperative API (the account referenced in the SessionToken's `account_id`)
-2. Compute: `(Role ceiling permissions from token) ∩ (account's actual permissions from API)`
-3. If the intersection includes the requested action on the requested resource → permit
-4. Otherwise → deny
-
-The proxy does not evaluate org membership or permission inheritance logic — the API resolves these internally. When a user belongs to an organisation, the API includes permissions inherited through that membership in the account's resolved grants. The proxy treats the API response as the authoritative set of permissions for the account.
+On every denial, backend options are left untouched. An unauthorized request must never have credentials or `skip_signature` emitted on its behalf.
 
 ### Proxy-to-API Authentication
 
-The proxy authenticates its policy store lookups by presenting itself as
-the account whose permissions it needs. This avoids a separate
-"service account" code path in the API — the same authorization logic
-that serves the frontend serves the proxy.
+The proxy authenticates each policy-store lookup as the caller, so the API needs no separate service-account code path.
 
-#### How `account_id` Flows into Proxy-to-API Requests
+| Claim | Value |
+|---|---|
+| `sub` | The caller's identity from the session token |
+| `iss` | The proxy's OIDC issuer URL |
+| `aud` | The API's origin |
+| `exp` | Short-lived |
 
-The `account_id` that the proxy uses as `sub` originates from the Role
-and travels through the credential chain:
+The API verifies the token against the proxy's published JWKS (`/.well-known/jwks.json`), pinning **RS256**, the expected issuer, and the expected audience, with a 30-second clock tolerance. An `Authorization` header that is present but invalid **must not** fall back to cookie authentication — otherwise a bogus Bearer token would silently succeed via a session cookie.
 
-1. **Role lookup.** A caller presents an OIDC token to `/.sts` and
-   requests a specific Role. The Role is owned by an account — this
-   could be a **user account** or an **organisation account**. The
-   owning account's ID becomes the `account_id`.
+The API trusts the proxy to assert any `sub`. That trust rests on the JWT signature: only the proxy holds the signing key. This is the same shape as an AWS service assuming an IAM role on a principal's behalf.
 
-2. **SessionToken minting.** The proxy mints a SessionToken JWT
-   containing `account_id`, `role_name`, `permissions` (the Role's
-   ceiling), and `assumed_by` (the caller's original IdP subject).
+> [!NOTE]
+> **The subject is an individual identity, not an account.** The proxy signs with the caller's Ory identity id, and the API resolves it through the identity index. Organisation accounts are never the subject of a proxy-issued token. The RFC anticipated `sub` = `account_id`, which "may be a user or an organisation", to support a CI workflow assuming an org-owned Role. That path arrives with ADR-010; until then there is no Role for an organisation to own.
 
-3. **STS credential issuance.** The SessionToken is encoded into STS
-   credentials returned to the caller. The `account_id` is embedded in
-   the `AccessKeyId` (used to derive the signing key) and the
-   SessionToken JWT is returned as the `SessionToken`.
+### Batch Delete
 
-4. **Request-time decoding.** When the proxy receives an S3 request
-   signed with these credentials, it verifies the SigV4 signature,
-   decodes the SessionToken, and extracts `account_id`.
+Per-key authorization for batch delete confirms only that the operation is a write, relying on the product-level authorization already performed during resolution. This is sufficient because Source Cooperative authorizes writes at the product level, and defensible as defence in depth — it is only reached for write batch operations and never blanket-allows a read. It would be insufficient if a future multistore invoked it without a prior successful resolution for the same bucket.
 
-5. **Policy store lookup.** The proxy mints a new short-lived JWT with
-   `sub: account_id` and sends it to the Source Cooperative API to
-   fetch that account's permissions.
+### Caching
 
-#### The `sub` Claim Represents an Account, Not Necessarily a User
+All lookups are cached in the Cloudflare Cache API, keyed on the API URL plus the caller's subject so that one caller's authorized response can never serve another. See ADR-007 for TTLs and their rationale.
 
-The `sub` claim in the proxy-to-API JWT is an **account ID**, which may
-identify either a user or an organisation:
+### Anonymous Access
 
-- **User account.** A user authenticates via the frontend or an IdP and
-  assumes their own `_default` Role. `sub` = the user's account ID. The
-  API returns that user's permissions — identical to a direct frontend
-  request.
-
-- **Organisation account.** A CI workflow authenticates via GitHub OIDC
-  and assumes a Role owned by `my-org`. `sub` = `my-org` (the org's
-  account ID). The API returns my-org's full permissions — including
-  grants on products owned by other accounts that my-org has access to.
-  The Role ceiling (evaluated locally by the proxy) constrains what the
-  CI workflow can actually do within those permissions.
-
-The API does not need to distinguish between these cases. In both, it
-receives an account ID and returns that account's resolved permissions.
-The proxy handles the Role ceiling intersection locally.
-
-#### JWT Claims
-
-For each policy store request, the proxy mints a short-lived JWT signed
-with its private key:
-
-| Claim | Value | Purpose |
-|-------|-------|---------|
-| `sub` | `account_id` from the SessionToken | Tells the API whose permissions to return. May be a user ID or an org ID. |
-| `iss` | The proxy's OIDC issuer URL | The API verifies the signature against the proxy's `/.well-known/jwks.json`. |
-| `aud` | The API's base URL | Scopes the token to the policy store API. |
-| `role` | `role_name` from the SessionToken | Informational — for audit logging. Does not affect the API's response. |
-| `assumed_by` | `assumed_by` from the SessionToken | The original IdP subject, for audit trail. |
-| `exp` | Short-lived (≤ 60s) | Limits replay window. |
-
-#### Trust Model
-
-The API trusts the proxy to assert any `sub` value. This trust is
-established by the API verifying the JWT signature against the proxy's
-published OIDC discovery document. Only the proxy holds the signing key.
-This is analogous to how an AWS service uses IAM role assumption — the
-service is trusted to act on behalf of the principal.
-
-#### Why `sub` = `account_id`, Not `assumed_by`
-
-The API's permission model is account-centric. Grants are assigned to
-Source Cooperative accounts (users and organisations), not to external
-IdP subjects. When a GitHub Actions workflow assumes an org's Role, the
-relevant permissions are the org's — not the workflow's. The Role
-ceiling (evaluated locally by the proxy) constrains what the workflow
-can do within those permissions. The `assumed_by` claim preserves
-attribution for audit without affecting authorization.
-
-**Step 6 — Prefix enforcement**
-
-If the Role's permission statement includes a prefix constraint (e.g., `sc::my-org::product/my-dataset/uploads/*`), verify the object key falls within that prefix. This enforcement is part of Step 2 and Step 5 — the prefix is evaluated when matching the resource pattern.
-
-### Authorization Truth Table
-
-| Caller | Resource | Account has access? | Role permits? | Result |
-|--------|----------|-------------------|--------------|--------|
-| Anonymous | Public product | N/A | N/A | **Allow** (read only) |
-| Anonymous | Private product | N/A | N/A | **Deny** |
-| STS | Public product, read | N/A | Yes | **Allow** |
-| STS | Public product, write | Yes | Yes | **Allow** |
-| STS | Private product | Yes | Yes | **Allow** |
-| STS | Private product | Yes | No (ceiling) | **Deny** |
-| STS | Private product | No | Yes | **Deny** |
-
-### Operation-Specific Behaviour
-
-**Single-resource operations (`GetObject`, `PutObject`, `HeadObject`, `DeleteObject`)**
-After the Role ceiling check and public early exit, a point lookup: does the account have an access grant for this product? If the grant includes prefix restrictions, those are enforced against the requested object key.
-
-**`ListBuckets`**
-The proxy constructs this response entirely from the policy store — the upstream is never called:
-1. Anonymous: return products with `public = true`
-2. STS with `_default` Role (unlimited ceiling): return all products the account has grants for
-3. STS with scoped Role: return only products that appear in both the Role's permission statements and the account's grants
-
-**`ListObjects` (within a product)**
-After the Role ceiling check, public early exit, and account permission lookup: if the Role's permission statement includes a key prefix restriction, pass it as a filter to the upstream `ListObjects` call.
-
-### Permission Statement Matching
-
-When evaluating whether a request matches a Role's permission statements, the proxy checks:
-
-1. **Action match:** Does the statement's `actions` array include the requested action class (`read` or `write`)? See ADR-004 for the definition of action classes.
-2. **Resource match:** Does the statement's `resources` array contain a pattern that matches the requested resource?
-   - `*` matches everything
-   - `sc::{account}::product/{name}` or `sc::{account}::product/{name}/*` matches the entire product
-   - `sc::{account}::product/{name}/{prefix}/*` matches objects under the prefix
-   - `sc::{account}::product/{name}/{key}` matches a single object
-
-If any statement matches both action and resource, the Role permits the request. The account permission lookup then determines whether the account actually has the underlying access.
-
-### Cache Strategy
-
-All policy store lookups are cached in-process (per-isolate):
-
-| Lookup | Cache Key | TTL |
-|---|---|---|
-| Product public flag | `product_id` | 60–300s |
-| Account permission for product | `(account_id, product_id)` | 30–60s |
-| Account's full product list (`ListBuckets`) | `account_id` | 5–10s |
-
-The short TTL on the full product list ensures that account permission changes (new grants, org membership) are reflected within seconds.
-
-For Workers, cache is per-isolate and not shared across edge nodes. Workers KV is available as a shared tier if needed.
-
-### Access Logging
-
-Every S3 request with STS credentials emits a structured log entry:
-
-```json
-{
-  "event": "s3_request",
-  "timestamp": "...",
-  "account_id": "my-org",
-  "role_name": "github-publisher",
-  "session_name": "my-ci-job-42",
-  "assumed_by": "repo:my-org/my-repo:ref:refs/heads/main",
-  "action": "PutObject",
-  "resource": "sc::my-org::product/climate-data/2025/data.parquet",
-  "result": "allow",
-  "client_ip": "..."
-}
-```
-
-This provides full auditability: which account, which Role, which original identity, and what they accessed.
-
-### S3 Error Responses
-
-When authorization denies a request, the proxy returns a standard S3 error response:
-
-```xml
-<Error>
-  <Code>AccessDenied</Code>
-  <Message>Access Denied</Message>
-  <RequestId>...</RequestId>
-</Error>
-```
-
-HTTP status is `403 Forbidden`. The error body does not reveal whether the denial was due to the Role ceiling, missing account permissions, or a non-existent product — this prevents information leakage about resource existence.
-
-For `ListBuckets` and `ListObjects`, the proxy filters results silently rather than returning errors. The caller sees only the resources they have access to.
+Anonymous reads need no exchange, no credentials, and no Role — `--no-sign-request` works. The proxy accepts anonymous S3 requests by design (`anonymous_access: true` on every resolved bucket) because callers are authorized by the Source Cooperative API upstream, not by signing to the proxy.
 
 ---
 
@@ -269,32 +85,30 @@ For `ListBuckets` and `ListObjects`, the proxy filters results silently rather t
 
 **Benefits**
 
-- The Role ceiling is evaluated locally from the SessionToken — no network call required for the first authorization check.
-- Account permissions reflect current state — no re-exchange required after creating a new dataset or joining an organisation.
-- The majority of traffic (public dataset reads) resolves with no account-specific lookup.
-- The permission statement format is concrete and resolved: actions are `read`/`write`, resources use a URN pattern with optional prefix scoping.
-- The model supports delegation: a Role can reference products owned by other accounts that the Role's account has access to.
-- Audit logs capture both the account identity and the original IdP subject, enabling attribution even though credentials act as the account.
-- Anonymous access remains frictionless — no STS exchange, no credentials, just `--no-sign-request`.
+- **One permission model, one implementation.** The API is the single authority; the proxy cannot drift from the frontend's answer, because it asks the same question through the same code path.
+- Permissions are always live — no re-exchange after a new grant or an organisation membership change, bounded only by cache TTL.
+- The confused-deputy failure mode is closed structurally: federation is unreachable without a successful authorized resolution.
+- Anonymous public reads stay frictionless and need no account lookup.
+- Substantially less security-critical code in the proxy than a local policy evaluator would require.
 
 **Costs / Risks**
 
-- Every non-public authenticated request requires an account permission lookup from the policy store (mitigated by caching).
-- The policy store is on the hot path — its availability affects request latency for cache misses.
-- Per-isolate caching in Workers means cache is not shared across edge nodes (cold isolate = cache miss).
-- The permission model is additive (allow-only). Explicit denies are not supported in this iteration. If the access control model requires "grant access to everything except X," it must be expressed as individual grants for everything except X.
-- The `ListBuckets` response for scoped Roles requires intersecting the Role's resource patterns with the account's grants, which is more complex than simply returning the account's full product list.
+- **Every request depends on the API.** It is on the hot path for cache misses, and its availability bounds the proxy's.
+- **There is no ceiling.** A credential carries the caller's full permissions; a caller cannot obtain a narrower one. Scoped access awaits ADR-010 and ADR-011.
+- Authorization granularity is whatever the API exposes: product-level `read`/`write`. There is no prefix confinement, and no per-object grant.
+- Cache TTL is an authorization-revocation lag, not merely a freshness knob — a revoked write grant remains effective for up to 60 seconds, and a connection flipped to read-only for up to 5 minutes.
+- Organisation-owned automation has no representation; every credential is an individual's.
 
 ---
 
 ## Alternatives Considered
 
-**Encode full permissions in the session token** — rejected. Freezes permissions at exchange time. Users would need to re-exchange tokens to see permission changes. Unacceptable for a platform where users create datasets and join organisations dynamically. The hybrid approach (Role ceiling in token, account permissions dynamic) provides the best of both: the ceiling check is local, and permission changes propagate in near real-time.
+**Role ceiling intersected with account permissions, evaluated in the proxy** — the original RFC-001 §8 design, deferred rather than rejected. It requires Roles carrying permission statements, and delivers nothing while `_default` is the only Role and its ceiling is unlimited: the intersection would be the account's permissions in every case. Specified in ADR-011 and gated on ADR-010.
 
-**Fixed role set (`anonymous`, `authenticated_user`, `admin`)** — superseded by user-defined Roles. The `_default` Role with unlimited ceiling achieves the same effect as `authenticated_user`. Admin access is determined by account grants, not a special role type. Scoped Roles provide new capability that the fixed set could not express.
+**Encode full permissions in the session token** — rejected. Freezes permissions at exchange time; users would need to re-exchange after every permission change. Unacceptable on a platform where users create datasets and join organisations continuously.
 
-**Centralised permission cache (Redis / Workers KV as primary)** — considered. Would share cache across isolates and containers. Rejected as the primary tier: adds a network hop to every cache read. Per-isolate caching with optional Workers KV as a secondary tier is preferred.
+**A service-account identity for proxy-to-API calls** — rejected. Would require the API to grow a parallel authorization path for "the proxy acting on behalf of X", with its own escalation risks. Presenting as the caller reuses the frontend's path exactly.
 
-**Explicit deny support in grants** — deferred. Additive grants are simpler to reason about and sufficient for the initial use cases. Explicit denies can be added later if the access control model requires it.
+**Falling back to cookie authentication when a Bearer token fails** — rejected as unsafe, and explicitly guarded against: it would let an invalid token succeed by way of an ambient session.
 
-**Separate principal identity for delegated access** — considered. STS credentials would represent a distinct principal (e.g., "github-actions via account/role") rather than acting as the account. Rejected: adds complexity to the permission model (need grants for delegated principals) without clear benefit. The Role ceiling already constrains what the credentials can do. The `assumed_by` field in the SessionToken provides audit trail separation without requiring a separate authorization path.
+**Evaluating organisation membership and permission inheritance in the proxy** — rejected. The API resolves inherited grants internally and returns the account's effective permissions; duplicating that logic would create two sources of truth for the platform's most security-sensitive computation.

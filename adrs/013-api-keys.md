@@ -1,8 +1,12 @@
-# ADR-008: API Keys for Environments Without OIDC
+# ADR-013: API Keys for Environments Without OIDC
 
+**Status:** Proposed — not implemented
 **Date:** 2026-04-01
 **RFC:** RFC-001
-**Depends on:** ADR-001, ADR-004, ADR-006
+**Depends on:** ADR-001, ADR-004, ADR-006, ADR-010
+
+> [!NOTE]
+> The `api-keys` endpoints that exist in `source.coop` today are the **legacy** admin-managed keys used by the pre-Workers proxy. They are unrelated to this design, and the current proxy has no code path that accepts them (ADR-001). This ADR proposes a replacement, not a formalisation of what is there.
 
 ---
 
@@ -131,7 +135,7 @@ Roles that should be assumable via API key must include an identity constraint b
 }
 ```
 
-This reuses the existing Role and identity constraint model from ADR-004 without modification. Account owners explicitly opt in to API key access per Role — a Role without a `source-coop-api-key` binding cannot be assumed with an API key.
+This reuses the Role and identity constraint model from ADR-010 without modification — and therefore depends on it, since no such model exists today. Account owners explicitly opt in to API key access per Role: a Role without a `source-coop-api-key` binding cannot be assumed with an API key.
 
 ### Role Binding
 
@@ -141,12 +145,9 @@ Bound keys reduce blast radius: if leaked, the key can only access what that spe
 
 ### Caching and Revocation Latency
 
-The `jti` validity check uses the same caching infrastructure as other policy store lookups (ADR-007):
+The `jti` validity check uses the same caching infrastructure as other policy store lookups (ADR-007): the Cloudflare Cache API, with a short TTL in line with the permission lookup.
 
-- In-process cache with 30–60s TTL
-- Workers KV as a shared cache tier
-
-This means revocation takes effect within 30–60 seconds. For the target use case (long-running cronjobs, batch pipelines), this latency is acceptable. If faster revocation is needed, the HMAC server secret rotation mechanism from ADR-001 invalidates all active STS sessions immediately — a more disruptive but available emergency response.
+This means revocation takes effect within roughly a minute. For the target use case (long-running cronjobs, batch pipelines), that latency is acceptable. If faster revocation is needed, rotating `SESSION_TOKEN_KEY` (ADR-001) invalidates all active STS sessions immediately — a more disruptive but available emergency response.
 
 ---
 
@@ -157,7 +158,7 @@ This means revocation takes effect within 30–60 seconds. For the target use ca
 - Covers the authentication gap for environments without OIDC or browser access
 - No new auth path at the proxy layer — API key JWTs flow through the existing `/.sts` exchange
 - Reuses the proxy's existing OIDC issuer infrastructure (signing key, JWKS) from ADR-006
-- Reuses the existing Role and identity constraint model from ADR-004
+- Reuses the Role and identity constraint model from ADR-010
 - Revocation is explicit and auditable via `jti` lookup
 - Optional Role binding limits blast radius of leaked keys
 
