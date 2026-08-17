@@ -205,14 +205,21 @@ jobs:
           echo "Smoke-testing $URL"
           for path in "/" "/.well-known/jwks.json"; do
             ok=""
-            for attempt in 1 2 3 4 5; do
-              if code=$(curl -fsS -o /dev/null -w '%{http_code}' "$URL$path"); then
+            # ~90s of budget. A brand-new *.workers.dev hostname — every preview
+            # PR creates one — serves 523s until DNS propagates, which Cloudflare
+            # documents as taking up to about a minute.
+            for attempt in $(seq 1 18); do
+              # Report the status rather than swallowing it: a 523 while
+              # propagating and a 1101 from a worker that cannot boot are very
+              # different failures, and -f alone hides which one happened.
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$URL$path" || echo "000")
+              if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
                 echo "ok: $path -> $code"
                 ok=1
                 break
               fi
-              echo "attempt $attempt: $path not ready, retrying in 3s…"
-              sleep 3
+              echo "attempt $attempt: $path -> $code, retrying in 5s…"
+              sleep 5
             done
-            [ -n "$ok" ] || { echo "::error::smoke test failed for $URL$path"; exit 1; }
+            [ -n "$ok" ] || { echo "::error::smoke test failed for $URL$path (last status $code)"; exit 1; }
           done
