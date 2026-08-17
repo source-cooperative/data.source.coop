@@ -80,3 +80,40 @@ fn product_list_wrapper_parses() {
     let l: SourceProductList = serde_json::from_str(&json).unwrap();
     assert_eq!(l.products.len(), 1);
 }
+
+// ── backend_options: provider → (backend_type, multistore options) ──────────
+
+fn details(json: &str) -> types::DataConnectionDetails {
+    serde_json::from_str(json).unwrap()
+}
+
+#[test]
+fn s3_endpoint_derived_from_region_when_absent() {
+    let (backend_type, opts) = details(r#"{"provider":"s3","bucket":"b","region":"us-west-2"}"#)
+        .backend_options()
+        .unwrap();
+    assert_eq!(backend_type, "s3");
+    assert_eq!(opts["endpoint"], "https://s3.us-west-2.amazonaws.com");
+    assert_eq!(opts["region"], "us-west-2");
+    assert_eq!(opts["bucket_name"], "b");
+}
+
+#[test]
+fn explicit_endpoint_wins_over_region() {
+    // An S3-compatible connection (Cloudflare R2) carries region "auto"; deriving
+    // the endpoint from it yields the unresolvable https://s3.auto.amazonaws.com
+    // and every backend fetch dies at DNS (Cloudflare 1016 → 530 to the client).
+    let (_, opts) = details(
+        r#"{"provider":"s3","bucket":"b","region":"auto",
+            "endpoint":"https://acct.r2.cloudflarestorage.com"}"#,
+    )
+    .backend_options()
+    .unwrap();
+    assert_eq!(opts["endpoint"], "https://acct.r2.cloudflarestorage.com");
+    assert_eq!(opts["region"], "auto");
+}
+
+#[test]
+fn unsupported_provider_errors() {
+    assert!(details(r#"{"provider":"ftp"}"#).backend_options().is_err());
+}

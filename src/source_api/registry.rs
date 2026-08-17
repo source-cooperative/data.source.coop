@@ -4,11 +4,8 @@ use multistore::api::response::BucketEntry;
 use multistore::error::ProxyError;
 use multistore::registry::{BucketRegistry, ResolvedBucket};
 use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
-use std::collections::HashMap;
 
 use crate::authz::{decide_backend_auth, is_write_action};
-
-use super::types::DataConnectionDetails;
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
@@ -165,7 +162,7 @@ async fn resolve_product(
     .await?;
 
     // 4. Build BucketConfig
-    let (backend_type, mut backend_options) = build_backend_options(&connection.details)?;
+    let (backend_type, mut backend_options) = connection.details.backend_options()?;
 
     // A write needs the caller's product permissions; fetch them only for an
     // authenticated write, since reads never consult them and an anonymous write
@@ -251,53 +248,4 @@ async fn resolve_product(
     );
 
     Ok(config)
-}
-
-/// Map a connection's raw `provider` to its multistore `backend_type`
-/// (`s3`/`az`/`gcs`) and the provider-specific `backend_options`. Doing the
-/// provider match once keeps the type and its options in a single source of
-/// truth. The GCS arm sets `bucket_name` (multistore's GCS store requires it,
-/// same as the s3 arm).
-fn build_backend_options(
-    details: &DataConnectionDetails,
-) -> Result<(String, HashMap<String, String>), ProxyError> {
-    let mut options = HashMap::new();
-    let backend_type = match details.provider.as_str() {
-        "s3" => {
-            if let Some(ref bucket) = details.bucket {
-                options.insert("bucket_name".to_string(), bucket.clone());
-            }
-            if let Some(ref region) = details.region {
-                options.insert("region".to_string(), region.clone());
-                options.insert(
-                    "endpoint".to_string(),
-                    format!("https://s3.{}.amazonaws.com", region),
-                );
-            }
-            "s3"
-        }
-        "az" | "azure" => {
-            if let Some(ref account_name) = details.account_name {
-                options.insert("account_name".to_string(), account_name.clone());
-            }
-            if let Some(ref container) = details.container_name {
-                options.insert("container_name".to_string(), container.clone());
-            }
-            "az"
-        }
-        "gcs" | "gs" => {
-            if let Some(ref bucket) = details.bucket {
-                options.insert("bucket_name".to_string(), bucket.clone());
-            }
-            "gcs"
-        }
-        other => {
-            return Err(ProxyError::Internal(format!(
-                "unsupported provider: {}",
-                other
-            )))
-        }
-    }
-    .to_string();
-    Ok((backend_type, options))
 }

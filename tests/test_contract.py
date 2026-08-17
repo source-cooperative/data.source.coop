@@ -28,8 +28,9 @@ REAL_API = "https://source.coop"
 # connection — exactly the drift we want an early warning for.
 KNOWN_AUTH_TYPES = {"unsigned", "s3_web_identity_role"}
 
-# Providers the proxy's build_backend_options maps (src/source_api/registry.rs,
-# closed match). Anything else is ProxyError::Internal on every request.
+# Providers DataConnectionDetails::backend_options maps
+# (src/source_api/types.rs, closed match). Anything else is
+# ProxyError::Internal on every request.
 KNOWN_PROVIDERS = {"s3", "az", "azure", "gcs", "gs"}
 
 
