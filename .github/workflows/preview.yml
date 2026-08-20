@@ -74,11 +74,16 @@ jobs:
     name: Cleanup Preview
     if: github.event.action == 'closed'
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      # Installed separately so the package resolution is uncredentialed too.
+      - run: npm install -g wrangler@3
       - name: Delete preview worker
-        run: npx wrangler@3 delete --name "source-data-proxy-pr-${{ github.event.pull_request.number }}" --force
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler delete --name "source-data-proxy-pr-${{ github.event.pull_request.number }}" --force
       - name: Delete preview public-log-stream worker
-        run: npx wrangler@3 delete --name "public-log-stream-pr-${{ github.event.pull_request.number }}" --force
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: wrangler delete --name "public-log-stream-pr-${{ github.event.pull_request.number }}" --force

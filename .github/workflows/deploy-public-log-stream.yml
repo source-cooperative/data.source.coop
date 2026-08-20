@@ -33,9 +33,6 @@ jobs:
     name: Deploy Public Log Stream
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,8 +43,12 @@ jobs:
         working-directory: workers/public-log-stream
         run: npm ci
 
+      # Credentials are per-step so `npm ci` above runs without them.
       - name: Deploy worker
         working-directory: workers/public-log-stream
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           EXTRA_ARGS="--config ${{ inputs.wrangler_config }}"
           if [ -n "${{ inputs.wrangler_env }}" ]; then
@@ -56,4 +57,6 @@ jobs:
           if [ -n "${{ inputs.worker_name }}" ] && [ "${{ inputs.worker_name }}" != "public-log-stream" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --name ${{ inputs.worker_name }}"
           fi
-          npx wrangler deploy $EXTRA_ARGS
+          # --no-install: use the lockfile-pinned wrangler, never fetch one
+          # here, where the credentials are in scope.
+          npx --no-install wrangler deploy $EXTRA_ARGS
