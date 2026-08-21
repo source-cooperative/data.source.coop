@@ -30,7 +30,7 @@ This keeps the operational surface small and avoids the schema-governance proble
 | Data connection by id | `/api/v1/data-connections/{id}` |
 | Caller's permissions on a product | `/api/v1/products/{account}/{product}/permissions` |
 
-All are fetched with the caller's identity (ADR-005), so the API's response *is* the authorization decision.
+The product and permission lookups are fetched with the caller's identity (ADR-005), so the API's response *is* the authorization decision. Two qualifications: the data-connection endpoint authorizes every caller, so that fetch is resolution rather than a gate (issue #217); and the product-list lookup is sent with no subject at all, returning the anonymous view (issue #215).
 
 ### Caching — the Cloudflare Cache API
 
@@ -44,7 +44,7 @@ Responses are cached in the **Cloudflare Cache API**, not an in-process map and 
 | Caller's permissions | 60s | Gates writes — a revoked grant must stop taking effect quickly |
 | Issuer JWKS | 900s | Isolate-shared, separate from the Cache API |
 
-**Cache keys are scoped by subject.** Each key combines the API URL with the caller's identity, so an authorized response can never be served to a different caller. Path segments are percent-encoded against an RFC 3986 unreserved set before entering a URL, so a decoded `?`, `#`, `&`, `/`, or space in an account or product slug can neither inject into the upstream URL nor forge a colliding key.
+**Cache keys are scoped by subject.** Each key combines the API URL with the caller's identity, so an authorized response can never be served to a different caller. The unsubjected product list is the exception — its key is the bare URL, shared across callers, which follows from the same bug as its missing subject. Path segments are percent-encoded against an RFC 3986 unreserved set before entering a URL, so a decoded `?`, `#`, `&`, `/`, or space in an account or product slug can neither inject into the upstream URL nor forge a colliding key.
 
 The asymmetry between the connection TTL (300s) and the permission TTL (60s) is deliberate. Flipping a connection to read-only freezes *all* writers and is a deliberate administrative act where several minutes of lag is acceptable; revoking one compromised account's write grant is the urgent case, and it rides the 60-second permission TTL.
 
@@ -63,7 +63,7 @@ For CI, the API is stubbed (`tests/stub_api.py`) so the test suite is hermetic a
 - Per-request resolution means permissions are always live — no token re-exchange after a grant changes.
 - One schema owner; no dual-writer governance problem.
 - Colo-shared caching absorbs the majority of lookups and survives isolate recycling.
-- Subject-scoped keys make cross-caller cache poisoning structurally impossible.
+- Subject-scoped keys make cross-caller cache poisoning structurally impossible for every lookup that carries a subject.
 
 **Costs / Risks**
 

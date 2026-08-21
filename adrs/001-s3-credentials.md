@@ -36,10 +36,10 @@ This is unchanged from the current proxy. S3 API compatibility is a non-negotiab
 
 **We do not issue or support long-lived static `Access Key ID` / `Secret Access Key` pairs.**
 
-The proxy has no credential store to consult: its `CredentialRegistry::get_credential` returns `None` unconditionally, so there is no code path by which a static key could be honoured. All SigV4 credentials issued by Source Cooperative are temporary session credentials — the same triplet shape that AWS STS issues:
+The proxy has no credential store to consult. The registry on the S3 hot path is `NoopCredentialRegistry`, whose `get_credential` returns `None` unconditionally, so there is no code path by which a static key could be honoured. (`StsCredentialRegistry::get_credential` also returns `None`, but is never invoked — `with_sts` calls only `get_role`.) All SigV4 credentials issued by Source Cooperative are temporary session credentials — the same triplet shape that AWS STS issues:
 
 ```
-AccessKeyId     (random identifier, generated per session)
+AccessKeyId     (`STSPRXY` + 16 random alphanumerics, generated per session)
 SecretAccessKey (random 40-character secret, generated per session)
 SessionToken    (sealed token carrying the credential set and its metadata)
 ```
@@ -59,13 +59,14 @@ The sealed payload carries:
 | `expiration` | Enforced at unseal time; an expired token fails closed |
 | `assumed_role_id` | The Role assumed at exchange time (currently always `_default`) |
 | `source_identity` | The original OIDC `sub` — the caller's Ory identity |
-| `allowed_scopes` | Scope ceiling sealed at mint time (currently empty — unlimited) |
+| `allowed_scopes` | Scope ceiling sealed at mint time — currently empty, and not consulted on this path (see below) |
+| `session_token` | A discarded random placeholder. The credential set is sealed *before* this field is overwritten with the sealed blob, so the value inside the envelope is not the token itself |
 
 Key properties of this design:
 
 - **Verification is fully stateless.** The proxy decrypts the token on each request and recovers the `SecretAccessKey` directly. No database lookup, no key derivation, and no asymmetric verification on the request hot path — which matters on Workers, where in-memory state does not persist across invocations.
 - **The token is opaque to the caller.** Unlike a JWT, a client cannot read the sealed payload. Scope and identity metadata are not disclosed to whoever holds the credential.
-- **Scope is bound at mint time.** `allowed_scopes` is sealed when the credential is issued, so later configuration changes affect only newly minted credentials, never ones already in flight.
+- **`allowed_scopes` is sealed but not enforced on this path.** Its only consumer, `multistore::auth::authorize`, has no call site in the pinned crate; the gateway delegates authorization to the bucket registry instead (ADR-005). Where scopes *are* evaluated, an empty vec means **deny-all**, not unlimited — which is why the registry overrides `authorize_key` rather than inheriting the default. The effective behaviour is "no ceiling", but by bypass rather than by an empty-means-unlimited rule. ADR-011 is where this field would become load-bearing, and wiring it up is part of that work rather than a given.
 - **`source_identity` preserves the original subject**, which is what the proxy presents to the policy store (see ADR-005).
 - **Authenticated encryption.** GCM provides integrity as well as confidentiality: a tampered token fails to decrypt rather than decoding into attacker-chosen values.
 
@@ -74,12 +75,15 @@ Key properties of this design:
 1. Extract the `AccessKeyId` from the `Authorization` header
 2. Unseal the `SessionToken` from the `X-Amz-Security-Token` header, recovering the credential set
 3. Reject if the sealed `expiration` has passed
-4. Verify the SigV4 signature using the unsealed `SecretAccessKey`, over the percent-encoded request path as signed by the client
-5. Proceed to authorization (see ADR-005) using the token's `source_identity`
+4. Constant-time compare the header's `AccessKeyId` against the one inside the sealed credential, and reject on mismatch — this is what stops a caller pairing someone else's session token with an arbitrary key id
+5. Verify the SigV4 signature using the unsealed `SecretAccessKey`, over the percent-encoded request path as signed by the client
+6. Proceed to authorization (see ADR-005) using the token's `source_identity`
 
 ### Session Lifetime
 
-Client-requested `DurationSeconds` is clamped to `[900, STS_MAX_SESSION_DURATION_SECS]`. Production sets the ceiling to 43200 (12 hours); unset defaults to 3600 (1 hour). This matches the RFC's 15-minute-to-12-hour window.
+Client-requested `DurationSeconds` is clamped to `[900, STS_MAX_SESSION_DURATION_SECS]`. Production sets that ceiling to 43200 (12 hours); if the variable is unset the ceiling is 3600 (1 hour). A value below 900 is raised to 900, and an unparseable one falls back to 3600.
+
+**A caller that omits `DurationSeconds` gets 3600 seconds regardless of the ceiling** — the ceiling only raises the cap, it is not the default. The web frontend omits the parameter, so browser upload sessions are one hour, not twelve. Callers wanting a longer session must ask for it explicitly.
 
 ### Key Management and Revocation
 

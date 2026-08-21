@@ -4,8 +4,8 @@
 **Date:** 2026-03-14
 **RFC:** RFC-001 §9
 **Depends on:** ADR-002
-**Implementation:** `src/backend_auth.rs`, `src/source_api/registry.rs`, `src/lib.rs`
-**Implemented by:** #132 (proxy as OIDC provider), #147 (per-connection backend authentication via OIDC federation), #191 / #193 (GCS backend), #172 (bound the outbound STS call), #197 (fix federated reads hanging on a shared credential cache) · source.coop#332 (federated backend authentication), source.coop#368 (provider↔auth pairing, ARN validation), source.coop#376 (secret-less federated config), source.coop#394 (unsigned connections must be read-only), source.coop#398 (bulk-apply web identity to open-data connections)
+**Implementation:** `src/backend_auth.rs`, `src/authz.rs`, `src/source_api/types.rs`, `src/source_api/registry.rs`, `src/lib.rs`
+**Implemented by:** #132 (proxy as OIDC provider), #147 (per-connection backend authentication via OIDC federation), #191 / #193 (GCS backend), #172 (bound the outbound STS call), #197 (fix federated reads hanging on a shared credential cache) · source.coop#332 (federated backend authentication), source.coop#368 (provider↔auth pairing, ARN validation), source.coop#376 (secret-less federated config), source.coop#394 (unsigned connections must be read-only), source.coop#398 (bulk-apply web identity to open-data connections), #212 (honour an explicit S3 endpoint)
 
 ---
 
@@ -25,15 +25,17 @@ Source Cooperative also intends to support **data providers** who register their
 
 The [`object_store`](https://crates.io/crates/object_store) crate, via multistore, replaces all manual per-backend adapters. It provides a single async trait with implementations for S3, GCS, Azure Blob, R2, HTTP, and local filesystem.
 
-The proxy maps a connection's `provider` to a backend type and its options in one place:
+`DataConnectionDetails::backend_options` maps a connection's `provider` to a backend type and its options in one place:
 
 | Provider | Backend | Options derived |
 |---|---|---|
-| `s3` | `s3` | `bucket_name`, `region`, regional `endpoint` |
+| `s3` | `s3` | `bucket_name`, `region`, and an `endpoint` — the connection's explicit `endpoint` when set, otherwise derived from the region |
 | `az`, `azure` | `az` | `account_name`, `container_name` |
 | `gcs`, `gs` | `gcs` | `bucket_name` |
 
-Any other provider value is rejected as unsupported rather than guessed at.
+Any other provider value is rejected rather than guessed at — though as an `Internal` error, so the caller sees a generic 500 rather than the clean client-safe code the auth path returns.
+
+An explicit `endpoint` must win over the region-derived form: S3-compatible backends such as R2 carry `region: "auto"`, which would otherwise derive an unresolvable `s3.auto.amazonaws.com` and fail at DNS. That was #212.
 
 ### The Proxy as an OIDC Provider
 
@@ -65,7 +67,7 @@ The outbound token's claims are the only channel through which an upstream cloud
 
 | Claim | Value | Purpose |
 |---|---|---|
-| `iss` | `https://data.source.coop` | Fixed. The proxy's OIDC issuer. |
+| `iss` | `OIDC_PROVIDER_ISSUER` (`https://data.source.coop` in production) | The proxy's OIDC issuer. Per-environment, not a constant — staging issues under its own host, which is why non-production federation needs the canonical identity. |
 | `sub` | `scv1:conn:{connection_id}` | Stable per-connection identity. Exact-matchable on every cloud. |
 | `aud` | `sts.amazonaws.com` | AWS's fixed web-identity convention; constant across connections. |
 
@@ -122,7 +124,7 @@ The outbound STS call is bounded at 10 seconds. Without a bound, a stalled feder
 
 - **`object_store` compiles to `wasm32-unknown-unknown` today, but only because two of its transitive dependencies have wasm feature flags turned on explicitly.** `getrandom` needs `wasm_js`, and `ring` needs `wasm32_unknown_unknown_js` — the latter because `object_store`'s GCS credential signing calls `ring`'s `SystemRandom`. Neither crate is used by proxy code; both appear in `Cargo.toml` under `[target.'cfg(target_arch = "wasm32")'.dependencies]` purely to flip those features, so the workaround is invisible unless you read the manifest. The wasm32 `cargo check` and `cargo clippy` steps in CI are the regression guard. **Enabling an additional backend is the most likely trigger for a recurrence** — this is exactly how it surfaced the first time, when GCS was added (#191).
 - Registering the proxy as a trusted IdP is a per-provider setup step.
-- **Only AWS federation is implemented.** Azure and GCS connections can serve public buckets unsigned, but their workload-identity variants are denied. See ADR-012.
+- **Only AWS web-identity federation is implemented.** Azure and GCS connections can serve public buckets unsigned, but their workload-identity variants are denied — as are the secret-bearing `s3_access_key` and `az_sas_token` types the API also models, so an S3 connection configured with an access key is denied too. See ADR-012.
 - **The shared audience puts the whole isolation boundary on provider-authored `sub` conditions**, which fails open if a provider omits or removes one.
 - The `scv1:` grammar is a public contract embedded in provider-side policies; changing it breaks every configured provider, so it must be versioned and treated as an API.
 - Rotating a *connection's* identity is a coordinated change with the provider, not a unilateral one.

@@ -27,7 +27,7 @@ Key properties:
 - **Global distribution without operational overhead.** Requests are served from the location closest to the caller. Onward routing to upstream storage traverses the Cloudflare backbone rather than the public internet.
 - **Effectively no cold start.** Workers use V8 isolates (not containers). Cloudflare's "Shard and Conquer" consistent hashing achieves a 99.99% warm request rate.
 - **No Cloudflare-imposed egress fees.** Upstream object store egress fees still apply, but Cloudflare does not charge for bandwidth out of Workers.
-- **No wall-clock timeout.** CPU time limits apply per invocation, but streaming large objects is not killed mid-response due to elapsed time.
+- **No wall-clock limit on CPU accounting.** CPU time limits apply per invocation, but a long-running stream is not billed or killed on elapsed time. This is not an unconditional guarantee that a slow request survives: a stalled *subrequest* is still terminated by the edge, which is why the outbound STS call carries its own timeout (ADR-006).
 - **Predictable, low cost.** $5/mo base, $0.30/M requests, $0.02/M CPU-ms; 10M requests + 30M CPU-ms included.
 - **WASM compatibility.** Rust compiles to WASM with mature toolchain support (`wasm-pack`, `worker-rs`).
 

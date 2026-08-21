@@ -10,7 +10,7 @@
 
 ## Context
 
-The re-architected proxy must compile to WebAssembly for Cloudflare Workers (ADR-002). The language must also support native compilation from the same codebase to enable future deployment targets. The proxy handles security-sensitive operations: cryptographic signature verification, credential issuance, and access policy evaluation.
+The re-architected proxy must compile to WebAssembly for Cloudflare Workers (ADR-002). The language should also be able to target native compilation, to keep future deployment targets open. (In practice the crate as built is wasm-only — `crate-type = ["cdylib"]` with `test = false` — and native testability is achieved per-module rather than for the crate as a whole.) The proxy handles security-sensitive operations: cryptographic signature verification, credential issuance, and access policy evaluation.
 
 The current proxy is written in Rust. The Source Cooperative contributor community has more Rust experience than Go, and more Go experience than C++. Python is more widely known but is unsuitable for the WASM target.
 
@@ -36,7 +36,7 @@ We continue with **Rust** as the implementation language.
 
 **Benefits**
 
-- Single codebase supports WASM and native compilation targets
+- Individual modules are kept free of wasm-only dependencies so they can be unit-tested on a native target, despite the crate itself being wasm-only
 - Zero-cost abstractions and no GC pauses for high-throughput streaming
 - Trait system enables the modular, community-extensible architecture
 - Strong type system as a correctness harness for security-sensitive code

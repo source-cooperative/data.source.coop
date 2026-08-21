@@ -27,7 +27,9 @@ The privacy constraint is the binding one: the proxy sits in front of open scien
 
 ### Cloudflare Analytics Engine for Request Events
 
-Every product request writes one data point to an Analytics Engine dataset (`ANALYTICS` binding; separate datasets per environment). Requests to `/.well-known/*` and `/.sts` are excluded — they are not product requests, and logging them would pollute the dataset with an account named `.well-known`.
+Most product requests write one data point to an Analytics Engine dataset (`ANALYTICS` binding; separate datasets per environment). Any path beginning `/.` is excluded — this is meant to drop `/.well-known/*` and `/.sts`, which are not product requests and would pollute the dataset with an account named `.well-known`, but as written it also drops any product path starting with a dot.
+
+Three request shapes short-circuit before logging and so are never recorded at all: OPTIONS preflights, the 501 for an unconfigured `/.sts`, and the 400 returned for a keyless write — the last of which *is* a product request.
 
 **Sampling index:** `{account_id}/{product_id}`. Analytics Engine samples at the index, so the boundary is per product — a single high-traffic product cannot cause another product's events to be dropped.
 
@@ -43,7 +45,7 @@ Every product request writes one data point to an Analytics Engine dataset (`ANA
 | blob7 | `content_type` | |
 | blob8 | `client_ip_hash` | HMAC-SHA256; empty when the IP is unknown |
 | blob9 | `range` | `Range` header with the `bytes=` unit prefix stripped |
-| double1–3 | `bytes_sent`, `status_code`, `duration_ms` | |
+| double1–3 | `bytes_sent`, `status_code`, `duration_ms` | `bytes_sent` is the response's declared `Content-Length`, recorded as 0 when absent — a chunked response therefore logs zero egress |
 
 Retaining `range` and `bytes_sent` is what makes read-amplification analysis possible: range-heavy formats (COG, Zarr, Parquet) are read very differently from whole-object downloads, and the distinction matters for both caching decisions and egress attribution.
 
@@ -52,7 +54,7 @@ Retaining `range` and `bytes_sent` is what makes read-amplification analysis pos
 Raw client IPs do not enter the dataset. Each is replaced by `HMAC-SHA256(salt, ip)`, hex-encoded, keyed by a deployment secret (`IP_HASH_SALT`). This supports counting distinct clients without retaining PII.
 
 - **HMAC, not a bare `SHA256(salt ‖ ip)`.** The keyed-hash construction is robust regardless of how the output is later reused.
-- **The salt is load-bearing.** The IPv4 space is small enough to enumerate; an unsalted hash is reversible by brute force. When `IP_HASH_SALT` is unset the proxy still hashes but logs a warning at startup — it degrades to a weaker guarantee rather than silently logging raw IPs.
+- **The salt is load-bearing.** The IPv4 space is small enough to enumerate; an unsalted hash is reversible by brute force. When `IP_HASH_SALT` is unset the proxy still hashes but logs a warning the first time an isolate builds its config — there is no deploy-time gate, so the signal arrives mixed into request traffic rather than at release — it degrades to a weaker guarantee rather than silently logging raw IPs.
 - **Empty in, empty out.** An unknown IP yields an empty string rather than collapsing every anonymous client onto one shared hash value.
 
 ### Analytics Never Blocks a Response
@@ -63,9 +65,9 @@ Raw client IPs do not enter the dataset. Each is replaced by `HMAC-SHA256(salt, 
 
 A separate Worker (`workers/public-log-stream`) holds a Durable Object that fans out live activity to WebSocket subscribers, powering the public activity globe.
 
-- Only **successful GETs of public products** are broadcast. Non-product paths, errors, and writes are excluded.
+- Only **GETs of public products returning a status below 400** are broadcast. Non-product paths, errors, and writes are excluded; note that a 3xx (for example a 304) counts as success, and HEAD reads are never broadcast.
 - The broadcast is fire-and-forget inside `wait_until`, so it never blocks the response.
-- Events carry Cloudflare-derived geolocation (latitude, longitude, city, colo) from the request's `cf` object, plus account, product, and key.
+- The proxy posts Cloudflare-derived geolocation (latitude, longitude, city, colo) from the request's `cf` object, the country from `cf-ipcountry`, plus account, product, and key. **The Durable Object reads only `colo`, `account_id`, and `product_id`** — latitude, longitude, city, country, and key are discarded on arrival and never reach a subscriber. Requester geolocation finer than the datacenter is therefore never published, by the receiver's contract rather than by the sender's restraint. (The proxy also drops the event entirely when latitude/longitude fail to parse, even though the receiver would not have used them.)
 - Activity is **aggregated by datacenter** rather than emitted per request, which bounds fan-out cost and coarsens location before it is ever made public.
 
 Broadcasting a coarse datacenter location for a public-product read is a deliberately narrower disclosure than the request event stored in Analytics Engine: nothing user-identifying crosses into the public stream.
@@ -74,7 +76,7 @@ Broadcasting a coarse datacenter location for a public-product read is a deliber
 
 Distinct from analytics, and aimed at operators: requests emit a tracing span, and 5xx responses re-emit at `WARN` with the span fields inlined, since production runs at `LOG_LEVEL=WARN` and would otherwise record a server error with no context. Those warnings deliberately include relayed upstream response headers (`server`, `cf-ray`, `x-amz-request-id`), which is what distinguishes a genuine upstream 5xx from one minted inside Cloudflare's egress path or synthesised by the runtime with no upstream reply at all.
 
-Logs and traces ship to Axiom with head sampling; analytics data points are unsampled at the binding and sampled by Analytics Engine at the index.
+In production, logs and traces ship to Axiom with head sampling; staging is configured with no destinations, so nothing leaves it. Analytics data points are unsampled at the binding and sampled by Analytics Engine at the index.
 
 ---
 
@@ -94,7 +96,7 @@ Logs and traces ship to Axiom with head sampling; analytics data points are unsa
 - The hashed IP is stable across requests for a given salt, so it remains a pseudonymous identifier — re-identifiable by anyone holding the salt and a candidate IP. Rotating the salt breaks continuity of distinct-client counts, which is the intended trade.
 - `IP_HASH_SALT` unset in a deployment degrades the guarantee silently apart from a startup warning.
 - The public stream discloses that *someone* near a datacenter read a public product. Coarse, but not nothing.
-- Cost attribution is derived from `bytes_sent` on the proxy, not from provider invoices; the two will not reconcile exactly.
+- Cost attribution is derived from `bytes_sent` on the proxy, not from provider invoices; the two will not reconcile exactly, and a response sent without a `Content-Length` contributes zero.
 
 ---
 
