@@ -88,6 +88,7 @@ Supporting these means the platform holds long-lived third-party secrets — the
 - The audience migration is a coordinated change across every configured provider; a mis-sequenced rollout breaks live connections.
 - Per-connection audiences multiply provider-side registration entries and are bounded (AWS: 100 client IDs per provider), which constrains how many connections one provider account can hold.
 - GCP and Azure federation each add an exchange protocol, an error surface, and a credential cache path.
+- **Expect wasm feature-flag work.** Enabling a backend is what has historically broken the wasm32 build: GCS needed `ring`'s `wasm32_unknown_unknown_js` feature turned on for its credential signing (#191). Budget for the same shape of problem on the GCP and Azure paths, and check `cargo check --target wasm32-unknown-unknown` early rather than at review. See ADR-006 Costs / Risks.
 - Stored credentials reintroduce long-lived secrets, with rotation and blast-radius problems this architecture otherwise avoids.
 - The `scv1:` grammar becomes load-bearing in two claims rather than one; both are a public contract.
 

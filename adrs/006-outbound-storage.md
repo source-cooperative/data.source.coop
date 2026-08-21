@@ -120,7 +120,7 @@ The outbound STS call is bounded at 10 seconds. Without a bound, a stalled feder
 
 **Costs / Risks**
 
-- `object_store` must compile to `wasm32-unknown-unknown`; features that do not work under WASM must be avoided or patched.
+- **`object_store` compiles to `wasm32-unknown-unknown` today, but only because two of its transitive dependencies have wasm feature flags turned on explicitly.** `getrandom` needs `wasm_js`, and `ring` needs `wasm32_unknown_unknown_js` — the latter because `object_store`'s GCS credential signing calls `ring`'s `SystemRandom`. Neither crate is used by proxy code; both appear in `Cargo.toml` under `[target.'cfg(target_arch = "wasm32")'.dependencies]` purely to flip those features, so the workaround is invisible unless you read the manifest. The wasm32 `cargo check` and `cargo clippy` steps in CI are the regression guard. **Enabling an additional backend is the most likely trigger for a recurrence** — this is exactly how it surfaced the first time, when GCS was added (#191).
 - Registering the proxy as a trusted IdP is a per-provider setup step.
 - **Only AWS federation is implemented.** Azure and GCS connections can serve public buckets unsigned, but their workload-identity variants are denied. See ADR-012.
 - **The shared audience puts the whole isolation boundary on provider-authored `sub` conditions**, which fails open if a provider omits or removes one.
