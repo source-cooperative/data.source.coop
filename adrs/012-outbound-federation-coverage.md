@@ -71,7 +71,10 @@ Backends with **no** external OIDC federation for storage access:
 Supporting these means the platform holds long-lived third-party secrets — the thing ADR-001 set out to eliminate on the inbound side. It should be built only against a real provider request, with per-connection isolation and a rotation story decided up front.
 
 > [!NOTE]
-> R2 is named as a supported backend in RFC-001's goals, and `object_store` supports it, but it is not in the proxy's provider mapping and cannot federate. R2 needs this item, not item 2.
+> **Two backends named in RFC-001's goals are absent from the proxy's provider mapping,** though `object_store` supports both.
+>
+> - **R2** cannot federate — it offers API tokens or access key pairs only. It needs item 3, not item 2.
+> - **HTTP** needs neither: an HTTP backend carries no credentials to federate and is served unsigned. Adding it is a provider-mapping change alone, independent of everything in this ADR — which is why it is recorded here rather than proposed here.
 
 ---
 
