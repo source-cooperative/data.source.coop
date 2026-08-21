@@ -2,7 +2,7 @@
 authors = ["Anthony Lukach <anthonylukach@gmail.com>"]
 edition = "2021"
 name = "source-data-proxy"
-version = "2.3.4"
+version = "2.3.5"
 
 [lib]
 crate-type = ["cdylib"]
