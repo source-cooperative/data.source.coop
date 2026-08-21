@@ -57,6 +57,16 @@ Raw client IPs do not enter the dataset. Each is replaced by `HMAC-SHA256(salt, 
 - **The salt is load-bearing.** The IPv4 space is small enough to enumerate; an unsalted hash is reversible by brute force. When `IP_HASH_SALT` is unset the proxy still hashes but logs a warning the first time an isolate builds its config — there is no deploy-time gate, so the signal arrives mixed into request traffic rather than at release — it degrades to a weaker guarantee rather than silently logging raw IPs.
 - **Empty in, empty out.** An unknown IP yields an empty string rather than collapsing every anonymous client onto one shared hash value.
 
+### Retention and Salt Rotation
+
+**There is no retention policy, and the salt is not rotated.** Both are deliberate positions rather than open questions.
+
+Retention is whatever each sink applies by default: Analytics Engine keeps data points for its product-defined window, and Axiom retains logs and traces per the account's plan. Neither is configured in this repository, and nothing here shortens or extends them. The practical consequence is that the retention period is set by the vendors and can change without a change on our side.
+
+`IP_HASH_SALT` is set once per environment and left. The hashed IP is therefore a **stable pseudonymous identifier for the full life of the retained data** — the same client hashes to the same value across the whole dataset, which is what makes distinct-client counting work at all. Rotation would break that continuity, and counting distinct clients is the reason the field exists.
+
+What that costs is worth stating plainly: anyone holding the salt can confirm whether a given IP appears in the dataset, by hashing that IP and looking for it. The IPv4 space is enumerable, so with the salt the mapping is reversible in bulk. The salt is the whole protection, it is never re-keyed, and it guards data whose lifetime we do not control. Two things follow. Treat `IP_HASH_SALT` as a long-lived secret on the footing of the signing keys, not as a tuning knob. And an unset salt is materially worse than the startup warning implies, because there is no later rotation to recover from it — the dataset is then effectively storing recoverable IPs for its full retention.
+
 ### Analytics Never Blocks a Response
 
 `log_request` cannot fail a request: a missing binding or a failed write is logged at `warn` and swallowed. Telemetry is strictly subordinate to serving data.
@@ -93,7 +103,8 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 **Costs / Risks**
 
 - Analytics Engine sampling means counts are estimates, not exact ledgers. **This is not a billing-grade record**; metering for billing would need its own accounting path.
-- The hashed IP is stable across requests for a given salt, so it remains a pseudonymous identifier — re-identifiable by anyone holding the salt and a candidate IP. Rotating the salt breaks continuity of distinct-client counts, which is the intended trade.
+- The hashed IP remains a pseudonymous identifier, re-identifiable by anyone holding the salt and a candidate IP. Because the salt is never rotated and retention is vendor-default, that identifier is stable for the full life of the data. This is accepted: rotation would defeat distinct-client counting, which is the only reason the field exists.
+- Retention is not owned by this project. If a retention commitment is ever needed — for a privacy policy, or a compliance answer — it has to be established at the sinks first; nothing in this repository constrains it today.
 - `IP_HASH_SALT` unset in a deployment degrades the guarantee silently apart from a startup warning.
 - The public stream discloses that *someone* near a datacenter read a public product. Coarse, but not nothing.
 - Cost attribution is derived from `bytes_sent` on the proxy, not from provider invoices; the two will not reconcile exactly, and a response sent without a `Content-Length` contributes zero.
