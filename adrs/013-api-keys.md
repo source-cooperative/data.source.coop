@@ -87,7 +87,7 @@ The `GET` endpoint returns key metadata (ID, label, created-at, expires-at, last
 
 ### STS Exchange
 
-API key JWTs are exchanged at `/.sts/assume-role-with-web-identity` using the same flow as any other OIDC token (ADR-004):
+API key JWTs are exchanged at `/.sts` using the same flow as any other OIDC token (ADR-004) — `AssumeRoleWithWebIdentity` is an action parameter, not a path segment:
 
 ```
 Action=AssumeRoleWithWebIdentity
