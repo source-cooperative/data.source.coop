@@ -98,6 +98,14 @@ Every account keeps a built-in `sc::{account_id}::role/_default`:
 
 This is the Role that ships today (ADR-004); this ADR generalises around it without changing its behaviour, so existing clients keep working unchanged.
 
+### The `_read_only` Role
+
+Every account also keeps a built-in `sc::{account_id}::role/_read_only`, identical to `_default` except that its permissions carry `["read"]`.
+
+It exists because the common case for a narrower credential needs no authoring at all: a job that only reads should ask for a credential that cannot write, whether or not anyone has written a Role for it. Since a Role is a ceiling (ADR-011), asking for `_read_only` never grants anything the caller lacked — so no account needs to opt in, and any caller may name it.
+
+Two built-ins are the whole set. Anything narrower is an account-authored Role.
+
 ### Validation at Creation
 
 1. `name` matches `[a-z0-9][a-z0-9-]{0,62}`
@@ -131,7 +139,7 @@ ADR-005 records that the proxy signs policy-store calls with the caller's **Ory 
 
 Account-owned Roles break that assumption directly. A CI workflow assuming `sc::my-org::role/publisher` must resolve **my-org's** permissions, not those of the individual who configured it. So this ADR requires a paired change on the API side: accept an account id as `sub`, resolving either an individual or an organisation.
 
-**This is the largest piece of work in this ADR and it is not proxy-side.** It should be designed before the Role schema is built, because it determines whether `sub` stays an Ory identity with the account carried separately, or becomes an account id as RFC-001 §11 assumed.
+**This is the largest piece of work in this ADR and it is not proxy-side.** It is now answered by ADR-014: `sub` becomes neither an Ory identity nor a bare account id, but a subject qualified by its issuer, resolved through a binding table. That resolves the organisation case and the multi-issuer collision together. ADR-014 blocks this ADR.
 
 ---
 
