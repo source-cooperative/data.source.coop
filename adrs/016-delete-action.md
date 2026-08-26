@@ -35,10 +35,10 @@ So `delete` lives in both places, and they do different jobs:
 
 | Layer | Job | Revocation lag |
 |---|---|---|
-| Role permission statements | The ceiling. Survives a bug in the live path. | Up to one session |
+| Role permission statements | The ceiling. Survives a bug in the live path. | Up to one session, currently capped at 12h |
 | API permission lookup | The live grant. | Roughly 60 seconds |
 
-Putting `delete` only in the sealed ceiling would mean "we revoked delete" takes an hour. Putting it only in the live lookup would leave the ceiling unable to express least privilege, which is the point of ADR-010.
+Putting `delete` only in the sealed ceiling would mean "we revoked delete" waits out the session — up to 12 hours on the ceiling currently configured for `/.sts`. Putting it only in the live lookup would leave the ceiling unable to express least privilege, which is the point of ADR-010.
 
 ### The Classifier Keeps Failing Safe
 

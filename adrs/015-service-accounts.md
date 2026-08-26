@@ -82,7 +82,7 @@ Which Roles a service account may assume is recorded on the Role, in its `identi
 
 **Costs / Risks**
 
-- Account type is branched on in roughly 47 places across 19 files in `source.coop`. Most keep compiling and quietly treat a machine as a person. The count is dominated not by explicit type checks but by binary "individual or organisation" helpers, which would render a machine as an organisation profile.
+- Account type is branched on in roughly 48 places across 20 files in `source.coop`. Most keep compiling and quietly treat a machine as a person. Slightly under half are the binary `isIndividualAccount` / `isOrganizationalAccount` helpers, which would render a machine as an organisation profile rather than failing.
 - The membership pages are the deliberate exception and must show service accounts, since that is where an owner revokes a grant. Membership listing currently returns false for any third account type.
 - An account id is also the first segment of a public URL, so every service account consumes a name and gets a profile route.
 - The owner cap adds an owner lookup to the request path, which is already sensitive to latency.
