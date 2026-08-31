@@ -1,0 +1,35 @@
+# Standalone: deliberately not a member of the parent crate's build.
+[workspace]
+
+[package]
+name = "streamed-put-io-context"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+http = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+  "Headers",
+  "ReadableStream",
+  "Request",
+  "RequestInit",
+  "Response",
+  "ResponseInit",
+  "TransformStream",
+  "WritableStream",
+] }
+worker = { version = "=0.7.5", features = ["http"] }
+worker-macros = { version = "=0.7.5", features = ["http"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
