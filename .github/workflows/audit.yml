@@ -1,0 +1,75 @@
+name: Security Audit
+
+# The `audit` job in ci.yml only runs on push/PR, so a new RustSec advisory
+# against an unchanged dependency goes unnoticed until someone happens to open
+# a PR. This runs the same check on a schedule and hands a red result to Claude
+# to fix, the way #214 (h2 / RUSTSEC-2026-0258) was fixed by hand.
+
+on:
+  schedule:
+    # ponytail: every other day-of-month, so the 31st→1st gap runs back to
+    # back. Harmless for a dedupe-guarded job; switch to a weekday list if it
+    # ever matters.
+    - cron: "0 7 */2 * *"
+  workflow_dispatch:
+
+jobs:
+  audit:
+    name: Scheduled Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        id: audit
+        continue-on-error: true
+        run: cargo audit
+
+      - name: Open a fix PR
+        if: steps.audit.outcome == 'failure'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "Bash(cargo audit),Bash(cargo update:*),Bash(cargo tree:*),Bash(cargo check:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh pr view:*)"
+          prompt: |
+            `cargo audit` is failing on the default branch.
+
+            First run `gh pr list --state open --search "cargo audit in:title"`. If a PR
+            for these same advisories is already open, stop and do nothing.
+
+            Otherwise: run `cargo audit` to see the advisories and fix them. Prefer
+            `cargo update -p <crate>`; bump the version in Cargo.toml only if the
+            lockfile alone can't reach a patched release. If an advisory has no fixed
+            version (unmaintained or unsound crates), or the fix needs a transitive
+            dependency we don't control, don't force it — open the PR with whatever you
+            could fix and say plainly in the description what is left and why.
+
+            Verify both `cargo audit` and `cargo check --target wasm32-unknown-unknown`
+            pass before opening the PR.
+
+            Then create a branch `claude/audit-<advisory-id>` off the default branch,
+            commit as `fix(deps): <what you bumped> for <RUSTSEC-id>`, push, read
+            `.github/pull_request_template.md`, fill each section (removing the HTML
+            comment instructions), write it to a temp file and run
+            `gh pr create --body-file <path>`. Title the PR so it contains the words
+            "cargo audit", so the dedupe check above finds it next run.
+
+      - name: Fail the run
+        # A red run is the visible alarm; the PR above is the fix. Same reason
+        # contract.yml stays red instead of quietly filing and passing.
+        if: steps.audit.outcome == 'failure'
+        run: exit 1
