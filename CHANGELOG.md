@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.5](https://github.com/source-cooperative/data.source.coop/compare/v2.3.4...v2.3.5) (2026-08-21)
+
+
+### Bug Fixes
+
+* **deps:** bump h2 to 0.4.18 for RUSTSEC-2026-0258 ([#214](https://github.com/source-cooperative/data.source.coop/issues/214)) ([52d9eb2](https://github.com/source-cooperative/data.source.coop/commit/52d9eb2e23f93433aef40eb534933ea1a440520c))
+* keep Cloudflare credentials out of build and install environments ([#211](https://github.com/source-cooperative/data.source.coop/issues/211)) ([e4ebade](https://github.com/source-cooperative/data.source.coop/commit/e4ebadeec7bda5e2142a46aade342f5eb4d2ed2d))
+
 ## [2.3.4](https://github.com/source-cooperative/data.source.coop/compare/v2.3.3...v2.3.4) (2026-07-28)
 
 
