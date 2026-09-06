@@ -8,6 +8,11 @@
 
 ---
 
+> [!IMPORTANT]
+> **Scope note (2026-08-26).** Service accounts (ADR-015) ship with the two **built-in Roles only** — `FullAccess` and `ReadOnly`, hardcoded in the proxy. The account-owned portion of this ADR — Role CRUD, per-Role `identity_constraints`, user-authored permission statements, and the management API — is **deferred** to keep the first implementation small.
+>
+> This ADR stays the record of where Roles are going. What ships first is the ceiling mechanism (ADR-011) applied to two fixed Roles. Two consequences follow while that is true: nothing restricts which Role a caller may name, which is safe because a Role can only subtract; and the fail-open defaults described in ADR-009 stay unreachable, because no Role is user-authored yet.
+
 ## Context
 
 ADR-004 ships a single built-in Role, `_default`, with an unlimited ceiling and no subject conditions. Every credential the platform issues therefore carries the caller's full permissions. There is no way to obtain a narrower credential, and no way to say "this specific workload may write to this specific product".

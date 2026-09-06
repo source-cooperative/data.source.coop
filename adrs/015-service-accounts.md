@@ -65,9 +65,11 @@ Two guardrails the grant model cannot express stay explicit:
 
 ### Roles Are Unchanged
 
-A service account assumes a Role by URN exactly as any other caller does (ADR-010), and the credential is the Role's ceiling intersected with the account's live grants (ADR-011). Nothing here adds a second authorisation model.
+A service account names a Role when it asks for credentials, exactly as any other caller does, and the credential is the Role's ceiling intersected with the account's live grants (ADR-011). Nothing here adds a second authorisation model.
 
-Which Roles a service account may assume is recorded on the Role, in its `identity_constraints`, alongside the binding that identifies the account. A management UI may present this as a per-service-account list, but there is one store, not two.
+Two Roles ship, both hardcoded in the proxy: **`FullAccess`** and **`ReadOnly`**. The account-owned Roles of ADR-010 are deferred (see the scope note there), so there is no Role CRUD, no per-Role trust policy, and no per-service-account list of permitted Roles.
+
+Nothing restricts which of the two a caller may name, and nothing needs to: a Role can only subtract, so naming `ReadOnly` never grants anything the account lacked, and naming `FullAccess` grants no more than its memberships already allow. A workload that only reads should name `ReadOnly` anyway — if it is ever compromised, it still cannot write.
 
 ---
 
