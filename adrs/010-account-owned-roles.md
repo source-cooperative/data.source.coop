@@ -108,7 +108,7 @@ Two built-ins are the whole set. Anything narrower is an account-authored Role.
 > [!IMPORTANT]
 > **`_default` must keep working.** It is not merely a name in this document — it is in deployed client configuration as `AWS_ROLE_ARN=arn:aws:iam::000000000000:role/_default`, accepted today by `is_default_role` in `src/sts.rs` (ADR-004). Renaming it breaks every existing caller. Accept it as an alias for `FullAccess` and deprecate it in documentation only.
 
-**Why these names are safe from collision.** Account-authored Role names are validated against a lowercase pattern (below), so a name containing an uppercase letter cannot be created through the API. `FullAccess` and `ReadOnly` are therefore unreachable by an account-authored Role, the same reservation the leading underscore gave `_default` — without the leading underscore reading as an internal detail in a user-facing UI.
+**Collision.** While Roles are hardcoded, there is nothing to collide with: the proxy knows three names — `FullAccess`, `ReadOnly`, and the `_default` alias — and rejects everything else. If account-owned Roles are ever built, the name validation specified below is lowercase-only, so a name containing an uppercase letter could not be created through the API and these two would stay reserved. That is a property to preserve when that work happens, not one that holds today.
 
 ### Validation at Creation
 
