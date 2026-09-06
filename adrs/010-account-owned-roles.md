@@ -87,24 +87,23 @@ Rules:
 - Actions are `read` (GetObject, HeadObject, ListObjects) and `write` (PutObject, DeleteObject, multipart). Finer actions can be added later as new values without breaking existing definitions.
 - Statements are additive (allow-only). No explicit denies.
 
-### The `_default` Role, Restated
+### Built-in Roles: `FullAccess` and `ReadOnly`
 
-Every account keeps a built-in `sc::{account_id}::role/_default`:
+Every account keeps two built-in Roles, synthesised rather than stored. Neither can be deleted, and owners may add claim constraints to a binding but cannot change the IdP binding itself.
 
-- Cannot be deleted
-- Constrained to the `auth.source.coop` platform IdP only
-- Permissions `{"actions": ["read", "write"], "resources": ["*"]}` — unlimited ceiling
-- Owners may add claim constraints to its binding, but cannot change the IdP binding itself
+| Role | Permissions | Notes |
+|---|---|---|
+| `sc::{account_id}::role/FullAccess` | `["read", "write"]` on `*` | The unlimited ceiling. `_default` is accepted as a deprecated alias. |
+| `sc::{account_id}::role/ReadOnly` | `["read"]` on `*` | Same, with writing removed. |
 
-This is the Role that ships today (ADR-004); this ADR generalises around it without changing its behaviour, so existing clients keep working unchanged.
-
-### The `_read_only` Role
-
-Every account also keeps a built-in `sc::{account_id}::role/_read_only`, identical to `_default` except that its permissions carry `["read"]`.
-
-It exists because the common case for a narrower credential needs no authoring at all: a job that only reads should ask for a credential that cannot write, whether or not anyone has written a Role for it. Since a Role is a ceiling (ADR-011), asking for `_read_only` never grants anything the caller lacked — so no account needs to opt in, and any caller may name it.
+`ReadOnly` exists because the common case for a narrower credential needs no authoring at all: a job that only reads should be able to ask for a credential that cannot write, whether or not anyone has written a Role for it. Since a Role is a ceiling (ADR-011), naming it never grants anything the caller lacked — so no account opts in, and any caller may name it.
 
 Two built-ins are the whole set. Anything narrower is an account-authored Role.
+
+> [!IMPORTANT]
+> **`_default` must keep working.** It is not merely a name in this document — it is in deployed client configuration as `AWS_ROLE_ARN=arn:aws:iam::000000000000:role/_default`, accepted today by `is_default_role` in `src/sts.rs` (ADR-004). Renaming it breaks every existing caller. Accept it as an alias for `FullAccess` and deprecate it in documentation only.
+
+**Why these names are safe from collision.** Account-authored Role names are validated against a lowercase pattern (below), so a name containing an uppercase letter cannot be created through the API. `FullAccess` and `ReadOnly` are therefore unreachable by an account-authored Role, the same reservation the leading underscore gave `_default` — without the leading underscore reading as an internal detail in a user-facing UI.
 
 ### Validation at Creation
 
