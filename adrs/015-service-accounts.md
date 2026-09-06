@@ -51,7 +51,7 @@ Deleting an account that owns service accounts is blocked. A missing owner denie
 
 ### Scope Is a Restriction on Grant Types
 
-A service account may hold only data grants — read or write on a product, or (per ADR-016) delete. It cannot hold an owner or maintainer role.
+A service account may hold only data grants — read or write on a product. It cannot hold an owner or maintainer role. Write includes deletion (ADR-016).
 
 This is the whole scope statement, and it needs no separate list of prohibitions. Every other action in `source.coop` — creating products, creating organisations, managing members, owning a record — already requires an owner or maintainer role, so restricting the grant types makes all of them unreachable by construction.
 

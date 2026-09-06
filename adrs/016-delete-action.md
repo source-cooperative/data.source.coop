@@ -1,4 +1,4 @@
-# ADR-016: `delete` as an Action Distinct from `write`
+# ADR-016: Deletion Is Part of Write
 
 **Status:** Proposed — not implemented
 **Date:** 2026-08-24
@@ -11,41 +11,40 @@
 
 The platform has no way to say "may upload, may not delete".
 
-The proxy classifies actions with a denylist: anything that is not `GetObject`, `HeadObject` or `ListBucket` is a write. Every write is then gated on a single string, `write`, returned by the Source Cooperative API. The API's permission vocabulary is two values, read and write. So `DeleteObject` and `PutObject` are indistinguishable at every layer, for people as well as for machines.
+The proxy classifies actions with a denylist: anything that is not `GetObject`, `GetObjectVersion`, `HeadObject` or `ListBucket` is a write. Every write is then gated on a single string, `write`, returned by the Source Cooperative API, whose permission vocabulary is two values. So `DeleteObject` and `PutObject` are indistinguishable at every layer, for people as well as for machines.
 
-That is a reasonable simplification for human collaborators and a poor one for unattended software, where "append-only publisher" is the common and sensible shape. ADR-010 anticipates this — its permission statements carry `actions`, with a note that finer actions can be added later — and ADR-011 lists agreeing on what read and write mean as a cost.
-
-**The extension point exists. The decision does not.**
+"Append-only publisher" is a reasonable thing to want, particularly for unattended software (ADR-015). The question is whether it needs a third permission value.
 
 ---
 
 ## Decision
 
-### A Third Permission Value
+### `write` includes deletion
 
-`delete` joins `read` and `write` in the API's permission vocabulary, is derived alongside them by the product permissions endpoint, and is checked by the proxy's write gate for destructive actions only.
+A grant of `write` on a product permits deletion. There is no third permission value in the API, no new grant type in the UI, and no migration of existing grants.
 
-`DeleteObject` and `AbortMultipartUpload` require `delete`. Every other non-read action continues to require `write`.
+Two reasons.
 
-### Both Layers, Deliberately
+**A writer can already destroy data without `DeleteObject`.** `PutObject` on an existing key overwrites it. Withholding deletion does not protect the data from a hostile or badly broken writer; it makes them take one extra step. Durability against that comes from versioning or object lock, not from splitting an action.
 
-The action set also appears in a Role's permission statements (ADR-010), which are sealed into the credential at mint time (ADR-011). Sealing makes the ceiling checkable with no network call, but it also means a sealed ceiling goes stale for up to a session.
+**The vocabulary is public.** `RepositoryPermissions` is part of the Source Cooperative API. Adding a third value obliges every consumer to understand it, and obliges us to decide what existing `write` grants map to — where the only safe answer, `write` implies `delete`, grants nothing anyone asked for.
 
-So `delete` lives in both places, and they do different jobs:
+### Roles may subset it
 
-| Layer | Job | Revocation lag |
-|---|---|---|
-| Role permission statements | The ceiling. Survives a bug in the live path. | Up to one session, currently capped at 12h |
-| API permission lookup | The live grant. | Roughly 60 seconds |
+Where "may upload, never delete" is genuinely wanted, it is expressed as a Role rather than as a grant.
 
-Putting `delete` only in the sealed ceiling would mean "we revoked delete" waits out the session — up to 12 hours on the ceiling currently configured for `/.sts`. Putting it only in the live lookup would leave the ceiling unable to express least privilege, which is the point of ADR-010.
+A Role carries a per-action list and can only subtract (ADR-011), so a Role whose actions omit `DeleteObject` yields credentials that cannot delete, no matter what the account's memberships allow. That gets the capability with no change to the permission vocabulary, no migration, and nothing new for a product owner to understand.
 
-### The Classifier Keeps Failing Safe
+This is deferred work, not work this ADR schedules: the Roles that ship are the two built-ins (ADR-010, scope note), and neither omits deletion. It becomes available when account-owned Roles do.
 
-The denylist stays a denylist: an action that is not explicitly a read is still treated as a write, and an action that is not explicitly destructive is not treated as a delete. A new action added upstream is gated as a write until it is classified, never the reverse.
+> [!IMPORTANT]
+> **`AbortMultipartUpload` must stay with `write`.** It removes an incomplete upload, which is cleanup any writer has to be able to perform. A workload that cannot abort its own failed multipart uploads leaves orphaned parts accruing storage cost. If a Role ever subtracts destructive actions, this must not be in that set.
 
-> [!NOTE]
-> **`GetObjectVersion` is currently misclassified.** multistore 0.7.2 added it, and the proxy's classifier does not list it as a read, so version reads are gated as writes today. Correct this with the same change — it is the denylist failing safe, but it is still wrong.
+### Fix the classifier
+
+`GetObjectVersion` was added in multistore 0.7.2 and is not listed as a read, so version reads are currently gated as writes. The denylist is failing safe, but it is still wrong. Correct it.
+
+The denylist stays a denylist: an action that is not explicitly a read is treated as a write, so a new action added upstream is over-restricted until classified, never under-restricted.
 
 ---
 
@@ -53,22 +52,22 @@ The denylist stays a denylist: an action that is not explicitly a read is still 
 
 **Benefits**
 
-- "Upload but never delete" becomes expressible, for service accounts and people alike.
-- Least privilege for publishing pipelines, which is the shape most of them want.
-- Revoking delete takes effect as fast as revoking write.
+- No change to a public API vocabulary, and no migration of existing grants.
+- Product owners keep a two-value model — read, or read and write — which is the thing they actually reason about.
+- Least privilege for deletion stays available, through the mechanism built for narrowing.
 
 **Costs / Risks**
 
-- A third value in a vocabulary two codebases and the public API already agree on. Existing grants must map to something, and the safe mapping — existing `write` implies `delete` — preserves behaviour but grants nothing new that anyone asked for.
-- One more thing for a Role author to get wrong.
-- The UI question is unsettled: is `delete` a grant a product owner ticks, or only something a Role can subtract? A grant type is more expressive and more work.
+- `aws s3 sync --delete` remains the realistic accident: a pipeline meant only to add files removes half a product. Nothing in this decision prevents it until account-owned Roles ship.
+- "May write but not delete" is unavailable in the meantime, so anyone asking for it today gets no answer.
+- The distinction lives in two vocabularies that must agree — the API's `read`/`write`, and a Role's per-action list. ADR-011 already names divergence between them as a silent correctness risk.
 
 ---
 
 ## Alternatives Considered
 
-**Leave delete inside write** — rejected. It is the status quo, and it makes the most common unattended shape inexpressible.
+**A third permission value, `delete`** — rejected. It reads as stronger protection than it is, since `PutObject` can already destroy an object by overwriting it. It also spends a public API change and a migration on a guarantee that only holds against accidents, and Roles cover the accident case without either.
 
-**Express delete only in Role permission statements** — rejected. Sealed ceilings mean revocation waits out the session. Delete is the action where a slow revocation matters most.
+**Express deletion only in Role permission statements, and say nothing in the grant model** — accepted, and this is what the decision above amounts to. Recorded separately because the choice is easy to misread as an oversight.
 
-**A full S3 action vocabulary** — deferred. Ten actions exist upstream, but only the destructive split has a demand behind it. Adding more later is backwards-compatible; carrying nine unused permission values is not free.
+**Versioning or object lock on the backing store** — deferred, and the right answer for durability. It protects against overwrite as well as deletion, which no permission split does. Out of scope here because it is a storage-configuration decision per data connection, not an authorization one.
