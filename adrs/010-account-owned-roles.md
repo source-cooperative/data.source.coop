@@ -8,6 +8,11 @@
 
 ---
 
+> [!IMPORTANT]
+> **Scope note (2026-08-26).** Service accounts (ADR-015) ship with the two **built-in Roles only** — `FullAccess` and `ReadOnly`, hardcoded in the proxy. The account-owned portion of this ADR — Role CRUD, per-Role `identity_constraints`, user-authored permission statements, and the management API — is **deferred** to keep the first implementation small.
+>
+> This ADR stays the record of where Roles are going. What ships first is the ceiling mechanism (ADR-011) applied to two fixed Roles. Two consequences follow while that is true: nothing restricts which Role a caller may name, which is safe because a Role can only subtract; and the fail-open defaults described in ADR-009 stay unreachable, because no Role is user-authored yet.
+
 ## Context
 
 ADR-004 ships a single built-in Role, `_default`, with an unlimited ceiling and no subject conditions. Every credential the platform issues therefore carries the caller's full permissions. There is no way to obtain a narrower credential, and no way to say "this specific workload may write to this specific product".
@@ -87,16 +92,23 @@ Rules:
 - Actions are `read` (GetObject, HeadObject, ListObjects) and `write` (PutObject, DeleteObject, multipart). Finer actions can be added later as new values without breaking existing definitions.
 - Statements are additive (allow-only). No explicit denies.
 
-### The `_default` Role, Restated
+### Built-in Roles: `FullAccess` and `ReadOnly`
 
-Every account keeps a built-in `sc::{account_id}::role/_default`:
+Every account keeps two built-in Roles, synthesised rather than stored. Neither can be deleted, and owners may add claim constraints to a binding but cannot change the IdP binding itself.
 
-- Cannot be deleted
-- Constrained to the `auth.source.coop` platform IdP only
-- Permissions `{"actions": ["read", "write"], "resources": ["*"]}` — unlimited ceiling
-- Owners may add claim constraints to its binding, but cannot change the IdP binding itself
+| Role | Permissions | Notes |
+|---|---|---|
+| `sc::{account_id}::role/FullAccess` | `["read", "write"]` on `*` | The unlimited ceiling. `_default` is accepted as a deprecated alias. |
+| `sc::{account_id}::role/ReadOnly` | `["read"]` on `*` | Same, with writing removed. |
 
-This is the Role that ships today (ADR-004); this ADR generalises around it without changing its behaviour, so existing clients keep working unchanged.
+`ReadOnly` exists because the common case for a narrower credential needs no authoring at all: a job that only reads should be able to ask for a credential that cannot write, whether or not anyone has written a Role for it. Since a Role is a ceiling (ADR-011), naming it never grants anything the caller lacked — so no account opts in, and any caller may name it.
+
+Two built-ins are the whole set. Anything narrower is an account-authored Role.
+
+> [!IMPORTANT]
+> **`_default` must keep working.** It is not merely a name in this document — it is in deployed client configuration as `AWS_ROLE_ARN=arn:aws:iam::000000000000:role/_default`, accepted today by `is_default_role` in `src/sts.rs` (ADR-004). Renaming it breaks every existing caller. Accept it as an alias for `FullAccess` and deprecate it in documentation only.
+
+**Collision.** While Roles are hardcoded, there is nothing to collide with: the proxy knows three names — `FullAccess`, `ReadOnly`, and the `_default` alias — and rejects everything else. If account-owned Roles are ever built, the name validation specified below is lowercase-only, so a name containing an uppercase letter could not be created through the API and these two would stay reserved. That is a property to preserve when that work happens, not one that holds today.
 
 ### Validation at Creation
 
@@ -131,7 +143,7 @@ ADR-005 records that the proxy signs policy-store calls with the caller's **Ory 
 
 Account-owned Roles break that assumption directly. A CI workflow assuming `sc::my-org::role/publisher` must resolve **my-org's** permissions, not those of the individual who configured it. So this ADR requires a paired change on the API side: accept an account id as `sub`, resolving either an individual or an organisation.
 
-**This is the largest piece of work in this ADR and it is not proxy-side.** It should be designed before the Role schema is built, because it determines whether `sub` stays an Ory identity with the account carried separately, or becomes an account id as RFC-001 §11 assumed.
+**This is the largest piece of work in this ADR and it is not proxy-side.** It is now answered by ADR-014: `sub` becomes neither an Ory identity nor a bare account id, but a subject qualified by its issuer, resolved through a binding table. That resolves the organisation case and the multi-issuer collision together. ADR-014 blocks this ADR.
 
 ---
 
