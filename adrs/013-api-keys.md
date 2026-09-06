@@ -48,24 +48,46 @@ An API key JWT contains:
 - `iss` is the proxy's own issuer URL, not `auth.source.coop` (which is Ory Network and outside Source Cooperative's control for token minting)
 - `sub` identifies the principal the key belongs to — a service account (ADR-015), resolved through an identity binding (ADR-014) like any other subject. A key is issued to a service account, never to a person.
 - `jti` is a unique key identifier used for revocation checks
-- `exp` is **mandatory**, with a platform ceiling. See below.
+- `exp` is optional and advisory. Validity is decided server-side against the `jti` record, not by the token's own claim. See below.
 - `type` distinguishes API key JWTs from other tokens the proxy may issue (e.g. outbound federation tokens)
 
-### Keys Always Expire
+### Expiry Lives in the `jti` Record
 
-An earlier draft of this ADR made `exp` optional, so a key would be "valid until explicitly revoked". Two things rule that out.
+Every exchange already looks the key's `jti` up to check revocation. Expiry lives in that same record rather than in the token's `exp` claim.
 
-The practical one: an indefinite key outlives the person who created it. This ADR's own Costs section names the failure — a researcher leaves a university and their key keeps working until an administrator happens to revoke it.
+| | Where | Effect |
+|---|---|---|
+| Revoked | `jti` record | Denied |
+| Expired | `jti` record, `expires_at` | Denied |
+| No expiry | `jti` record, `expires_at` null | Valid until revoked |
 
-The mechanical one: it cannot be delivered on the key material described below. A JWKS publishes the current key and one previous key, so a signature stops verifying two rotations after it was made, whatever the token says. A key with no `exp` would not be valid indefinitely; it would fail at an unpredictable point and look like an outage.
+This buys three things a signed `exp` cannot:
 
-Keys carry an expiry chosen at creation, bounded by a platform maximum. Renewal is issue-new, deploy, revoke-old: rotation has no overlap window and cannot extend an existing key's expiry.
+- **Keys may have no expiry**, when a user explicitly chooses it.
+- **Expiry can be changed after issuance** — extended for a workload that needs longer, or shortened in response to an incident.
+- **Expired and revoked are one check**, returning one client-visible outcome. Distinguishing them would make the endpoint a key-validity oracle.
 
-### Signing Key
+The cost is that the lookup can never be short-circuited. That is not a new cost: revocation already requires it.
+
+**Default to a bounded expiry.** Keys are issued with an expiry by default; "never expires" is an explicit choice, surfaced with a warning. The reason is not mechanical — it is that an indefinite credential outlives the person who created it and nothing ever forces a review. This ADR's own Costs section names the failure: a researcher leaves a university and their key keeps working until an administrator happens to notice.
+
+Renewal is issue-new, deploy, revoke-old. Rotation has no overlap window.
+
+> [!NOTE]
+> **An earlier draft made `exp` mandatory** on the grounds that a JWKS publishes only the current and previous key, so an `exp`-less token would stop verifying at an unpredictable moment. That constraint is removed by the retention policy below: verification keys are kept indefinitely, so a signature stays verifiable for as long as its `jti` record says it is valid.
+
+### Signing Key and Rotation
 
 API keys are signed with a dedicated key, published under its own `kid`, **not** the outbound federation key from ADR-006.
 
 That key is a public contract: its issuer URL and thumbprint are registered in third-party cloud IAM configurations (ADR-012), so rotating it is a coordinated migration with external parties. Long-lived credentials must not depend on a key whose rotation schedule is set by someone else's cloud account, and a compromise of one should not force the other.
+
+**Rotation adds a key; it does not replace one.** New keys are signed with the newest private key. Every key ever used for signing stays published for *verification*, each under its own `kid`. The keyset therefore grows by one entry per rotation, which is negligible at any sane cadence, and a key issued years ago still verifies.
+
+Removing a key from the set becomes the emergency lever rather than routine maintenance: it invalidates every key signed with it at once. That is the correct behaviour on a suspected signing-key compromise, and it is the only operation that invalidates keys without touching their `jti` records.
+
+> [!IMPORTANT]
+> **This retention policy is what makes non-expiring keys deliverable.** If verification keys are ever pruned on the usual current-plus-previous schedule, every key older than two rotations breaks — silently, and regardless of what its `jti` record says. Whoever operates rotation needs to know that.
 
 ### Key Lifecycle
 
@@ -79,7 +101,7 @@ source keys create --service-account svc--ncar-cronjob --expires-in 90d
 
 The system:
 1. Generates a unique `jti`
-2. Stores key metadata in the policy store: `jti`, service account id, label, created-at, expires-at
+2. Stores key metadata in the policy store: `jti`, service account id, label, created-at, `expires_at` (nullable), revoked flag
 3. Mints and signs the JWT
 4. Returns the raw JWT to the user — displayed once, never stored by the platform
 
@@ -187,8 +209,8 @@ This means revocation takes effect within roughly a minute. For the target use c
 
 - API key JWTs are bearer tokens — anyone with the raw JWT can use it. Users must treat them like passwords (store in environment variables or secret files, not in source control)
 - The `jti` revocation check adds a policy store dependency to the STS exchange path for API key tokens. Cache misses add latency, and the check must fail closed: an unavailable policy store denies rather than skipping the check.
-- Keys expire, so an unattended workload stops working on a known date. That is the intended trade against indefinite keys, but it fails silently — there is no notification channel, so expiry must be documented and surfaced in the UI.
-- A second signing key to manage, publish and rotate.
+- A key issued with an expiry stops an unattended workload on a known date, and it fails silently — there is no notification channel, so expiry must be surfaced in the UI and in the docs. A key issued without one never prompts a review, which is the opposite failure. Neither is solved here; the default is chosen to make the second one deliberate.
+- A second signing key to manage, publish and rotate, whose old entries are retained rather than pruned. The operational rule — rotation adds, never removes — has to survive staff turnover, because breaking it silently invalidates every older key.
 - Revocation takes effect within the cache TTL, and credentials already issued live out their session regardless.
 
 ---
