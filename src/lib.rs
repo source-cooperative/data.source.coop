@@ -10,6 +10,7 @@
 mod analytics;
 mod authz;
 mod backend_auth;
+mod cache_control;
 mod config;
 mod handlers;
 mod location;
@@ -414,6 +415,27 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
                     api_auth: api_auth.clone(),
                 },
             );
+        }
+    }
+
+    // ── Default Cache-Control ────────────────────────────────────
+    // Only when the backend sent none: a publisher's own header always wins.
+    // Without this the response carries `Last-Modified` but no freshness
+    // directive, and RFC 9111 §4.2.2 lets caches invent one — which silently
+    // served pre-publish STAC metadata to browsers (#225).
+    if let Some(value) = cache_control::default_cache_control(
+        &parts.method,
+        &parts.path,
+        response
+            .headers()
+            .get("cache-control")
+            .ok()
+            .flatten()
+            .as_deref(),
+        &config.default_cache_control,
+    ) {
+        if let Err(e) = response.headers().set("cache-control", value) {
+            tracing::warn!("failed to set cache-control header: {:?}", e);
         }
     }
 

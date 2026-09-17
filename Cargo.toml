@@ -34,6 +34,10 @@ path = "tests/object_path.rs"
 name = "fixtures"
 path = "tests/fixtures.rs"
 
+[[test]]
+name = "cache_control"
+path = "tests/cache_control.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.7.2", features = ["azure", "gcp"] }

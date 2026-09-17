@@ -8,6 +8,11 @@ use worker::Env;
 
 static CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
+/// Default for `DEFAULT_CACHE_CONTROL` when the var is unset. `no-cache` is the
+/// conservative choice: it allows a cache to store the response but forces
+/// revalidation before reuse, so a re-published object is never served stale.
+const DEFAULT_CACHE_CONTROL_FALLBACK: &str = "no-cache";
+
 /// Return the process-wide config, parsing env/secrets the first time it's
 /// called. Subsequent calls within the same isolate are free — in particular,
 /// the RSA OIDC signing keys are parsed from PEM exactly once.
@@ -135,6 +140,16 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("IP_HASH_SALT not set: client-IP hashes are unsalted (brute-forceable)");
     }
 
+    // `Cache-Control` to add to read responses that carry none of their own.
+    // Unset → `no-cache`, which permits storing but requires revalidation; the
+    // proxy already answers `If-None-Match` with a 304, so the cost is one
+    // conditional request rather than a full transfer. Set to the empty string
+    // to disable and send no header at all. See `crate::cache_control`.
+    let default_cache_control = match env.var("DEFAULT_CACHE_CONTROL") {
+        Err(_) => DEFAULT_CACHE_CONTROL_FALLBACK.to_string(),
+        Ok(v) => v.to_string(),
+    };
+
     AppConfig {
         api_base_url,
         oidc,
@@ -143,6 +158,7 @@ fn build_config(env: &Env) -> AppConfig {
         auth_audiences,
         sts_max_session_duration_secs,
         ip_hash_salt,
+        default_cache_control,
     }
 }
 
@@ -164,6 +180,10 @@ pub struct AppConfig {
     /// Secret salt for hashing client IPs before they enter analytics. Empty
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,
+    /// `Cache-Control` added to read responses that carry none of their own,
+    /// from `DEFAULT_CACHE_CONTROL`. Defaults to `no-cache`; empty disables the
+    /// behaviour. Never overrides a value the backend already sent.
+    pub default_cache_control: String,
 }
 
 pub struct OidcConfig {

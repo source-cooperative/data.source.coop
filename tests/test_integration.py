@@ -172,3 +172,71 @@ def test_object_access_via_path():
     """HEAD /{account}/{product}/{key} should return 200."""
     resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
+
+
+# ── Cache-Control (issue #225) ──────────────────────────────────────
+
+
+def test_object_read_sends_cache_control():
+    """A read of an object whose backend sets no Cache-Control gets the default.
+
+    Without it the response carries Last-Modified but no freshness directive,
+    and RFC 9111 4.2.2 lets a cache invent one from it -- which is how browsers
+    served pre-publish STAC metadata as a plain 200.
+    """
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_head_sends_cache_control():
+    resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_ranged_read_sends_cache_control():
+    """206s get it too: RFC 9111 4.2.2 heuristic freshness covers them."""
+    resp = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"Range": "bytes=0-99"},
+    )
+    assert resp.status_code == 206
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_not_found_sends_cache_control():
+    """404 is heuristically cacheable too, so a missing object must not be
+    cached as missing for a day after it is created."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/does-not-exist-{os.getpid()}")
+    assert resp.status_code == 404
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_listing_sends_cache_control():
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}?list-type=2&delimiter=/")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_control_plane_has_no_injected_cache_control():
+    """OIDC discovery manages its own caching; the proxy must not override it."""
+    resp = requests.get(f"{PROXY_URL}/.well-known/openid-configuration")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") != "no-cache"
+
+
+def test_revalidation_still_returns_304():
+    """no-cache costs a conditional request, not a full transfer -- which only
+    holds if revalidation works. Guard that assumption."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    etag = resp.headers.get("etag")
+    assert etag, "no ETag to revalidate against"
+
+    revalidated = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"If-None-Match": etag},
+    )
+    assert revalidated.status_code == 304
+    assert not revalidated.content
