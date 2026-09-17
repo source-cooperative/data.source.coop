@@ -19,6 +19,14 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 AUTH_AUDIENCE = "fb15e9fb-00e7-4604-9df0-ac27ac5822f2,197e20e7-d52d-4d1d-9e54-4b73a342034b" # prod Ory client_ids: frontend + source-coop-cli
 AUTH_ISSUER = "https://auth.source.coop" 
 LOG_LEVEL = "WARN" 
+# PMTiles tile endpoint (src/tiles.rs). TILE_CACHE_MAX_AGE is both the tile
+# `max-age` and the TTL bounding how long a cached archive directory may be
+# replayed -- a re-uploaded archive invalidates the byte offsets a cached reader
+# holds, so this is a correctness bound, not just a freshness knob. Unset ->
+# 3600. PUBLIC_BASE_URL is the origin advertised in TileJSON tile templates;
+# unset -> OIDC_PROVIDER_ISSUER, which is this proxy's public origin.
+# TILE_CACHE_MAX_AGE = "3600"
+# PUBLIC_BASE_URL = "https://data.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop" 
 OIDC_PROVIDER_KID = "data-proxy-1" 
 SOURCE_API_URL = "https://source.coop" 

@@ -17,6 +17,7 @@ mod object_path;
 mod pagination;
 mod source_api;
 mod sts;
+mod tiles;
 
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
@@ -265,7 +266,22 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let router = router
         .route("/", IndexHandler)
-        .route("/{bucket}", AccountListHandler::new(registry.clone()));
+        .route("/{bucket}", AccountListHandler::new(registry.clone()))
+        // Catch-all over object keys, so the PMTiles handler can claim
+        // `…/{archive}.pmtiles/{z}/{x}/{y}.{ext}`. It sees every object request
+        // and declines all but tile-shaped ones (`tiles::parse_target`), which
+        // falls through to the normal pipeline — the same way
+        // `AccountListHandler` declines a non-list request. Registered last;
+        // `matchit` still prefers the static `/.well-known/*` and `/.sts`
+        // routes over it.
+        .route(
+            "/{bucket}/{*key}",
+            tiles::PmTilesHandler::new(
+                registry.clone(),
+                config.tile_cache_max_age,
+                config.public_base_url.clone(),
+            ),
+        );
 
     // ── Backend federation middleware ─────────────────────────────
     // For a connection resolved with auth_type=oidc, mint the proxy's OIDC

@@ -84,6 +84,7 @@ Client Request: GET /{account}/{product}/{key}
 | `src/pagination.rs` | S3-compatible pagination for prefix listings                   |
 | `src/analytics.rs`  | Cloudflare Analytics Engine request logging                    |
 | `src/handlers.rs`   | Custom route handlers (index, account listing)                 |
+| `src/tiles.rs`      | PMTiles Z/X/Y tile endpoint with edge caching                   |
 
 ### Supported Operations
 
@@ -97,8 +98,30 @@ Client Request: GET /{account}/{product}/{key}
 | `OPTIONS *`                             | CORS preflight                                             |
 | `GET /.well-known/openid-configuration` | OIDC discovery document                                    |
 | `GET /.well-known/jwks.json`            | JSON Web Key Set for JWT verification                      |
+| `GET /{account}/{product}/{archive}.pmtiles/{z}/{x}/{y}.{ext}` | A tile from a PMTiles archive (public products only) |
+| `GET /{account}/{product}/{archive}.pmtiles/tiles.json`        | TileJSON for a PMTiles archive (public products only) |
 
 Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.
+
+#### PMTiles tiles
+
+A PMTiles v3 archive in a **public** product is also readable as Z/X/Y tiles, so
+clients that cannot read PMTiles directly (older MapLibre and Leaflet builds,
+QGIS XYZ layers) can consume it, and so tiles can be cached at the edge — range
+requests cannot be, because the Cache API will not store a `206`.
+
+```
+https://data.source.coop/cholmes/nyc-taxi-zones/taxi_zones.pmtiles/{z}/{x}/{y}.mvt
+https://data.source.coop/cholmes/nyc-taxi-zones/taxi_zones.pmtiles/tiles.json
+```
+
+`.pbf` is accepted as a synonym for `.mvt`; raster archives use `.png`, `.jpeg`,
+`.webp` or `.avif`, and the extension must match the archive's own tile type.
+Reading the `.pmtiles` object directly with range requests is unchanged.
+
+The endpoint runs before caller identity is resolved, so it is anonymous and
+serves public products only; private tilesets remain available over the ordinary
+object path with ordinary authorization.
 
 ## Configuration
 
@@ -115,6 +138,8 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
+| `TILE_CACHE_MAX_AGE`         | `3600`                      | `max-age` on PMTiles tiles, and the TTL bounding how long a cached archive directory may be reused                                  |
+| `PUBLIC_BASE_URL`            | `OIDC_PROVIDER_ISSUER`      | Public origin used for the tile URL template inside TileJSON                                                                       |
 
 ### Secrets
 

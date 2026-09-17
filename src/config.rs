@@ -135,6 +135,27 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("IP_HASH_SALT not set: client-IP hashes are unsalted (brute-forceable)");
     }
 
+    // `max-age` on PMTiles tiles served by the tile endpoint, and the TTL on
+    // its per-isolate directory caches. See `crate::tiles`.
+    let tile_cache_max_age = match env.var("TILE_CACHE_MAX_AGE") {
+        Err(_) => crate::tiles::DEFAULT_TILE_MAX_AGE,
+        Ok(v) => v
+            .to_string()
+            .parse::<u32>()
+            .inspect_err(|_| {
+                tracing::warn!("TILE_CACHE_MAX_AGE is not a valid integer; using the default")
+            })
+            .unwrap_or(crate::tiles::DEFAULT_TILE_MAX_AGE),
+    };
+
+    // Public origin of this proxy, used to build the tile URL template inside
+    // TileJSON. Defaults to the OIDC issuer, which is already this proxy's
+    // public origin in every deployment (see `OIDC_PROVIDER_ISSUER`).
+    let public_base_url = env
+        .var("PUBLIC_BASE_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| oidc.issuer.clone());
+
     AppConfig {
         api_base_url,
         oidc,
@@ -143,6 +164,8 @@ fn build_config(env: &Env) -> AppConfig {
         auth_audiences,
         sts_max_session_duration_secs,
         ip_hash_salt,
+        tile_cache_max_age,
+        public_base_url,
     }
 }
 
@@ -164,6 +187,13 @@ pub struct AppConfig {
     /// Secret salt for hashing client IPs before they enter analytics. Empty
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,
+    /// `max-age` for PMTiles tiles, and the TTL on the tile endpoint's
+    /// per-isolate directory caches. From `TILE_CACHE_MAX_AGE`.
+    pub tile_cache_max_age: u32,
+    /// Public origin of this proxy (e.g. `https://data.source.coop`), used for
+    /// the tile URL template in TileJSON. From `PUBLIC_BASE_URL`, defaulting to
+    /// the OIDC issuer.
+    pub public_base_url: String,
 }
 
 pub struct OidcConfig {
