@@ -148,9 +148,13 @@ fn build_config(env: &Env) -> AppConfig {
             .unwrap_or(crate::tiles::DEFAULT_TILE_MAX_AGE),
     };
 
-    // Public origin of this proxy, used to build the tile URL template inside
-    // TileJSON. Defaults to the OIDC issuer, which is already this proxy's
-    // public origin in every deployment (see `OIDC_PROVIDER_ISSUER`).
+    // Fallback origin for the TileJSON tile template, used only when a request
+    // arrives with no `Host` header. The template is normally built from the
+    // host the client actually reached (see `crate::tiles`), because a
+    // configured value cannot know it: preview deployments pin
+    // OIDC_PROVIDER_ISSUER to the staging host for JWKS reasons while serving on
+    // pr-N.*.workers.dev, so defaulting to the issuer advertised the wrong
+    // deployment entirely.
     let public_base_url = env
         .var("PUBLIC_BASE_URL")
         .map(|v| v.to_string())
@@ -190,9 +194,9 @@ pub struct AppConfig {
     /// `max-age` for PMTiles tiles, and the TTL on the tile endpoint's
     /// per-isolate directory caches. From `TILE_CACHE_MAX_AGE`.
     pub tile_cache_max_age: u32,
-    /// Public origin of this proxy (e.g. `https://data.source.coop`), used for
-    /// the tile URL template in TileJSON. From `PUBLIC_BASE_URL`, defaulting to
-    /// the OIDC issuer.
+    /// Fallback origin for the TileJSON tile template, from `PUBLIC_BASE_URL`
+    /// and defaulting to the OIDC issuer. Consulted only when a request carries
+    /// no `Host`; otherwise the template follows the host the client reached.
     pub public_base_url: String,
 }
 

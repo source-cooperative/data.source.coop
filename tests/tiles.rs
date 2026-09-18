@@ -9,7 +9,9 @@
 #[path = "../src/tiles.rs"]
 mod tiles;
 
-use tiles::{parse_target, TileExt, Wanted};
+use tiles::{
+    encode_path, join_backend_prefix, parse_target, root_directory_is_addressable, TileExt, Wanted,
+};
 
 fn tile(key: &str) -> Option<(String, Wanted)> {
     parse_target(key).map(|t| (t.archive_key.to_string(), t.wanted))
@@ -206,4 +208,110 @@ fn content_types_match_the_extension() {
 #[test]
 fn default_tile_max_age_is_one_hour() {
     assert_eq!(tiles::DEFAULT_TILE_MAX_AGE, 3600);
+}
+
+// ── Review fixes ────────────────────────────────────────────────────
+
+/// A non-canonical archive key names the same stored object as its canonical
+/// spelling — `object_store::path::Path::from` collapses empty and relative
+/// segments — while the cache key keeps `/` as structure. Accepting both would
+/// mint a distinct edge-cache entry, and a distinct per-isolate directory-cache
+/// entry, for every spelling of one tile.
+#[test]
+fn non_canonical_archive_keys_are_declined() {
+    for key in [
+        "a//b.pmtiles/0/0/0.mvt",
+        "a/./b.pmtiles/0/0/0.mvt",
+        "a/../b.pmtiles/0/0/0.mvt",
+        "/a.pmtiles/0/0/0.mvt",
+        "a//b.pmtiles/tiles.json",
+    ] {
+        assert_eq!(parse_target(key), None, "{key:?} should be declined");
+    }
+}
+
+/// ...while the canonical spelling still resolves.
+#[test]
+fn canonical_archive_keys_still_parse() {
+    let t = parse_target("a/b.pmtiles/0/0/0.mvt").expect("should parse");
+    assert_eq!(t.archive_key, "a/b.pmtiles");
+}
+
+/// `resolve_product` concatenates a connection's `base_prefix` with a mirror's
+/// `prefix` and normalizes neither, so a prefix without a trailing slash is
+/// ordinary. Concatenating raw silently reads the wrong key.
+#[test]
+fn backend_prefix_is_joined_with_exactly_one_slash() {
+    assert_eq!(
+        join_backend_prefix(Some("acct/prod"), "a.pmtiles"),
+        "acct/prod/a.pmtiles"
+    );
+    assert_eq!(
+        join_backend_prefix(Some("acct/prod/"), "a.pmtiles"),
+        "acct/prod/a.pmtiles"
+    );
+    assert_eq!(
+        join_backend_prefix(Some("acct/prod///"), "a.pmtiles"),
+        "acct/prod/a.pmtiles"
+    );
+    assert_eq!(join_backend_prefix(Some(""), "a.pmtiles"), "a.pmtiles");
+    assert_eq!(join_backend_prefix(Some("/"), "a.pmtiles"), "a.pmtiles");
+    assert_eq!(join_backend_prefix(None, "a.pmtiles"), "a.pmtiles");
+}
+
+/// The TileJSON template is pasted back into a URL, so every segment it
+/// interpolates has to be re-encoded — these values come off an already-decoded
+/// request path. A raw `#` truncates every tile URL at the fragment.
+#[test]
+fn template_segments_are_percent_encoded() {
+    assert_eq!(
+        encode_path("basemaps/nyc tiles#2.pmtiles"),
+        "basemaps/nyc%20tiles%232.pmtiles"
+    );
+    // `/` is structure and survives; unreserved characters are left alone.
+    assert_eq!(encode_path("a/b-c_d.e~f"), "a/b-c_d.e~f");
+    assert_eq!(encode_path("a?b/c"), "a%3Fb/c");
+}
+
+/// pmtiles validates only the magic number before slicing the root directory out
+/// of its initial read, so a header carrying valid magic and a bogus
+/// `root_offset` panics — and a panic on wasm32 tears down the isolate, killing
+/// every concurrent request, not just this one.
+#[test]
+fn a_bogus_root_offset_is_refused_rather_than_panicking() {
+    let header = |root_offset: u64, root_length: u64| {
+        let mut h = Vec::from(*b"PMTiles");
+        h.push(3);
+        h.extend_from_slice(&root_offset.to_le_bytes());
+        h.extend_from_slice(&root_length.to_le_bytes());
+        h
+    };
+
+    // The underflow case from the pmtiles source: root_offset - 127 wraps.
+    assert!(!root_directory_is_addressable(&header(0, 100), 100_000));
+    assert!(!root_directory_is_addressable(&header(126, 100), 100_000));
+    // Root directory claimed past the 16 KiB window pmtiles actually read.
+    assert!(!root_directory_is_addressable(
+        &header(127, 20_000),
+        100_000
+    ));
+    // ...or past the end of a short object.
+    assert!(!root_directory_is_addressable(&header(127, 500), 300));
+    // Addition that would overflow rather than merely exceed.
+    assert!(!root_directory_is_addressable(
+        &header(127, u64::MAX),
+        100_000
+    ));
+    // Not a v3 archive at all.
+    assert!(!root_directory_is_addressable(
+        b"not pmtiles at all......",
+        100_000
+    ));
+    // Too short to hold the fields being read.
+    assert!(!root_directory_is_addressable(b"PMTiles", 100_000));
+
+    // The ordinary archive: root directory immediately after the header.
+    assert!(root_directory_is_addressable(&header(127, 1_000), 100_000));
+    // A tiny archive whose root directory fills it exactly.
+    assert!(root_directory_is_addressable(&header(127, 73), 200));
 }

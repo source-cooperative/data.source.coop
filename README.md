@@ -138,8 +138,8 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
-| `TILE_CACHE_MAX_AGE`         | `3600`                      | `max-age` on PMTiles tiles, and the TTL bounding how long a cached archive directory may be reused                                  |
-| `PUBLIC_BASE_URL`            | `OIDC_PROVIDER_ISSUER`      | Public origin used for the tile URL template inside TileJSON                                                                       |
+| `TILE_CACHE_MAX_AGE`         | `3600`                      | `max-age` on PMTiles tiles, and the TTL on the per-isolate archive-directory caches (a memory bound; the cache id carries the ETag)  |
+| `PUBLIC_BASE_URL`            | `OIDC_PROVIDER_ISSUER`      | Fallback origin for the TileJSON tile template, used only when a request carries no `Host`                                          |
 
 ### Secrets
 

@@ -414,9 +414,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
-    // Only successful GET reads of a real product (not /.well-known or /.sts).
+    // Only successful GET reads of a real product (not /.well-known or /.sts),
+    // and never a tile: one map pan is 50-200 tile requests, each of which would
+    // otherwise spawn a product fetch plus a PUBLIC_LOG_STREAM subrequest and
+    // push a near-identical point (`5/9/12.mvt`) onto the live map. That drowns
+    // out genuine object reads, spends the per-request subrequest budget, and
+    // lands even on the warm path the tile endpoint exists to make cheap.
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
-        if response.status() < 400 && !parts.path.starts_with("/.") {
+        let is_tile = key.is_some_and(|k| tiles::parse_target(k).is_some());
+        if response.status() < 400 && !parts.path.starts_with("/.") && !is_tile {
             location::maybe_broadcast_location(
                 &ctx,
                 &env,

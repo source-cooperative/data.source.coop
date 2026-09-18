@@ -8,6 +8,7 @@ control plane: the worker reads real byte ranges out of real S3.
 
 import json
 import os
+from urllib.parse import urlparse
 
 import requests
 
@@ -110,14 +111,31 @@ def test_tilejson():
     assert tj["maxzoom"] == 13
 
 
+def test_tilejson_template_names_the_host_the_client_reached():
+    """The template must point at the deployment that answered.
+
+    Configuration cannot know which one that is: PUBLIC_BASE_URL defaults to
+    OIDC_PROVIDER_ISSUER, which previews pin to the staging host for JWKS
+    reasons while themselves serving on pr-N.*.workers.dev. A preview that
+    advertised staging would send every map client to the wrong deployment.
+    """
+    tj = json.loads(requests.get(f"{BASE}/tiles.json").text)
+    advertised = urlparse(tj["tiles"][0]).netloc
+    assert advertised == urlparse(PROXY_URL).netloc, (
+        f"tiles.json advertises {advertised!r}, not the host we asked "
+        f"({urlparse(PROXY_URL).netloc!r})"
+    )
+
+
 def test_tilejson_template_actually_resolves():
     """A TileJSON whose template 404s is worse than no TileJSON."""
     tj = json.loads(requests.get(f"{BASE}/tiles.json").text)
-    url = tj["tiles"][0].replace("{z}", "0").replace("{x}", "0").replace("{y}", "0")
-    # The advertised origin is the deployment's public URL, not localhost.
-    url = url.replace("https://data.source.coop", PROXY_URL).replace(
-        "http://data.source.coop", PROXY_URL
-    )
+    template = tj["tiles"][0].replace("{z}", "0").replace("{x}", "0").replace("{y}", "0")
+    # Rewrite scheme+host generically rather than substituting one hardcoded
+    # origin. A hardcoded rewrite silently no-ops when the template names some
+    # other host, and the test then passes by fetching a different deployment
+    # instead of the one under test.
+    url = PROXY_URL.rstrip("/") + urlparse(template).path
     resp = requests.get(url)
     assert resp.status_code == 200, f"{url} -> {resp.status_code}"
     assert resp.headers["content-type"] == "application/vnd.mapbox-vector-tile"
@@ -190,4 +208,27 @@ def test_unlisted_product_tiles_are_refused():
     url = f"{PROXY_URL}/{ACCOUNT}/tiles-unlisted-probe/{ARCHIVE}/{A_TILE}"
     resp = requests.get(url)
     assert resp.status_code == 404, f"expected 404, got {resp.status_code}"
+    assert "x-tile-cache" not in resp.headers
+
+
+# ── Review fixes ────────────────────────────────────────────────────
+
+
+def test_non_canonical_archive_key_falls_through_to_the_object_pipeline():
+    """`Path::from` collapses empty segments, so `a//b.pmtiles` reads the same
+    object as `a/b.pmtiles` — but the cache key keeps `/` as structure. Serving
+    both would mint a distinct edge-cache entry per spelling of one tile."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}//{ARCHIVE}/{A_TILE}")
+    assert "x-tile-cache" not in resp.headers
+
+
+def test_a_missing_archive_does_not_shadow_a_real_object():
+    """A tile-shaped key under a directory that merely ends in `.pmtiles` is an
+    ordinary object read. The handler must decline, not answer 404, or that
+    object becomes permanently unreachable."""
+    resp = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/definitely-absent.pmtiles/0/0/0.mvt"
+    )
+    # The object pipeline answers (404 here, since the fixture has no such
+    # object) -- but it answers, rather than the tile handler claiming the key.
     assert "x-tile-cache" not in resp.headers

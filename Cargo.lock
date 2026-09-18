@@ -2025,7 +2025,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "tilejson",
  "tracing",
  "wasm-bindgen",
  "web-sys",

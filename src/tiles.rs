@@ -162,6 +162,18 @@ pub(crate) fn parse_target(key: &str) -> Option<TileTarget<'_>> {
     let archive_key = &key[..idx + ARCHIVE_SUFFIX.len()];
     let rest = &key[idx + ARCHIVE_MARKER.len()..];
 
+    // The archive key has to be canonical for the same reason the coordinates
+    // do, and the reason is sharper here. `object_store::path::Path::from`
+    // *collapses* empty segments and strips `.`/`..`, so `a//b.pmtiles` and
+    // `a/./b.pmtiles` name the same stored object — while `cache_key` keeps `/`
+    // as structure and would mint a separate edge-cache entry, and a separate
+    // per-isolate directory-cache entry, for every spelling. Declining here is
+    // what keeps one tile to one URL. The main pipeline reaches the same place
+    // via `Path::parse` + `validate_key`.
+    if !is_canonical_key(archive_key) {
+        return None;
+    }
+
     if rest == TILEJSON_LEAF {
         return Some(TileTarget {
             archive_key,
@@ -191,6 +203,19 @@ pub(crate) fn parse_target(key: &str) -> Option<TileTarget<'_>> {
     })
 }
 
+/// Whether an object key is in the one spelling that names its object.
+///
+/// Rejects empty segments (`a//b`), and the relative segments `.` and `..`,
+/// which `object_store::path::Path::from` would silently normalize away —
+/// leaving several URLs that all read one object.
+fn is_canonical_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with('/')
+        && key
+            .split('/')
+            .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
 /// Parse a canonical decimal coordinate.
 ///
 /// Rejects anything `FromStr` would otherwise wave through — a leading `+`,
@@ -208,6 +233,98 @@ fn parse_coord<T: std::str::FromStr>(s: &str) -> Option<T> {
     s.parse().ok()
 }
 
+/// PMTiles v3 header size, and the window pmtiles reads up front for the header
+/// plus the root directory. Mirrored from `pmtiles::header`, where both are
+/// crate-private, and pinned by `root_directory_is_addressable`'s tests.
+const PMTILES_HEADER_SIZE: u64 = 127;
+const PMTILES_MAX_INITIAL_BYTES: u64 = 16_384;
+
+/// Whether pmtiles can parse this archive's root directory without panicking.
+///
+/// `AsyncPmTilesReader::try_from_cached_source` validates only the magic number
+/// before doing
+/// `initial_bytes.split_off(root_offset - HEADER_SIZE).split_to(root_length)`
+/// (`pmtiles-0.24.0/src/async_reader.rs:97`), on a buffer of at most
+/// `MAX_INITIAL_BYTES`. `root_offset` and `root_length` are read straight off
+/// disk with no bounds check, so an archive carrying valid magic and
+/// `root_offset = 0` underflows that subtraction to a huge index and `split_off`
+/// panics — outside the `catch_unwind` that guards the header field reads.
+///
+/// On wasm32 a panic is effectively an abort: the request dies as a runtime
+/// exception and the isolate is torn down, taking every concurrent request with
+/// it. Products here are user-published and a truncated multipart upload lands
+/// in the same place, so this is reachable by accident, not just by malice.
+/// Refusing here turns an isolate kill into a 404.
+///
+/// `header` is the first bytes of the object; anything shorter than the fields
+/// it needs is not a v3 archive either.
+pub(crate) fn root_directory_is_addressable(header: &[u8], object_size: u64) -> bool {
+    // magic(7) + version(1) + root_offset(8) + root_length(8)
+    if header.len() < 24 || &header[..7] != b"PMTiles" {
+        return false;
+    }
+    let read_u64 = |at: usize| {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&header[at..at + 8]);
+        u64::from_le_bytes(buf)
+    };
+    let root_offset = read_u64(8);
+    let root_length = read_u64(16);
+
+    // The subtraction pmtiles is about to do must not underflow, and the slice
+    // it then takes must lie inside the window it actually read.
+    let window = object_size.min(PMTILES_MAX_INITIAL_BYTES);
+    root_offset >= PMTILES_HEADER_SIZE
+        && root_offset
+            .checked_add(root_length)
+            .is_some_and(|e| e <= window)
+}
+
+/// Percent-encode set for one path segment, shared by the cache key and the
+/// TileJSON template. Mirrors `source_api::cache::PATH_SEGMENT`.
+pub(crate) const PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Percent-encode an object key for use inside a URL, keeping `/` as structure.
+///
+/// The values this is applied to come off an already-decoded request path, so
+/// re-encoding is what makes them safe to paste back into a URL. Without it an
+/// archive key holding a `#` truncates every advertised tile URL at the
+/// fragment, and one holding a space breaks the template outright.
+pub(crate) fn encode_path(path: &str) -> String {
+    path.split('/')
+        .map(|seg| percent_encoding::utf8_percent_encode(seg, PATH_SEGMENT).to_string())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Join `backend_prefix` to an object key the way multistore's own
+/// `apply_backend_prefix` does.
+///
+/// The separator is normalized rather than assumed. `resolve_product` builds the
+/// prefix by concatenating a connection's `base_prefix` with a mirror's
+/// `prefix`, and normalizes neither, so a mirror registered without a trailing
+/// slash is ordinary and every other read path copes with it. Concatenating raw
+/// turned `cholmes/nyc-taxi-zones` + `taxi_zones.pmtiles` into
+/// `cholmes/nyc-taxi-zonestaxi_zones.pmtiles`, so every tile 404'd for that
+/// product while the identical archive streamed fine as an object.
+pub(crate) fn join_backend_prefix(prefix: Option<&str>, key: &str) -> String {
+    match prefix {
+        Some(prefix) => {
+            let prefix = prefix.trim_end_matches('/');
+            if prefix.is_empty() {
+                key.to_string()
+            } else {
+                format!("{prefix}/{key}")
+            }
+        }
+        None => key.to_string(),
+    }
+}
+
 // ── Route handler ───────────────────────────────────────────────────
 //
 // Wasm-only: reads through `object_store` and the Workers Cache API.
@@ -217,7 +334,7 @@ pub(crate) use handler::PmTilesHandler;
 
 #[cfg(target_arch = "wasm32")]
 mod handler {
-    use super::{parse_target, Wanted};
+    use super::{parse_target, Wanted, PMTILES_HEADER_SIZE};
     use crate::source_api::SourceCoopRegistry;
     use multistore::api::response::ErrorResponse;
     use multistore::error::ProxyError;
@@ -225,19 +342,10 @@ mod handler {
         ProxyResponseBody, ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture,
     };
     use object_store::ObjectStore;
-    use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+    use percent_encoding::utf8_percent_encode;
     use pmtiles::{AsyncPmTilesReader, HashMapCache, PmtError, TileCoord, TileType};
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-
-    /// Percent-encode set for one cache-key path segment, mirroring
-    /// `source_api::cache::PATH_SEGMENT`. Keeps a key containing `?`, `#` or a
-    /// space from forging a colliding cache entry.
-    const KEY_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
 
     /// Synthetic origin for tile cache keys. Never resolved — the Cache API
     /// only requires a well-formed URL — but kept distinct from
@@ -245,29 +353,40 @@ mod handler {
     /// URL that some other code path might cache.
     const CACHE_ORIGIN: &str = "https://pmtiles-cache.source.coop";
 
-    /// How long reader cache entries live. Bounds how stale a re-published
-    /// archive can be *and* is a correctness bound, not just a freshness one:
-    /// a cached reader holds byte offsets from the directory it parsed, and
-    /// replaying those against a re-uploaded archive would read the wrong bytes
-    /// and serve a corrupt tile. Kept equal to the tile TTL so both tiers age
-    /// out together, so this is derived from the tile TTL rather than repeated.
+    /// How long reader cache entries live.
+    ///
+    /// This is a memory bound, not a correctness one. Correctness comes from the
+    /// ETag in the cache id: a re-published archive gets a different id and so
+    /// misses, rather than having the previous archive's leaf directory replayed
+    /// against its bytes. The TTL is what stops an isolate holding directories
+    /// for archives nobody is asking about any more. Kept equal to the tile TTL
+    /// so both tiers age out together, so it is derived rather than repeated.
     fn reader_ttl_ms(tile_max_age: u32) -> f64 {
         f64::from(tile_max_age) * 1000.0
     }
 
-    /// Per-isolate PMTiles directory caches, keyed by `bucket/archive_key`.
+    /// Per-isolate PMTiles directory caches, keyed by `bucket/archive_key@etag`.
     ///
-    /// Without this every tile re-reads the archive header and root directory —
-    /// two extra ranged origin reads per tile, which would make a cache-cold
-    /// viewport *slower* than reading the archive directly. `HashMapCache` keys
-    /// its entries by byte offset alone, so each archive must get its own
-    /// instance or offsets from one would be served for another.
+    /// What this saves is *leaf* directory reads. The header and root directory
+    /// are re-read either way — `try_from_cached_source` always issues its
+    /// `read(0, MAX_INITIAL_BYTES)` before the cache is consulted — but a deep
+    /// archive walks a leaf directory per tile, and on a cache-cold viewport
+    /// those are the reads that add up.
+    ///
+    /// `HashMapCache` keys its entries by byte offset alone, so each archive
+    /// must get its own instance or offsets from one would be served for
+    /// another. The ETag is in the id for the same reason at one remove: two
+    /// versions of an archive that reuse a leaf offset — routine when the same
+    /// tool re-encodes — are different archives as far as those offsets go.
     ///
     /// `std::sync::Mutex` is free here: a Workers isolate is single-threaded, so
     /// the lock is never contended. Entries carry an insertion timestamp and are
     /// treated as absent past [`reader_ttl_ms`].
     #[allow(clippy::type_complexity)]
     static DIR_CACHES: OnceLock<Mutex<HashMap<String, (f64, HashMapCache)>>> = OnceLock::new();
+
+    /// Maximum archives whose directories one isolate will cache at a time.
+    const MAX_DIR_CACHES: usize = 64;
 
     /// Fetch (or create) the directory cache for one archive.
     fn dir_cache_for(id: &str, tile_max_age: u32) -> HashMapCache {
@@ -282,6 +401,20 @@ mod handler {
         // Drop every expired entry, not just this one: the map is per-isolate
         // and otherwise grows without bound across archives.
         guard.retain(|_, (inserted, _)| now - *inserted < reader_ttl_ms(tile_max_age));
+
+        // A TTL alone does not bound this. Entries are only ever inserted for an
+        // archive that exists (the caller `head`s it first), but a public
+        // account can hold arbitrarily many archives and nothing rate-limits an
+        // anonymous crawler, so the map — and the O(n) sweep above that every
+        // tile pays — would still grow with traffic. Past the cap, start over
+        // rather than serve from a map that costs more to scan than it saves.
+        if guard.len() >= MAX_DIR_CACHES && !guard.contains_key(id) {
+            tracing::warn!(
+                entries = guard.len(),
+                "pmtiles directory cache hit its entry cap; clearing"
+            );
+            guard.clear();
+        }
 
         if let Some((_, cache)) = guard.get(id) {
             return HashMapCache {
@@ -338,7 +471,7 @@ mod handler {
                 let result = serve(
                     &self.registry,
                     self.tile_max_age,
-                    &self.public_base_url,
+                    &public_base_url(req.headers, &self.public_base_url),
                     bucket,
                     account,
                     product,
@@ -347,8 +480,17 @@ mod handler {
                 )
                 .await;
 
-                Some(match result {
-                    Ok(r) => r,
+                match result {
+                    // The archive this URL names is not there. Decline rather
+                    // than 404: the key may be a real object living under a
+                    // directory that merely ends in `.pmtiles`, and the object
+                    // pipeline behind us can still serve it. Claiming it here
+                    // would make that object permanently unreachable — and
+                    // would answer without ever consulting the caller's
+                    // credentials, so a private product's own owner would get a
+                    // 404 on a key they can read.
+                    Ok(None) => None,
+                    Ok(Some(r)) => Some(r),
                     Err(e) => {
                         tracing::warn!(
                             bucket = %bucket,
@@ -362,13 +504,17 @@ mod handler {
                             &self.registry.request_id,
                             false,
                         );
-                        ProxyResult::xml(e.status_code(), body.to_xml())
+                        Some(ProxyResult::xml(e.status_code(), body.to_xml()))
                     }
-                })
+                }
             })
         }
     }
 
+    /// Serve one tile or TileJSON document.
+    ///
+    /// `Ok(None)` means "this key turned out not to be ours" — the named archive
+    /// does not exist, so the request belongs to the ordinary object pipeline.
     #[allow(clippy::too_many_arguments)]
     async fn serve(
         registry: &SourceCoopRegistry,
@@ -379,10 +525,35 @@ mod handler {
         product: &str,
         target: &super::TileTarget<'_>,
         head_only: bool,
-    ) -> Result<ProxyResult, ProxyError> {
+    ) -> Result<Option<ProxyResult>, ProxyError> {
+        // ── Reject an impossible coordinate before spending anything ─
+        // `TileCoord::new` rejects an x/y outside the 2^z grid. Doing it first,
+        // rather than after two control-plane calls and a 16 KiB origin read,
+        // is what keeps `/2/4000000000/4000000000.mvt` from costing a full
+        // backend round trip — and it costs nothing on the path that matters.
+        if let Wanted::Tile { z, x, y, .. } = target.wanted {
+            TileCoord::new(z, x, y)
+                .map_err(|_| ProxyError::NoSuchKey(format!("invalid tile {z}/{x}/{y}")))?;
+        }
+
+        // ── Authorize: public products only ─────────────────────────
+        // Ahead of the cache lookup, not behind it. The edge cache is shared
+        // across every anonymous caller and records nothing about visibility,
+        // so checking it first meant a product that had since been made private
+        // — or disabled by a takedown — kept serving tiles to anyone for the
+        // rest of the TTL, with no purge handle to stop it. One control-plane
+        // call, itself cached for `PRODUCT_CACHE_SECS`, buys a revocation lag
+        // that matches every other path through this proxy.
+        let product_meta = registry.get_public_product(account, product).await?;
+        if !product_meta.is_public() {
+            // Deliberately "not found" rather than "forbidden": a restricted
+            // product must not have its existence confirmed by this endpoint.
+            return Err(ProxyError::NoSuchKey(format!(
+                "{account}/{product} is not a public product"
+            )));
+        }
+
         // ── Edge cache ──────────────────────────────────────────────
-        // Checked before any control-plane or origin call, so a warm tile costs
-        // one cache lookup and nothing else.
         let cache_key = cache_key(bucket, target);
         let cache = worker::Cache::default();
         if let Ok(Some(mut hit)) = cache.get(&cache_key, false).await {
@@ -396,58 +567,124 @@ mod handler {
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "application/octet-stream".to_string());
-            return Ok(tile_response(
+            return Ok(Some(tile_response(
                 bytes,
                 &content_type,
                 tile_max_age,
                 true,
                 head_only,
-            ));
-        }
-
-        // ── Authorize: public products only ─────────────────────────
-        // The subject-less fetch already refuses anything not visible
-        // anonymously; `is_public` is the explicit, auditable restatement of
-        // that, because what follows gets written to a shared cache.
-        let meta = registry.get_public_product(account, product).await?;
-        if !meta.is_public() {
-            // Deliberately "not found" rather than "forbidden": a restricted
-            // product must not have its existence confirmed by this endpoint.
-            return Err(ProxyError::NoSuchKey(format!(
-                "{account}/{product} is not a public product"
             )));
         }
 
         // ── Open the archive ────────────────────────────────────────
         let archive_key = target.archive_key;
         let config = registry.resolve_public_read(account, product).await?;
-        let prefix = config.backend_prefix.clone().unwrap_or_default();
-        let object_key = format!("{prefix}{}", target.archive_key);
+        let object_key =
+            super::join_backend_prefix(config.backend_prefix.as_deref(), target.archive_key);
         let store = build_store(&config)?;
+        let path = object_store::path::Path::from(object_key);
 
+        // One `head` before the reader. It settles two things the reader cannot:
+        // whether the archive exists at all (absent → decline, so a real object
+        // under a `*.pmtiles/` directory stays reachable), and its ETag, which
+        // is what makes a directory cache safe to reuse across requests.
+        // `get_opts` with `head: true` rather than `ObjectStoreExt::head`: the
+        // latter returns an opaque future and so is not on the `dyn ObjectStore`
+        // vtable this store is behind.
+        let head_opts = object_store::GetOptions {
+            head: true,
+            ..Default::default()
+        };
+        let object = match store.get_opts(&path, head_opts).await {
+            Ok(r) => r.meta,
+            Err(object_store::Error::NotFound { .. }) => return Ok(None),
+            Err(e) => return Err(map_pmt_error(PmtError::ObjectStore(e), archive_key)),
+        };
+
+        // `AsyncBackend` addresses the archive with `usize`, which is 32 bits on
+        // wasm32, so pmtiles truncates any offset past 4 GiB and reads the wrong
+        // bytes. Nothing downstream catches it — the truncated read is the right
+        // *length*, just from the wrong place — so a planet-scale archive would
+        // either fail to gunzip or hand back arbitrary bytes labelled as a tile.
+        // Refuse instead of serving garbage into a shared cache.
+        if object.size > u64::from(u32::MAX) {
+            return Err(ProxyError::NoSuchKey(format!(
+                "{archive_key} is larger than 4 GiB, which this endpoint cannot address"
+            )));
+        }
+
+        // Validate the header ourselves before handing the archive to pmtiles,
+        // which would otherwise panic on a malformed one and take the isolate
+        // down. Cheap: 24 bytes, and only on a cold tile.
+        if object.size < PMTILES_HEADER_SIZE {
+            return Err(ProxyError::NoSuchKey(format!(
+                "{archive_key} is not a readable PMTiles v3 archive"
+            )));
+        }
+        let probe_opts = object_store::GetOptions {
+            range: Some((0..24u64).into()),
+            ..Default::default()
+        };
+        let header_bytes = match store.get_opts(&path, probe_opts).await {
+            Ok(r) => r
+                .bytes()
+                .await
+                .map_err(|e| map_pmt_error(PmtError::ObjectStore(e), archive_key))?,
+            Err(object_store::Error::NotFound { .. }) => return Ok(None),
+            Err(e) => return Err(map_pmt_error(PmtError::ObjectStore(e), archive_key)),
+        };
+        if !super::root_directory_is_addressable(&header_bytes, object.size) {
+            return Err(ProxyError::NoSuchKey(format!(
+                "{archive_key} is not a readable PMTiles v3 archive"
+            )));
+        }
+
+        // The directory cache is keyed by the archive's ETag, not just its path.
+        // `HashMapCache` indexes entries by absolute byte offset alone, so a
+        // re-published archive that happens to reuse a leaf offset — routine
+        // when the same tool re-encodes — would otherwise have the *previous*
+        // leaf replayed against the new bytes, and `PmtError::SourceModified`
+        // cannot catch it because both reads in a request see the new object.
+        // Versioning the key makes a re-upload miss instead of corrupt.
+        let version = object.e_tag.as_deref().unwrap_or("-");
         let reader = AsyncPmTilesReader::try_from_cached_source(
-            pmtiles::ObjectStoreBackend::new(store, object_store::path::Path::from(object_key)),
-            dir_cache_for(&format!("{bucket}/{}", target.archive_key), tile_max_age),
+            pmtiles::ObjectStoreBackend::new(store, path),
+            dir_cache_for(&format!("{bucket}/{archive_key}@{version}"), tile_max_age),
         )
         .await
         .map_err(|e| map_pmt_error(e, archive_key))?;
 
         let header = reader.get_header();
 
+        // An archive whose tile type this endpoint cannot serve has no tile URL
+        // to advertise either. Failing here is louder than handing the client a
+        // TileJSON whose every tile request would 404 — which is what a blind
+        // `.mvt` fallback did, rendering a blank map with no error anywhere.
+        let Some(archive_ext) = default_ext(header.tile_type) else {
+            return Err(ProxyError::NoSuchKey(format!(
+                "{archive_key} holds {:?} tiles, which this endpoint cannot serve",
+                header.tile_type
+            )));
+        };
+
         let (bytes, content_type) = match target.wanted {
             Wanted::TileJson => {
+                // Every interpolated segment is percent-encoded. These arrive
+                // from an already-decoded request path, so an archive key
+                // holding a space or a `#` would otherwise be advertised raw
+                // and a client would truncate the URL at the fragment — the
+                // exact failure the template test exists to prevent.
                 let template = format!(
-                    "{}/{}/{}/{}/{{z}}/{{x}}/{{y}}.{}",
+                    "{}/{}/{}/{}/{{z}}/{{x}}/{{y}}.{archive_ext}",
                     public_base_url.trim_end_matches('/'),
-                    account,
-                    product,
-                    target.archive_key,
-                    default_ext(header.tile_type).unwrap_or("mvt"),
+                    super::encode_path(account),
+                    super::encode_path(product),
+                    super::encode_path(target.archive_key),
                 );
                 let tj = reader
                     .parse_tilejson(vec![template])
                     .await
-                    .map_err(|e| ProxyError::Internal(format!("tilejson build failed: {e}")))?;
+                    .map_err(|e| map_pmt_error(e, archive_key))?;
                 let body = serde_json::to_vec(&tj)
                     .map_err(|e| ProxyError::Internal(format!("tilejson encode failed: {e}")))?;
                 (body, "application/json".to_string())
@@ -455,7 +692,7 @@ mod handler {
             Wanted::Tile { z, x, y, ext } => {
                 // The archive decides the tile type; the URL may not contradict
                 // it, or we would hand back a protobuf labelled `image/png`.
-                if default_ext(header.tile_type) != Some(ext.canonical()) {
+                if archive_ext != ext.canonical() {
                     return Err(ProxyError::NoSuchKey(format!(
                         "archive holds {:?} tiles, not .{}",
                         header.tile_type,
@@ -485,22 +722,50 @@ mod handler {
             tracing::warn!("tile cache put failed: {}", e);
         }
 
-        Ok(tile_response(
+        Ok(Some(tile_response(
             bytes,
             &content_type,
             tile_max_age,
             false,
             head_only,
-        ))
+        )))
+    }
+
+    /// The origin to advertise in TileJSON tile templates.
+    ///
+    /// Taken from the request's own `Host` when there is one, and only then
+    /// from configuration. The template has to point at the hostname the client
+    /// actually reached, and a configured value cannot know it: `PUBLIC_BASE_URL`
+    /// defaults to `OIDC_PROVIDER_ISSUER`, which preview deployments pin to
+    /// `https://data.staging.source.coop` for JWKS reasons while themselves
+    /// serving on `pr-N.*.workers.dev`. Every preview would otherwise hand out a
+    /// tiles.json aimed at staging — and the template test, which rewrites the
+    /// production host, would silently pass by fetching staging instead of the
+    /// deployment under test.
+    fn public_base_url(headers: &http::HeaderMap, configured: &str) -> String {
+        let host = headers
+            .get(http::header::HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|h| !h.is_empty() && !h.contains('/'));
+        match host {
+            // Workers are always fronted by TLS; there is no http origin to
+            // advertise. `x-forwarded-proto` is client-settable, so it is not
+            // consulted — trusting it would let a caller mint http templates.
+            Some(host) => format!("https://{host}"),
+            None => configured.to_string(),
+        }
     }
 
     /// Map a PMTiles/object-store failure onto the right S3 error.
     ///
-    /// The distinction that matters is client-fault vs server-fault. A key that
-    /// does not exist, or exists but is not a PMTiles v3 archive, is a `404` —
-    /// the caller asked for something that is not there. Everything else is a
-    /// backend fault and stays a `5xx`. Getting this wrong makes a typo'd URL
-    /// look like an outage.
+    /// The distinction that matters is permanent vs transient, which here tracks
+    /// client-fault vs server-fault. Anything that is a fixed property of the
+    /// stored bytes — absent, not a v3 archive, a codec this build does not
+    /// carry, a damaged directory — is a `404`: retrying cannot change it.
+    /// Everything else is a backend fault and stays a `5xx`. Getting this wrong
+    /// makes a typo'd URL look like an outage, and makes every client and CDN in
+    /// the chain retry a failure that will never clear.
     fn map_pmt_error(e: PmtError, archive_key: &str) -> ProxyError {
         match e {
             // The object is absent. `object_store` also reports a 404 from the
@@ -508,13 +773,26 @@ mod handler {
             PmtError::ObjectStore(object_store::Error::NotFound { .. }) => {
                 ProxyError::NoSuchKey(format!("{archive_key} not found"))
             }
-            // The object is there but is not a PMTiles v3 archive. Reading a
-            // short or truncated file lands here too, via the header parse.
+            // The object is there but is not a PMTiles v3 archive. A short or
+            // truncated file is caught before this, by
+            // `root_directory_is_addressable` — pmtiles itself would panic on
+            // some of those rather than return an error.
+            // Every one of these is a permanent property of the stored bytes,
+            // not a transient backend fault: an unsupported compression codec
+            // (this crate builds pmtiles without `brotli` and `zstd`), a damaged
+            // directory or metadata block, a gunzip failure. Reporting them as
+            // 503 told every client and CDN in the chain to retry an outage that
+            // will never clear, and contradicted this function's own contract.
             PmtError::InvalidMagicNumber
             | PmtError::UnsupportedPmTilesVersion
             | PmtError::InvalidHeader
             | PmtError::InvalidTileType
             | PmtError::InvalidCompression
+            | PmtError::UnsupportedCompression(..)
+            | PmtError::InvalidEntry
+            | PmtError::InvalidMetadata
+            | PmtError::InvalidMetadataUtf8Encoding(..)
+            | PmtError::Reading(..)
             | PmtError::UnexpectedNumberOfBytesReturned(..) => ProxyError::NoSuchKey(format!(
                 "{archive_key} is not a readable PMTiles v3 archive"
             )),
@@ -536,6 +814,24 @@ mod handler {
         config: &multistore::types::BucketConfig,
     ) -> Result<Box<dyn ObjectStore>, ProxyError> {
         use multistore::backend::{create_builder, StoreBuilder};
+
+        // A connection whose credentials are federated is signed by the
+        // gateway's backend-auth middleware — which runs *after* route dispatch
+        // and so never sees this request. `apply_backend_auth` leaves only
+        // `auth_type`/`oidc_*` markers and no credentials, `create_builder`
+        // silently drops them (they are not `AmazonS3ConfigKey` variants), and
+        // the store falls through to object_store's instance-metadata provider:
+        // an unreachable 169.254.169.254 fetch from inside the Worker that, with
+        // retries disabled, surfaces as a 503 on every tile forever. Refuse with
+        // a permanent status instead; the archive still reads over the ordinary
+        // object path, which does run the middleware.
+        if config.backend_options.get("auth_type").map(String::as_str) == Some("oidc") {
+            return Err(ProxyError::NoSuchKey(
+                "tile endpoint cannot serve a product on a federated-credential connection"
+                    .to_string(),
+            ));
+        }
+
         let no_retry = object_store::RetryConfig {
             max_retries: 0,
             ..Default::default()
@@ -568,13 +864,13 @@ mod handler {
     /// share the entry they should. Carries no auth material — this endpoint is
     /// anonymous and public-only, so content identity is the whole key.
     fn cache_key(bucket: &str, target: &super::TileTarget<'_>) -> String {
-        let bucket = utf8_percent_encode(bucket, KEY_SEGMENT);
+        let bucket = utf8_percent_encode(bucket, super::PATH_SEGMENT);
         // The archive key keeps its `/` separators (they are path structure),
         // but every other reserved character is escaped.
         let archive: Vec<String> = target
             .archive_key
             .split('/')
-            .map(|s| utf8_percent_encode(s, KEY_SEGMENT).to_string())
+            .map(|s| utf8_percent_encode(s, super::PATH_SEGMENT).to_string())
             .collect();
         let archive = archive.join("/");
         match target.wanted {

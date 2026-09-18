@@ -20,11 +20,13 @@ AUTH_AUDIENCE = "fb15e9fb-00e7-4604-9df0-ac27ac5822f2,197e20e7-d52d-4d1d-9e54-4b
 AUTH_ISSUER = "https://auth.source.coop" 
 LOG_LEVEL = "WARN" 
 # PMTiles tile endpoint (src/tiles.rs). TILE_CACHE_MAX_AGE is both the tile
-# `max-age` and the TTL bounding how long a cached archive directory may be
-# replayed -- a re-uploaded archive invalidates the byte offsets a cached reader
-# holds, so this is a correctness bound, not just a freshness knob. Unset ->
-# 3600. PUBLIC_BASE_URL is the origin advertised in TileJSON tile templates;
-# unset -> OIDC_PROVIDER_ISSUER, which is this proxy's public origin.
+# `max-age` and the TTL on the per-isolate archive-directory caches -- a memory
+# bound, not a correctness one: a re-uploaded archive gets a different ETag and
+# so a different cache id, and misses rather than replaying stale byte offsets.
+# Unset -> 3600. PUBLIC_BASE_URL is only a fallback for the origin advertised in
+# TileJSON tile templates, used when a request carries no Host; normally the
+# template follows the host the client actually reached, which is the only thing
+# correct on a preview deployment as well as in production.
 # TILE_CACHE_MAX_AGE = "3600"
 # PUBLIC_BASE_URL = "https://data.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop" 

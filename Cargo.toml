@@ -70,7 +70,6 @@ object_store = { version = "0.14", default-features = false, features = [
   "reqwest",
   "ring",
 ] }
-tilejson = "0.4"
 
 # Hashing (HMAC-SHA256 client-IP hashing for analytics privacy)
 hmac = "0.12"
