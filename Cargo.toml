@@ -34,6 +34,10 @@ path = "tests/object_path.rs"
 name = "fixtures"
 path = "tests/fixtures.rs"
 
+[[test]]
+name = "tiles"
+path = "tests/tiles.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.7.2", features = ["azure", "gcp"] }
@@ -48,6 +52,24 @@ serde_json = "1"
 # HTTP
 http = "1"
 percent-encoding = "2"
+
+# PMTiles tile endpoint. `object-store` gives a backend that reads ranges
+# through the same `object_store` crate multistore already uses (its trait
+# futures are `Send`, which a worker `fetch` future is not); `tilejson` builds
+# the TileJSON document from the archive header + metadata. Default features
+# pull tokio-fs/mmap/reqwest/aws-sdk backends that do not build for wasm.
+pmtiles = { version = "0.24", default-features = false, features = [
+  "object-store",
+  "tilejson",
+] }
+# Named directly so the tile handler can construct a store from a resolved
+# `BucketConfig`. Features must match multistore's, or cargo unifies to the
+# default set and drags in `aws-lc-rs`, whose build script fails on wasm.
+object_store = { version = "0.14", default-features = false, features = [
+  "aws-base",
+  "reqwest",
+  "ring",
+] }
 
 # Hashing (HMAC-SHA256 client-IP hashing for analytics privacy)
 hmac = "0.12"

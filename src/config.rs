@@ -135,6 +135,31 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("IP_HASH_SALT not set: client-IP hashes are unsalted (brute-forceable)");
     }
 
+    // `max-age` on PMTiles tiles served by the tile endpoint, and the TTL on
+    // its per-isolate directory caches. See `crate::tiles`.
+    let tile_cache_max_age = match env.var("TILE_CACHE_MAX_AGE") {
+        Err(_) => crate::tiles::DEFAULT_TILE_MAX_AGE,
+        Ok(v) => v
+            .to_string()
+            .parse::<u32>()
+            .inspect_err(|_| {
+                tracing::warn!("TILE_CACHE_MAX_AGE is not a valid integer; using the default")
+            })
+            .unwrap_or(crate::tiles::DEFAULT_TILE_MAX_AGE),
+    };
+
+    // Fallback origin for the TileJSON tile template, used only when a request
+    // arrives with no `Host` header. The template is normally built from the
+    // host the client actually reached (see `crate::tiles`), because a
+    // configured value cannot know it: preview deployments pin
+    // OIDC_PROVIDER_ISSUER to the staging host for JWKS reasons while serving on
+    // pr-N.*.workers.dev, so defaulting to the issuer advertised the wrong
+    // deployment entirely.
+    let public_base_url = env
+        .var("PUBLIC_BASE_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| oidc.issuer.clone());
+
     AppConfig {
         api_base_url,
         oidc,
@@ -143,6 +168,8 @@ fn build_config(env: &Env) -> AppConfig {
         auth_audiences,
         sts_max_session_duration_secs,
         ip_hash_salt,
+        tile_cache_max_age,
+        public_base_url,
     }
 }
 
@@ -164,6 +191,13 @@ pub struct AppConfig {
     /// Secret salt for hashing client IPs before they enter analytics. Empty
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,
+    /// `max-age` for PMTiles tiles, and the TTL on the tile endpoint's
+    /// per-isolate directory caches. From `TILE_CACHE_MAX_AGE`.
+    pub tile_cache_max_age: u32,
+    /// Fallback origin for the TileJSON tile template, from `PUBLIC_BASE_URL`
+    /// and defaulting to the OIDC issuer. Consulted only when a request carries
+    /// no `Host`; otherwise the template follows the host the client reached.
+    pub public_base_url: String,
 }
 
 pub struct OidcConfig {

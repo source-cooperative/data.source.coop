@@ -117,3 +117,31 @@ fn explicit_endpoint_wins_over_region() {
 fn unsupported_provider_errors() {
     assert!(details(r#"{"provider":"ftp"}"#).backend_options().is_err());
 }
+
+#[test]
+fn tiles_product_fixture_is_public_with_resolvable_mirror() {
+    let p: SourceProduct =
+        serde_json::from_str(include_str!("fixtures/product_tiles.json")).unwrap();
+    assert!(
+        p.is_public(),
+        "the tile endpoint serves public products only"
+    );
+    assert!(p.metadata.mirrors.contains_key(&p.metadata.primary_mirror));
+}
+
+/// The unlisted probe must parse as non-public, or the test that proves the
+/// tile endpoint's `is_public` gate works would pass vacuously.
+#[test]
+fn tiles_unlisted_fixture_is_not_public() {
+    let p: SourceProduct =
+        serde_json::from_str(include_str!("fixtures/product_tiles_unlisted.json")).unwrap();
+    assert!(
+        !p.is_public(),
+        "an unlisted product must not read as public"
+    );
+    assert!(
+        p.metadata.mirrors.contains_key(&p.metadata.primary_mirror),
+        "the mirror must resolve, so the test fails on the is_public gate \
+         rather than on an unresolvable backend"
+    );
+}

@@ -84,6 +84,7 @@ Client Request: GET /{account}/{product}/{key}
 | `src/pagination.rs` | S3-compatible pagination for prefix listings                   |
 | `src/analytics.rs`  | Cloudflare Analytics Engine request logging                    |
 | `src/handlers.rs`   | Custom route handlers (index, account listing)                 |
+| `src/tiles.rs`      | PMTiles Z/X/Y tile endpoint with edge caching                   |
 
 ### Supported Operations
 
@@ -97,8 +98,40 @@ Client Request: GET /{account}/{product}/{key}
 | `OPTIONS *`                             | CORS preflight                                             |
 | `GET /.well-known/openid-configuration` | OIDC discovery document                                    |
 | `GET /.well-known/jwks.json`            | JSON Web Key Set for JWT verification                      |
+| `GET /{account}/{product}/{archive}.pmtiles/{z}/{x}/{y}.{ext}` | A tile from a PMTiles archive (public products only) |
+| `GET /{account}/{product}/{archive}.pmtiles/tiles.json`        | TileJSON for a PMTiles archive (public products only) |
 
 Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.
+
+#### PMTiles tiles
+
+A PMTiles v3 archive in a **public** product is also readable as Z/X/Y tiles, so
+clients that cannot read PMTiles directly (older MapLibre and Leaflet builds,
+QGIS XYZ layers) can consume it, and so tiles can be cached at the edge — range
+requests cannot be, because the Cache API will not store a `206`.
+
+```
+https://data.source.coop/cholmes/nyc-taxi-zones/taxi_zones.pmtiles/{z}/{x}/{y}.mvt
+https://data.source.coop/cholmes/nyc-taxi-zones/taxi_zones.pmtiles/tiles.json
+```
+
+`.pbf` is accepted as a synonym for `.mvt`; raster archives use `.png`, `.jpeg`,
+`.webp` or `.avif`, and the extension must match the archive's own tile type.
+Reading the `.pmtiles` object directly with range requests is unchanged.
+
+Tiles carry a strong `ETag` and honour `If-None-Match` with a `304`; edge-cache
+hits report their `Age`, and a tile that does not exist is remembered as missing
+for the same `max-age` so panning across an archive's empty footprint stays
+cheap. Publisher-supplied archive metadata is copied into TileJSON, except for
+the fields the document sets itself (`tiles`, `minzoom`, `vector_layers`, …),
+which always reflect the archive as served here.
+
+The endpoint serves public products only — a tile-shaped key in any other
+product is handed to the ordinary object pipeline untouched, so private tilesets
+remain available over the object path with ordinary authorization, and nothing
+about the tile endpoint confirms their existence. Archives that this build cannot
+serve (MLT or unknown tile types, brotli/zstd-compressed tiles, >4 GiB) are a
+`404`, never a retryable error.
 
 ## Configuration
 
@@ -115,6 +148,8 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
+| `TILE_CACHE_MAX_AGE`         | `3600`                      | `max-age` on PMTiles tiles, and the TTL on the per-isolate archive-directory caches (a memory bound; the cache id carries the ETag)  |
+| `PUBLIC_BASE_URL`            | `OIDC_PROVIDER_ISSUER`      | Fallback origin for the TileJSON tile template, used only when a request carries no `Host`                                          |
 
 ### Secrets
 

@@ -25,6 +25,33 @@ impl SourceCoopRegistry {
         }
     }
 
+    /// Fetch a product's metadata as an anonymous caller.
+    ///
+    /// Used by the PMTiles tile endpoint to decide whether a product is public.
+    /// The gateway has already resolved the *caller's* view of the product by
+    /// the time that middleware runs; this subject-less fetch answers the
+    /// different question of what an anonymous caller would see, which is what
+    /// matters before anything is written to a cache shared across all of them.
+    /// The caller is still expected to check [`SourceProduct::is_public`]: an
+    /// unlisted product resolves anonymously without being public.
+    ///
+    /// [`SourceProduct::is_public`]: super::types::SourceProduct::is_public
+    pub async fn get_public_product(
+        &self,
+        account: &str,
+        product: &str,
+    ) -> Result<super::types::SourceProduct, ProxyError> {
+        super::cache::get_or_fetch_product(
+            &self.api_base_url,
+            account,
+            product,
+            &self.api_auth,
+            &self.request_id,
+            None,
+        )
+        .await
+    }
+
     /// List products for an account via the Source API.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
         let product_list = super::cache::get_or_fetch_product_list(
