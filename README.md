@@ -119,9 +119,19 @@ https://data.source.coop/cholmes/nyc-taxi-zones/taxi_zones.pmtiles/tiles.json
 `.webp` or `.avif`, and the extension must match the archive's own tile type.
 Reading the `.pmtiles` object directly with range requests is unchanged.
 
-The endpoint runs before caller identity is resolved, so it is anonymous and
-serves public products only; private tilesets remain available over the ordinary
-object path with ordinary authorization.
+Tiles carry a strong `ETag` and honour `If-None-Match` with a `304`; edge-cache
+hits report their `Age`, and a tile that does not exist is remembered as missing
+for the same `max-age` so panning across an archive's empty footprint stays
+cheap. Publisher-supplied archive metadata is copied into TileJSON, except for
+the fields the document sets itself (`tiles`, `minzoom`, `vector_layers`, …),
+which always reflect the archive as served here.
+
+The endpoint serves public products only — a tile-shaped key in any other
+product is handed to the ordinary object pipeline untouched, so private tilesets
+remain available over the object path with ordinary authorization, and nothing
+about the tile endpoint confirms their existence. Archives that this build cannot
+serve (MLT or unknown tile types, brotli/zstd-compressed tiles, >4 GiB) are a
+`404`, never a retryable error.
 
 ## Configuration
 

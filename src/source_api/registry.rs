@@ -27,11 +27,13 @@ impl SourceCoopRegistry {
 
     /// Fetch a product's metadata as an anonymous caller.
     ///
-    /// Used by the PMTiles tile endpoint, which runs as a route handler and so
-    /// has no resolved identity to scope the fetch with. The subject-less fetch
-    /// only resolves products that are visible anonymously; the caller is still
-    /// expected to check [`SourceProduct::is_public`] before serving anything
-    /// into a shared cache.
+    /// Used by the PMTiles tile endpoint to decide whether a product is public.
+    /// The gateway has already resolved the *caller's* view of the product by
+    /// the time that middleware runs; this subject-less fetch answers the
+    /// different question of what an anonymous caller would see, which is what
+    /// matters before anything is written to a cache shared across all of them.
+    /// The caller is still expected to check [`SourceProduct::is_public`]: an
+    /// unlisted product resolves anonymously without being public.
     ///
     /// [`SourceProduct::is_public`]: super::types::SourceProduct::is_public
     pub async fn get_public_product(
@@ -46,29 +48,6 @@ impl SourceCoopRegistry {
             &self.api_auth,
             &self.request_id,
             None,
-        )
-        .await
-    }
-
-    /// Resolve a product's backend for an anonymous read.
-    ///
-    /// The same path `get_bucket` takes for a read, minus the `S3Operation`
-    /// plumbing a route handler has no way to synthesize. `is_write` is hard
-    /// `false` and the subject is hard `None`, so this can never federate
-    /// credentials or authorize a write.
-    pub async fn resolve_public_read(
-        &self,
-        account: &str,
-        product: &str,
-    ) -> Result<BucketConfig, ProxyError> {
-        resolve_product(
-            &self.api_base_url,
-            account,
-            product,
-            &self.api_auth,
-            &self.request_id,
-            None,
-            false,
         )
         .await
     }

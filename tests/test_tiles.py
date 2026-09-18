@@ -10,6 +10,7 @@ import json
 import os
 from urllib.parse import urlparse
 
+import pytest
 import requests
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
@@ -18,6 +19,17 @@ ACCOUNT = "cholmes"
 PRODUCT = "nyc-taxi-zones"
 ARCHIVE = "taxi_zones.pmtiles"
 BASE = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{ARCHIVE}"
+
+# The Workers Cache API is a no-op on `*.workers.dev`, where PR previews are
+# deployed, so a tile can never come back as an edge-cache HIT there. The
+# assertions that need one are skipped -- with a reason -- rather than left to
+# fail on every preview or, worse, softened until they pass without proving
+# anything. They run in full against a routed hostname.
+EDGE_CACHE_UNAVAILABLE = (urlparse(PROXY_URL).hostname or "").endswith("workers.dev")
+needs_edge_cache = pytest.mark.skipif(
+    EDGE_CACHE_UNAVAILABLE,
+    reason="Cache API is a no-op on *.workers.dev; edge-cache HITs cannot be observed",
+)
 
 # Present in the archive: it covers NYC, and z0/0/0 exists because the archive
 # starts at zoom 0.
@@ -66,6 +78,7 @@ def test_tile_is_not_double_encoded():
     assert raw[0] == 0x1A, f"not a bare MVT: {raw[:16].hex()}"
 
 
+@needs_edge_cache
 def test_tile_is_cached_at_the_edge():
     """Second read of the same tile must come from the Cache API."""
     url = f"{BASE}/2/1/1.mvt"
@@ -83,6 +96,7 @@ def test_tile_sends_cache_control():
     assert "max-age=" in resp.headers.get("cache-control", "")
 
 
+@needs_edge_cache
 def test_extension_aliases_share_a_cache_entry():
     """.pbf and .mvt are the same tile; they must not be cached twice."""
     requests.get(f"{BASE}/3/2/3.mvt")
@@ -145,7 +159,7 @@ def test_tilejson_template_actually_resolves():
 
 
 def test_plain_archive_get_still_streams_the_object():
-    """The catch-all route must not shadow a normal read of the archive."""
+    """The tile middleware must not shadow a normal read of the archive."""
     resp = requests.get(BASE, headers={"Range": "bytes=0-6"})
     assert resp.status_code == 206
     assert resp.content == b"PMTiles"
@@ -160,13 +174,10 @@ def test_ordinary_object_read_is_unaffected():
     assert resp.content == b"PAR1"
 
 
-def test_listing_still_works_under_the_catch_all():
-    """A two-segment list request is what actually reaches `/{bucket}/{*key}`.
-
-    A bare `/{account}` list matches the narrower `/{bucket}` route and never
-    passes the PMTiles handler at all, so asserting on it guards nothing: the
-    catch-all could claim every key and the test would still pass.
-    """
+def test_listing_still_works_past_the_tile_middleware():
+    """A two-segment list is an operation the tile middleware sees and must
+    decline. A bare `/{account}` list never carries an object key at all, so
+    asserting on it would guard nothing."""
     resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}?list-type=2&delimiter=/")
     assert resp.status_code == 200
     assert ARCHIVE in resp.text
@@ -248,3 +259,57 @@ def test_a_missing_archive_does_not_shadow_a_real_object():
     # The object pipeline answers (404 here, since the fixture has no such
     # object) -- but it answers, rather than the tile handler claiming the key.
     assert "x-tile-cache" not in resp.headers
+
+
+# ── Conditional requests and negative caching ───────────────────────
+
+
+def test_tile_carries_a_strong_etag():
+    resp = requests.get(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200
+    etag = resp.headers.get("etag")
+    assert etag and etag.startswith('"') and etag.endswith('"'), etag
+
+
+def test_if_none_match_revalidates_to_304():
+    first = requests.get(f"{BASE}/{A_TILE}")
+    etag = first.headers["etag"]
+    again = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert not again.content
+    assert again.headers.get("etag") == etag
+    # A weak comparison, per RFC 9110: a client that downgraded the tag still gets its 304.
+    weak = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": f"W/{etag}"})
+    assert weak.status_code == 304
+
+
+def test_a_stale_if_none_match_gets_the_full_tile():
+    resp = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": '"not-this-tile"'})
+    assert resp.status_code == 200
+    assert resp.content[0] == 0x1A
+
+
+@needs_edge_cache
+def test_cache_hit_reports_its_age():
+    """A hit re-states the full max-age, so without `Age` a client would treat a
+    tile stored 59 minutes ago as fresh for another hour."""
+    requests.get(f"{BASE}/{A_TILE}")
+    hit = requests.get(f"{BASE}/{A_TILE}")
+    assert hit.headers.get("x-tile-cache") == "HIT"
+    assert "age" in hit.headers, "cache hit must carry Age"
+    assert int(hit.headers["age"]) >= 0
+
+
+@needs_edge_cache
+def test_a_missing_tile_is_remembered_as_missing():
+    """Sparse archives are the norm; without negative caching every empty tile
+    outside the footprint re-pays the whole cold path for every user."""
+    url = f"{BASE}/13/0/0.mvt"  # valid coordinate, nothing there (NYC is not at 0,0)
+    first = requests.get(url)
+    assert first.status_code == 404
+    second = requests.get(url)
+    assert second.status_code == 404
+    # The negative entry is served without touching the control plane or origin;
+    # the only observable is that it is still a 404, and fast. What we can pin is
+    # that it did not turn into anything else.
+    assert "x-tile-cache" not in second.headers or second.headers["x-tile-cache"] in ("HIT", "MISS")

@@ -39,17 +39,19 @@
 //!
 //! # Public products only
 //!
-//! multistore dispatches route handlers *before* identity resolution, so a
-//! route handler has no `ResolvedIdentity` and cannot authorize a caller. This
-//! endpoint is therefore anonymous by construction, and serves only products
-//! that are public. That is enforced twice, deliberately: the subject-less
-//! Source API fetch only resolves products visible anonymously, *and*
-//! [`SourceProduct::is_public`] is checked explicitly before a single byte is
-//! read. The edge cache is shared across all callers and has no notion of who
-//! asked, so "is this public?" must be a written-down check rather than an
-//! emergent property of the lookup. Private tilesets keep working over the
-//! ordinary object path, with ordinary authorization.
+//! The endpoint is a `multistore` [`Middleware`], registered after
+//! `AwsBackendAuth`, so it runs with the caller's identity resolved and with the
+//! gateway's *authorized* `BucketConfig` in hand — credentials federated, if the
+//! connection needs them. It still serves only products that are public, and
+//! that is a deliberate, written-down check rather than an emergent property of
+//! the lookup: [`SourceProduct::is_public`] is tested explicitly before a single
+//! byte is read, because everything that follows is written to an edge cache
+//! shared across every anonymous caller. A tile-shaped key in a non-public
+//! product is handed on to the ordinary object pipeline untouched, so private
+//! tilesets keep working over the object path with ordinary authorization, and
+//! nothing this endpoint does can confirm their existence.
 //!
+//! [`Middleware`]: multistore::middleware::Middleware
 //! [`SourceProduct::is_public`]: crate::source_api::types::SourceProduct::is_public
 
 // ── Path parsing ────────────────────────────────────────────────────
@@ -121,15 +123,39 @@ impl TileExt {
         })
     }
 
-    /// The `Content-Type` to serve this tile with.
-    pub(crate) fn content_type(self) -> &'static str {
+    /// The archive tile type this extension names.
+    pub(crate) fn tile_type(self) -> pmtiles::TileType {
         match self {
-            Self::Mvt => "application/vnd.mapbox-vector-tile",
-            Self::Png => "image/png",
-            Self::Jpeg => "image/jpeg",
-            Self::Webp => "image/webp",
-            Self::Avif => "image/avif",
+            Self::Mvt => pmtiles::TileType::Mvt,
+            Self::Png => pmtiles::TileType::Png,
+            Self::Jpeg => pmtiles::TileType::Jpeg,
+            Self::Webp => pmtiles::TileType::Webp,
+            Self::Avif => pmtiles::TileType::Avif,
         }
+    }
+
+    /// The extension for an archive's tile type, or `None` for a type this
+    /// endpoint will not serve.
+    ///
+    /// This is the single mapping between what an archive holds and what a URL
+    /// may ask for. Comparing the two as enum values, rather than as a pair of
+    /// parallel string tables, is what makes "advertise `.mvt`, then 404 every
+    /// `.mvt` request" unrepresentable.
+    pub(crate) fn for_tile_type(t: pmtiles::TileType) -> Option<Self> {
+        Some(match t {
+            pmtiles::TileType::Mvt => Self::Mvt,
+            pmtiles::TileType::Png => Self::Png,
+            pmtiles::TileType::Jpeg => Self::Jpeg,
+            pmtiles::TileType::Webp => Self::Webp,
+            pmtiles::TileType::Avif => Self::Avif,
+            pmtiles::TileType::Unknown | pmtiles::TileType::Mlt => return None,
+        })
+    }
+
+    /// The `Content-Type` to serve this tile with — pmtiles' own answer for the
+    /// type, so the two can never drift.
+    pub(crate) fn content_type(self) -> &'static str {
+        self.tile_type().content_type()
     }
 
     /// Canonical spelling, used to build cache keys so that `.pbf` and `.mvt`
@@ -277,6 +303,39 @@ pub(crate) fn strip_reserved_tilejson_keys(
     }
 }
 
+/// Strong `ETag` for a tile body: the leading 128 bits of its SHA-256, quoted.
+///
+/// Content-derived rather than taken from the archive, so two versions of an
+/// archive that carry identical bytes for a tile share an ETag and a client
+/// holding either revalidates to a `304`. Tiles are tens of kilobytes and this
+/// only runs on a cache miss, so the hash is not a cost that shows.
+pub(crate) fn tile_etag(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    let mut etag = String::with_capacity(34);
+    etag.push('"');
+    for b in &digest[..16] {
+        etag.push_str(&format!("{b:02x}"));
+    }
+    etag.push('"');
+    etag
+}
+
+/// Whether an `If-None-Match` value matches `etag` under RFC 9110 §13.1.2 weak
+/// comparison: a `W/` prefix on either side is ignored, `*` matches anything,
+/// and the header may list several tags.
+pub(crate) fn if_none_match_matches(header: &str, etag: &str) -> bool {
+    fn bare(tag: &str) -> &str {
+        let tag = tag.trim();
+        tag.strip_prefix("W/").unwrap_or(tag)
+    }
+    let wanted = bare(etag);
+    header
+        .split(',')
+        .map(bare)
+        .any(|candidate| candidate == "*" || candidate == wanted)
+}
+
 /// PMTiles v3 header size, and the window pmtiles reads up front for the header
 /// plus the root directory. Mirrored from `pmtiles::header`, where both are
 /// crate-private, and pinned by `root_directory_is_addressable`'s tests.
@@ -369,25 +428,24 @@ pub(crate) fn join_backend_prefix(prefix: Option<&str>, key: &str) -> String {
     }
 }
 
-// ── Route handler ───────────────────────────────────────────────────
+// ── Tile middleware ─────────────────────────────────────────────────
 //
 // Wasm-only: reads through `object_store` and the Workers Cache API.
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use handler::PmTilesHandler;
+pub(crate) use handler::PmTilesMiddleware;
 
 #[cfg(target_arch = "wasm32")]
 mod handler {
-    use super::{parse_target, Wanted, PMTILES_HEADER_SIZE};
+    use super::{parse_target, TileExt, Wanted, PMTILES_HEADER_SIZE};
     use crate::source_api::SourceCoopRegistry;
-    use multistore::api::response::ErrorResponse;
     use multistore::error::ProxyError;
-    use multistore::route_handler::{
-        ProxyResponseBody, ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture,
-    };
+    use multistore::middleware::{DispatchContext, Middleware, Next};
+    use multistore::route_handler::{HandlerAction, ProxyResponseBody, ProxyResult};
+    use multistore::types::{BucketConfig, S3Operation};
     use object_store::ObjectStore;
     use percent_encoding::utf8_percent_encode;
-    use pmtiles::{AsyncPmTilesReader, HashMapCache, PmtError, TileCoord, TileType};
+    use pmtiles::{AsyncPmTilesReader, HashMapCache, PmtError, TileCoord};
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
@@ -396,6 +454,12 @@ mod handler {
     /// `data.source.coop` so a tile entry can never collide with a real object
     /// URL that some other code path might cache.
     const CACHE_ORIGIN: &str = "https://pmtiles-cache.source.coop";
+
+    /// Header stored on a cached entry recording when it was written (ms since
+    /// the epoch), so a hit can report a truthful `Age`. Without it a hit
+    /// re-states the full `max-age` and a client treats a tile stored 59 minutes
+    /// ago as fresh for another hour — doubling the effective staleness.
+    const STORED_AT_HEADER: &str = "x-tile-stored-at";
 
     /// How long reader cache entries live.
     ///
@@ -474,15 +538,21 @@ mod handler {
     }
 
     /// Serves PMTiles tiles and TileJSON for public products.
-    pub(crate) struct PmTilesHandler {
+    ///
+    /// A [`Middleware`] rather than a route handler so that it runs after
+    /// identity resolution, with the gateway's authorized [`BucketConfig`] in
+    /// hand — and after `AwsBackendAuth`, so that config already carries
+    /// federated credentials where the connection needs them. Everything it
+    /// does not claim goes to `next` untouched.
+    pub(crate) struct PmTilesMiddleware {
         registry: SourceCoopRegistry,
         tile_max_age: u32,
-        /// Public base URL of this proxy, used to build the tile URL template
-        /// advertised in TileJSON (e.g. `https://data.source.coop`).
+        /// Fallback public origin for the tile URL template in TileJSON, used
+        /// only when a request carries no `Host`.
         public_base_url: String,
     }
 
-    impl PmTilesHandler {
+    impl PmTilesMiddleware {
         pub(crate) fn new(
             registry: SourceCoopRegistry,
             tile_max_age: u32,
@@ -496,69 +566,83 @@ mod handler {
         }
     }
 
-    impl RouteHandler for PmTilesHandler {
-        fn handle<'a>(&'a self, req: &'a RequestInfo<'a>) -> RouteHandlerFuture<'a> {
-            Box::pin(async move {
-                // ── Decline fast ────────────────────────────────────
-                // This route is a catch-all over every object key, so the
-                // common case is "not a tile" and must cost almost nothing.
-                if !matches!(*req.method, http::Method::GET | http::Method::HEAD) {
-                    return None;
-                }
-                let bucket = req.params.get("bucket")?;
-                let key = req.params.get("key")?;
-                // Bucket names reach the router already folded to
-                // `account:product`; anything else is not a product path.
-                let (account, product) = bucket.split_once(crate::BUCKET_SEPARATOR)?;
-                let target = parse_target(key)?;
-
-                let result = serve(
-                    &self.registry,
-                    self.tile_max_age,
-                    &public_base_url(req.headers, &self.public_base_url),
+    impl Middleware for PmTilesMiddleware {
+        async fn handle<'a>(
+            &'a self,
+            ctx: DispatchContext<'a>,
+            next: Next<'a>,
+        ) -> Result<HandlerAction, ProxyError> {
+            // ── Decline fast ────────────────────────────────────────
+            // This runs on every request, so the common case is "not a tile"
+            // and must cost almost nothing. Only a plain object read can be a
+            // tile: a versioned read names a specific object version, which a
+            // tile is not.
+            let operation: &'a S3Operation = ctx.operation;
+            let headers: &'a http::HeaderMap = ctx.headers;
+            let (bucket, key, head_only) = match operation {
+                S3Operation::GetObject {
                     bucket,
-                    account,
-                    product,
-                    &target,
-                    *req.method == http::Method::HEAD,
-                )
-                .await;
-
-                match result {
-                    // The archive this URL names is not there. Decline rather
-                    // than 404: the key may be a real object living under a
-                    // directory that merely ends in `.pmtiles`, and the object
-                    // pipeline behind us can still serve it. Claiming it here
-                    // would make that object permanently unreachable — and
-                    // would answer without ever consulting the caller's
-                    // credentials, so a private product's own owner would get a
-                    // 404 on a key they can read.
-                    Ok(None) => None,
-                    Ok(Some(r)) => Some(r),
-                    Err(e) => {
-                        tracing::warn!(
-                            bucket = %bucket,
-                            archive = %target.archive_key,
-                            "pmtiles tile request failed: {:?}",
-                            e
-                        );
-                        let body = ErrorResponse::from_proxy_error(
-                            &e,
-                            req.path,
-                            &self.registry.request_id,
-                            false,
-                        );
-                        Some(ProxyResult::xml(e.status_code(), body.to_xml()))
-                    }
+                    key,
+                    version: None,
+                    ..
+                } => (bucket.as_str(), key.as_str(), false),
+                S3Operation::HeadObject { bucket, key, .. } => {
+                    (bucket.as_str(), key.as_str(), true)
                 }
-            })
+                _ => return next.run(ctx).await,
+            };
+            // Bucket names reach the gateway already folded to
+            // `account:product`; anything else is not a product path.
+            let Some((account, product)) = bucket.split_once(crate::BUCKET_SEPARATOR) else {
+                return next.run(ctx).await;
+            };
+            let Some(target) = parse_target(key) else {
+                return next.run(ctx).await;
+            };
+            // The gateway resolves a config for every bucket-scoped operation
+            // before any middleware runs, so this is defensive.
+            let Some(config) = ctx.bucket_config.as_deref() else {
+                return next.run(ctx).await;
+            };
+
+            let result = serve(
+                &self.registry,
+                self.tile_max_age,
+                &public_base_url(headers, &self.public_base_url),
+                bucket,
+                account,
+                product,
+                config,
+                &target,
+                head_only,
+                headers,
+            )
+            .await;
+
+            match result {
+                Ok(Some(response)) => Ok(HandlerAction::Response(response)),
+                // Not ours after all: the product is not public, or the named
+                // archive does not exist. The key may be a real object living
+                // under a directory that merely ends in `.pmtiles`, and the
+                // object pipeline can still serve it — with the caller's own
+                // authorization, which this middleware never consults.
+                Ok(None) => next.run(ctx).await,
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        archive = %target.archive_key,
+                        "pmtiles tile request failed: {:?}",
+                        e
+                    );
+                    Err(e)
+                }
+            }
         }
     }
 
     /// Serve one tile or TileJSON document.
     ///
-    /// `Ok(None)` means "this key turned out not to be ours" — the named archive
-    /// does not exist, so the request belongs to the ordinary object pipeline.
+    /// `Ok(None)` means "this key turned out not to be ours" — see the caller.
     #[allow(clippy::too_many_arguments)]
     async fn serve(
         registry: &SourceCoopRegistry,
@@ -567,65 +651,87 @@ mod handler {
         bucket: &str,
         account: &str,
         product: &str,
+        config: &BucketConfig,
         target: &super::TileTarget<'_>,
         head_only: bool,
+        request_headers: &http::HeaderMap,
     ) -> Result<Option<ProxyResult>, ProxyError> {
         // ── Reject an impossible coordinate before spending anything ─
         // `TileCoord::new` rejects an x/y outside the 2^z grid. Doing it first,
-        // rather than after two control-plane calls and a 16 KiB origin read,
-        // is what keeps `/2/4000000000/4000000000.mvt` from costing a full
-        // backend round trip — and it costs nothing on the path that matters.
+        // rather than after a control-plane call and a 16 KiB origin read, is
+        // what keeps `/2/4000000000/4000000000.mvt` from costing a full backend
+        // round trip — and it costs nothing on the path that matters.
         if let Wanted::Tile { z, x, y, .. } = target.wanted {
             TileCoord::new(z, x, y)
                 .map_err(|_| ProxyError::NoSuchKey(format!("invalid tile {z}/{x}/{y}")))?;
         }
 
-        // ── Authorize: public products only ─────────────────────────
-        // Ahead of the cache lookup, not behind it. The edge cache is shared
-        // across every anonymous caller and records nothing about visibility,
-        // so checking it first meant a product that had since been made private
+        // ── Public products only ────────────────────────────────────
+        // The gateway has already authorized *this caller's* read. This asks
+        // the different question the shared cache needs answered — would an
+        // anonymous caller see it, and is it actually public? An unlisted
+        // product resolves anonymously without being public, hence the
+        // explicit `is_public`. Anything else is handed on, not refused: the
+        // object pipeline answers with the caller's own authorization, and
+        // this endpoint confirms nothing about a product it does not serve.
+        //
+        // Ahead of the cache lookup, not behind it. The cache records nothing
+        // about visibility, so checking it first meant a product made private
         // — or disabled by a takedown — kept serving tiles to anyone for the
-        // rest of the TTL, with no purge handle to stop it. One control-plane
-        // call, itself cached for `PRODUCT_CACHE_SECS`, buys a revocation lag
-        // that matches every other path through this proxy.
-        let product_meta = registry.get_public_product(account, product).await?;
-        if !product_meta.is_public() {
-            // Deliberately "not found" rather than "forbidden": a restricted
-            // product must not have its existence confirmed by this endpoint.
-            return Err(ProxyError::NoSuchKey(format!(
-                "{account}/{product} is not a public product"
-            )));
+        // rest of the TTL. One call, itself cached for `PRODUCT_CACHE_SECS`,
+        // buys a revocation lag that matches every other path here.
+        match registry.get_public_product(account, product).await {
+            Ok(meta) if meta.is_public() => {}
+            Ok(_) | Err(ProxyError::BucketNotFound(_)) | Err(ProxyError::AccessDenied) => {
+                return Ok(None)
+            }
+            Err(e) => return Err(e),
         }
+
+        let if_none_match = request_headers
+            .get(http::header::IF_NONE_MATCH)
+            .and_then(|v| v.to_str().ok());
 
         // ── Edge cache ──────────────────────────────────────────────
         let cache_key = cache_key(bucket, target);
         let cache = worker::Cache::default();
         if let Ok(Some(mut hit)) = cache.get(&cache_key, false).await {
+            // A remembered miss: the archive is real and public but has no
+            // tile here. Answering from the cache is the whole point — sparse
+            // archives are the norm, and without this every empty tile outside
+            // the footprint re-pays the cold path for every user, forever.
+            if hit.status_code() == 404 {
+                return Err(ProxyError::NoSuchKey(describe_missing(target)));
+            }
             let bytes = hit
                 .bytes()
                 .await
                 .map_err(|e| ProxyError::Internal(format!("cache body read failed: {e}")))?;
-            let content_type = hit
-                .headers()
-                .get("content-type")
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "application/octet-stream".to_string());
+            let stored = |name: &str| hit.headers().get(name).ok().flatten();
+            let content_type =
+                stored("content-type").unwrap_or_else(|| "application/octet-stream".to_string());
+            let etag = stored("etag").unwrap_or_else(|| super::tile_etag(&bytes));
+            let age = stored(STORED_AT_HEADER)
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(|stored_at| ((js_sys::Date::now() - stored_at) / 1000.0).max(0.0) as u64);
+            if if_none_match.is_some_and(|inm| super::if_none_match_matches(inm, &etag)) {
+                return Ok(Some(not_modified(&etag, tile_max_age, true, age)));
+            }
             return Ok(Some(tile_response(
                 bytes,
                 &content_type,
                 tile_max_age,
                 true,
                 head_only,
+                &etag,
+                age,
             )));
         }
 
         // ── Open the archive ────────────────────────────────────────
         let archive_key = target.archive_key;
-        let config = registry.resolve_public_read(account, product).await?;
-        let object_key =
-            super::join_backend_prefix(config.backend_prefix.as_deref(), target.archive_key);
-        let store = build_store(&config)?;
+        let object_key = super::join_backend_prefix(config.backend_prefix.as_deref(), archive_key);
+        let store = build_store(config)?;
         let path = object_store::path::Path::from(object_key);
 
         // One `head` before the reader. It settles two things the reader cannot:
@@ -650,7 +756,8 @@ mod handler {
         // bytes. Nothing downstream catches it — the truncated read is the right
         // *length*, just from the wrong place — so a planet-scale archive would
         // either fail to gunzip or hand back arbitrary bytes labelled as a tile.
-        // Refuse instead of serving garbage into a shared cache.
+        // Refuse instead of serving garbage into a shared cache. This is fixable
+        // only upstream: the truncation happens before any backend is called.
         if object.size > u64::from(u32::MAX) {
             return Err(ProxyError::NoSuchKey(format!(
                 "{archive_key} is larger than 4 GiB, which this endpoint cannot address"
@@ -704,26 +811,26 @@ mod handler {
         // to advertise either. Failing here is louder than handing the client a
         // TileJSON whose every tile request would 404 — which is what a blind
         // `.mvt` fallback did, rendering a blank map with no error anywhere.
-        let Some(archive_ext) = default_ext(header.tile_type) else {
+        let Some(archive_ext) = TileExt::for_tile_type(header.tile_type) else {
             return Err(ProxyError::NoSuchKey(format!(
                 "{archive_key} holds {:?} tiles, which this endpoint cannot serve",
                 header.tile_type
             )));
         };
 
-        let (bytes, content_type) = match target.wanted {
+        let (bytes, content_type): (Vec<u8>, &'static str) = match target.wanted {
             Wanted::TileJson => {
                 // Every interpolated segment is percent-encoded. These arrive
                 // from an already-decoded request path, so an archive key
                 // holding a space or a `#` would otherwise be advertised raw
-                // and a client would truncate the URL at the fragment — the
-                // exact failure the template test exists to prevent.
+                // and a client would truncate the URL at the fragment.
                 let template = format!(
-                    "{}/{}/{}/{}/{{z}}/{{x}}/{{y}}.{archive_ext}",
+                    "{}/{}/{}/{}/{{z}}/{{x}}/{{y}}.{}",
                     public_base_url.trim_end_matches('/'),
                     super::encode_path(account),
                     super::encode_path(product),
-                    super::encode_path(target.archive_key),
+                    super::encode_path(archive_key),
+                    archive_ext.canonical(),
                 );
                 let mut tj = reader
                     .parse_tilejson(vec![template])
@@ -734,15 +841,15 @@ mod handler {
                 super::strip_reserved_tilejson_keys(&mut tj.other);
                 let body = serde_json::to_vec(&tj)
                     .map_err(|e| ProxyError::Internal(format!("tilejson encode failed: {e}")))?;
-                (body, "application/json".to_string())
+                (body, "application/json")
             }
             Wanted::Tile { z, x, y, ext } => {
                 // The archive decides the tile type; the URL may not contradict
                 // it, or we would hand back a protobuf labelled `image/png`.
-                if archive_ext != ext.canonical() {
+                if archive_ext != ext {
                     return Err(ProxyError::NoSuchKey(format!(
-                        "archive holds {:?} tiles, not .{}",
-                        header.tile_type,
+                        "archive holds .{} tiles, not .{}",
+                        archive_ext.canonical(),
                         ext.canonical()
                     )));
                 }
@@ -751,31 +858,65 @@ mod handler {
                 // Decompressed, and served without `Content-Encoding` — see the
                 // module docs: relaying the stored bytes compressed gets them
                 // re-encoded twice more on the way out.
-                let Some(raw) = reader
+                match reader
                     .get_tile_decompressed(coord)
                     .await
                     .map_err(|e| map_pmt_error(e, archive_key))?
-                else {
-                    return Err(ProxyError::NoSuchKey(format!("no tile at {z}/{x}/{y}")));
-                };
-                (raw.to_vec(), ext.content_type().to_string())
+                {
+                    Some(raw) => (raw.to_vec(), ext.content_type()),
+                    None => {
+                        // Remember the miss. Safe to share: this is only
+                        // reached for a public archive that exists, after the
+                        // visibility gate above, and it ages out with the
+                        // tiles themselves — a re-upload that fills the gap
+                        // appears exactly as late as a changed tile would.
+                        if let Err(e) =
+                            put_negative_in_cache(&cache, &cache_key, tile_max_age).await
+                        {
+                            tracing::warn!("negative tile cache put failed: {}", e);
+                        }
+                        return Err(ProxyError::NoSuchKey(format!("no tile at {z}/{x}/{y}")));
+                    }
+                }
             }
         };
 
         // ── Populate the edge cache ─────────────────────────────────
         // Best-effort: a cache failure must not fail the request.
-        if let Err(e) = put_in_cache(&cache, &cache_key, &bytes, &content_type, tile_max_age).await
+        let etag = super::tile_etag(&bytes);
+        if let Err(e) = put_in_cache(
+            &cache,
+            &cache_key,
+            &bytes,
+            content_type,
+            &etag,
+            tile_max_age,
+        )
+        .await
         {
             tracing::warn!("tile cache put failed: {}", e);
         }
 
+        if if_none_match.is_some_and(|inm| super::if_none_match_matches(inm, &etag)) {
+            return Ok(Some(not_modified(&etag, tile_max_age, false, None)));
+        }
         Ok(Some(tile_response(
             bytes,
-            &content_type,
+            content_type,
             tile_max_age,
             false,
             head_only,
+            &etag,
+            None,
         )))
+    }
+
+    /// Error text for a tile that a remembered miss says is not there.
+    fn describe_missing(target: &super::TileTarget<'_>) -> String {
+        match target.wanted {
+            Wanted::Tile { z, x, y, .. } => format!("no tile at {z}/{x}/{y}"),
+            Wanted::TileJson => format!("{} has no TileJSON", target.archive_key),
+        }
     }
 
     /// The origin to advertise in TileJSON tile templates.
@@ -824,6 +965,7 @@ mod handler {
             // truncated file is caught before this, by
             // `root_directory_is_addressable` — pmtiles itself would panic on
             // some of those rather than return an error.
+            //
             // Every one of these is a permanent property of the stored bytes,
             // not a transient backend fault: an unsupported compression codec
             // (this crate builds pmtiles without `brotli` and `zstd`), a damaged
@@ -857,25 +999,20 @@ mod handler {
     ///
     /// Retries are disabled to match `WorkerBackend::create_paginated_store`:
     /// `object_store`'s retry path sleeps via tokio, which panics on wasm.
-    fn build_store(
-        config: &multistore::types::BucketConfig,
-    ) -> Result<Box<dyn ObjectStore>, ProxyError> {
+    fn build_store(config: &BucketConfig) -> Result<Box<dyn ObjectStore>, ProxyError> {
         use multistore::backend::{create_builder, StoreBuilder};
 
-        // A connection whose credentials are federated is signed by the
-        // gateway's backend-auth middleware — which runs *after* route dispatch
-        // and so never sees this request. `apply_backend_auth` leaves only
-        // `auth_type`/`oidc_*` markers and no credentials, `create_builder`
-        // silently drops them (they are not `AmazonS3ConfigKey` variants), and
-        // the store falls through to object_store's instance-metadata provider:
-        // an unreachable 169.254.169.254 fetch from inside the Worker that, with
-        // retries disabled, surfaces as a 503 on every tile forever. Refuse with
-        // a permanent status instead; the archive still reads over the ordinary
-        // object path, which does run the middleware.
+        // This middleware is registered after `AwsBackendAuth`, which replaces
+        // the `auth_type=oidc` / `oidc_*` markers with federated credentials.
+        // If the markers are still here, federation did not happen, and
+        // `create_builder` would silently drop them (they are not
+        // `AmazonS3ConfigKey` variants) and fall through to object_store's
+        // instance-metadata provider — an unreachable 169.254.169.254 fetch from
+        // inside the Worker that, with retries disabled, surfaces as a 503 on
+        // every tile forever. Refuse with a permanent status instead.
         if config.backend_options.get("auth_type").map(String::as_str) == Some("oidc") {
             return Err(ProxyError::NoSuchKey(
-                "tile endpoint cannot serve a product on a federated-credential connection"
-                    .to_string(),
+                "tile endpoint reached a federated connection without credentials".to_string(),
             ));
         }
 
@@ -892,34 +1029,16 @@ mod handler {
         })
     }
 
-    /// The canonical extension for an archive's tile type, or `None` for a type
-    /// this endpoint will not serve.
-    fn default_ext(t: TileType) -> Option<&'static str> {
-        Some(match t {
-            TileType::Mvt => "mvt",
-            TileType::Png => "png",
-            TileType::Jpeg => "jpeg",
-            TileType::Webp => "webp",
-            TileType::Avif => "avif",
-            TileType::Unknown | TileType::Mlt => return None,
-        })
-    }
-
     /// Cache key for one tile or TileJSON document.
     ///
     /// Built from canonical coordinates, so `/05/9/12.pbf` and `/5/9/12.mvt`
     /// share the entry they should. Carries no auth material — this endpoint is
-    /// anonymous and public-only, so content identity is the whole key.
+    /// public-only, so content identity is the whole key.
     fn cache_key(bucket: &str, target: &super::TileTarget<'_>) -> String {
         let bucket = utf8_percent_encode(bucket, super::PATH_SEGMENT);
         // The archive key keeps its `/` separators (they are path structure),
         // but every other reserved character is escaped.
-        let archive: Vec<String> = target
-            .archive_key
-            .split('/')
-            .map(|s| utf8_percent_encode(s, super::PATH_SEGMENT).to_string())
-            .collect();
-        let archive = archive.join("/");
+        let archive = super::encode_path(target.archive_key);
         match target.wanted {
             Wanted::TileJson => format!("{CACHE_ORIGIN}/{bucket}/{archive}/tiles.json"),
             Wanted::Tile { z, x, y, ext } => {
@@ -931,40 +1050,67 @@ mod handler {
         }
     }
 
+    /// Headers every cached entry carries so the Cache API stores it and a later
+    /// hit can report its age.
+    fn cache_entry_headers(max_age: u32) -> worker::Headers {
+        let headers = worker::Headers::new();
+        // The Cache API ignores a response with no `max-age`/`s-maxage`.
+        let _ = headers.set("cache-control", &format!("public, max-age={max_age}"));
+        let _ = headers.set(STORED_AT_HEADER, &format!("{:.0}", js_sys::Date::now()));
+        headers
+    }
+
     async fn put_in_cache(
         cache: &worker::Cache,
         key: &str,
         bytes: &[u8],
         content_type: &str,
+        etag: &str,
         max_age: u32,
     ) -> Result<(), worker::Error> {
-        let headers = worker::Headers::new();
+        let headers = cache_entry_headers(max_age);
         let _ = headers.set("content-type", content_type);
-        // The Cache API ignores a response with no `max-age`/`s-maxage`.
-        let _ = headers.set("cache-control", &format!("public, max-age={max_age}"));
+        let _ = headers.set("etag", etag);
         let resp = worker::Response::from_bytes(bytes.to_vec())?.with_headers(headers);
         cache.put(key, resp).await
     }
 
-    /// Assemble the client-facing response.
+    /// Remember that a public archive has no tile at this coordinate.
+    async fn put_negative_in_cache(
+        cache: &worker::Cache,
+        key: &str,
+        max_age: u32,
+    ) -> Result<(), worker::Error> {
+        let resp = worker::Response::empty()?
+            .with_status(404)
+            .with_headers(cache_entry_headers(max_age));
+        cache.put(key, resp).await
+    }
+
+    fn insert(headers: &mut http::HeaderMap, name: &'static str, value: &str) {
+        if let Ok(v) = http::HeaderValue::from_str(value) {
+            headers.insert(name, v);
+        }
+    }
+
+    /// Headers shared by every client-facing tile response, 200 or 304.
     ///
     /// `x-tile-cache` is informational: a Worker's own response never carries a
     /// meaningful `cf-cache-status` (the Worker runs in front of the CDN cache),
     /// so without this there is no way to tell a warm tile from a cold one.
-    fn tile_response(
-        bytes: Vec<u8>,
-        content_type: &str,
+    fn response_headers(
         max_age: u32,
         cache_hit: bool,
-        head_only: bool,
-    ) -> ProxyResult {
+        etag: &str,
+        age: Option<u64>,
+    ) -> http::HeaderMap {
         let mut headers = http::HeaderMap::new();
-        if let Ok(v) = content_type.parse() {
-            headers.insert("content-type", v);
-        }
-        if let Ok(v) = format!("public, max-age={max_age}").parse() {
-            headers.insert("cache-control", v);
-        }
+        insert(
+            &mut headers,
+            "cache-control",
+            &format!("public, max-age={max_age}"),
+        );
+        insert(&mut headers, "etag", etag);
         headers.insert(
             "x-tile-cache",
             if cache_hit {
@@ -973,10 +1119,26 @@ mod handler {
                 http::HeaderValue::from_static("MISS")
             },
         );
-        // A HEAD must report the length it would have sent, with no body.
-        if let Ok(v) = bytes.len().to_string().parse() {
-            headers.insert("content-length", v);
+        if let Some(age) = age {
+            insert(&mut headers, "age", &age.to_string());
         }
+        headers
+    }
+
+    /// Assemble the client-facing response.
+    fn tile_response(
+        bytes: Vec<u8>,
+        content_type: &str,
+        max_age: u32,
+        cache_hit: bool,
+        head_only: bool,
+        etag: &str,
+        age: Option<u64>,
+    ) -> ProxyResult {
+        let mut headers = response_headers(max_age, cache_hit, etag, age);
+        insert(&mut headers, "content-type", content_type);
+        // A HEAD must report the length it would have sent, with no body.
+        insert(&mut headers, "content-length", &bytes.len().to_string());
         ProxyResult {
             status: 200,
             headers,
@@ -985,6 +1147,17 @@ mod handler {
             } else {
                 ProxyResponseBody::from_bytes(bytes.into())
             },
+        }
+    }
+
+    /// The `304` for a client whose `If-None-Match` still describes the tile.
+    /// Carries the same validator and freshness headers a `200` would, so the
+    /// client can update its stored response (RFC 9110 §15.4.5).
+    fn not_modified(etag: &str, max_age: u32, cache_hit: bool, age: Option<u64>) -> ProxyResult {
+        ProxyResult {
+            status: 304,
+            headers: response_headers(max_age, cache_hit, etag, age),
+            body: ProxyResponseBody::Empty,
         }
     }
 }

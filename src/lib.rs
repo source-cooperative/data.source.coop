@@ -266,22 +266,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let router = router
         .route("/", IndexHandler)
-        .route("/{bucket}", AccountListHandler::new(registry.clone()))
-        // Catch-all over object keys, so the PMTiles handler can claim
-        // `…/{archive}.pmtiles/{z}/{x}/{y}.{ext}`. It sees every object request
-        // and declines all but tile-shaped ones (`tiles::parse_target`), which
-        // falls through to the normal pipeline — the same way
-        // `AccountListHandler` declines a non-list request. Registered last;
-        // `matchit` still prefers the static `/.well-known/*` and `/.sts`
-        // routes over it.
-        .route(
-            "/{bucket}/{*key}",
-            tiles::PmTilesHandler::new(
-                registry.clone(),
-                config.tile_cache_max_age,
-                config.public_base_url.clone(),
-            ),
-        );
+        .route("/{bucket}", AccountListHandler::new(registry.clone()));
 
     // ── Backend federation middleware ─────────────────────────────
     // For a connection resolved with auth_type=oidc, mint the proxy's OIDC
@@ -304,6 +289,20 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .clone();
     let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
 
+    // ── PMTiles tile endpoint ─────────────────────────────────────
+    // Middleware, not a route: it runs after identity resolution with the
+    // gateway's authorized `BucketConfig`, and after `backend_auth` so that
+    // config already carries federated credentials where the connection needs
+    // them. It claims `…/{archive}.pmtiles/{z}/{x}/{y}.{ext}` and `tiles.json`
+    // reads of public products and hands everything else to `next`, so an
+    // ordinary object that happens to sit under a `*.pmtiles/` directory, or a
+    // private tileset read by its owner, still reaches the object pipeline.
+    let tiles = tiles::PmTilesMiddleware::new(
+        registry.clone(),
+        config.tile_cache_max_age,
+        config.public_base_url.clone(),
+    );
+
     let gateway = ProxyGateway::new(
         WorkerBackend,
         MappedRegistry::new(registry, mapping.clone()),
@@ -311,6 +310,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         None,
     )
     .with_middleware(backend_auth)
+    .with_middleware(tiles)
     .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG)
     .with_credential_resolver(config.session_token_key.clone());

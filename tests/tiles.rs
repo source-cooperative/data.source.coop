@@ -3,15 +3,15 @@
 //! (the lib is `cdylib` with `test = false`); the handler itself is
 //! `#[cfg(target_arch = "wasm32")]` and so is absent from this build.
 //!
-//! This parser backs a catch-all route over *every* object key, so a false
-//! positive shadows a real object. Most of these tests are about declining.
+//! This parser runs, as middleware, on *every* object read, so a false positive
+//! shadows a real object. Most of these tests are about declining.
 
 #[path = "../src/tiles.rs"]
 mod tiles;
 
 use tiles::{
-    encode_path, join_backend_prefix, parse_target, root_directory_is_addressable,
-    strip_reserved_tilejson_keys, TileExt, Wanted,
+    encode_path, if_none_match_matches, join_backend_prefix, parse_target,
+    root_directory_is_addressable, strip_reserved_tilejson_keys, tile_etag, TileExt, Wanted,
 };
 
 fn tile(key: &str) -> Option<(String, Wanted)> {
@@ -339,4 +339,53 @@ fn publisher_metadata_cannot_shadow_the_documents_own_fields() {
     strip_reserved_tilejson_keys(&mut other);
 
     assert_eq!(other.keys().collect::<Vec<_>>(), vec!["generator"]);
+}
+
+/// The URL's extension and the archive's tile type are compared as one enum,
+/// through a single mapping. That is what makes "advertise `.mvt` in TileJSON,
+/// then 404 every `.mvt` request" unrepresentable: an archive type with no
+/// extension has no template either.
+#[test]
+fn extension_and_archive_type_share_one_mapping() {
+    use pmtiles::TileType;
+    for (t, ext) in [
+        (TileType::Mvt, TileExt::Mvt),
+        (TileType::Png, TileExt::Png),
+        (TileType::Jpeg, TileExt::Jpeg),
+        (TileType::Webp, TileExt::Webp),
+        (TileType::Avif, TileExt::Avif),
+    ] {
+        assert_eq!(TileExt::for_tile_type(t), Some(ext));
+        assert_eq!(ext.content_type(), t.content_type(), "{ext:?}");
+    }
+    // The two types this endpoint will not serve have no extension to serve
+    // them under, so no template can be advertised for them.
+    assert_eq!(TileExt::for_tile_type(TileType::Unknown), None);
+    assert_eq!(TileExt::for_tile_type(TileType::Mlt), None);
+}
+
+/// A strong, content-derived, quoted ETag.
+#[test]
+fn tile_etag_is_a_quoted_content_hash() {
+    let a = tile_etag(b"tile bytes");
+    assert_eq!(a.len(), 34, "{a}");
+    assert!(a.starts_with('"') && a.ends_with('"'), "{a}");
+    assert_eq!(a, tile_etag(b"tile bytes"), "deterministic");
+    assert_ne!(a, tile_etag(b"other bytes"));
+}
+
+/// RFC 9110 §13.1.2: `If-None-Match` uses weak comparison, may list several
+/// tags, and `*` matches any current representation.
+#[test]
+fn if_none_match_uses_weak_comparison() {
+    let etag = "\"abc\"";
+    assert!(if_none_match_matches("\"abc\"", etag));
+    assert!(if_none_match_matches("W/\"abc\"", etag));
+    assert!(if_none_match_matches("\"zzz\", \"abc\"", etag));
+    assert!(if_none_match_matches("  \"abc\"  ", etag));
+    assert!(if_none_match_matches("*", etag));
+    assert!(!if_none_match_matches("\"abd\"", etag));
+    assert!(!if_none_match_matches("", etag));
+    // A weak ETag on our side is matched by its strong spelling too.
+    assert!(if_none_match_matches("\"abc\"", "W/\"abc\""));
 }
