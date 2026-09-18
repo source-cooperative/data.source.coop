@@ -115,6 +115,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
+| `DEFAULT_CACHE_CONTROL`      | `no-cache`                  | `Cache-Control` added to read responses whose backend sets none. Never overrides a value the object carries. Empty (or all-whitespace) string = send no header |
 
 ### Secrets
 

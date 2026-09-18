@@ -172,3 +172,97 @@ def test_object_access_via_path():
     """HEAD /{account}/{product}/{key} should return 200."""
     resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
+
+
+# ── Cache-Control (issue #225) ──────────────────────────────────────
+
+
+def test_object_read_sends_cache_control():
+    """A read of an object whose backend sets no Cache-Control gets the default.
+
+    Without it the response carries Last-Modified but no freshness directive,
+    and RFC 9111 4.2.2 lets a cache invent one from it -- which is how browsers
+    served pre-publish STAC metadata as a plain 200.
+    """
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_head_sends_cache_control():
+    resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_ranged_read_sends_cache_control():
+    """206s get it too: RFC 9111 4.2.2 heuristic freshness covers them.
+
+    Accepts a 200 as well, like the other range tests above: a backend is
+    always free to ignore Range and return the whole body, and either way the
+    response is the one we care about the header on.
+    """
+    resp = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"Range": "bytes=0-99"},
+    )
+    assert resp.status_code in (200, 206)
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_not_found_sends_cache_control():
+    """404 is heuristically cacheable too, so a missing object must not be
+    cached as missing for a day after it is created."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/does-not-exist-{os.getpid()}")
+    assert resp.status_code == 404
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_listing_sends_cache_control():
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}?list-type=2&delimiter=/")
+    assert resp.status_code == 200
+    assert resp.headers.get("cache-control") == "no-cache"
+
+
+def test_control_plane_sends_cache_control():
+    """Discovery and JWKS are served by multistore-oidc-provider through
+    ProxyResult.json, which sets only content-type -- the same header-less state
+    as an object read. They need the default more than objects do: a JWKS cached
+    past an OIDC_PROVIDER_KID_PREVIOUS rotation rejects freshly signed tokens.
+    """
+    for path in ("/.well-known/openid-configuration", "/.well-known/jwks.json"):
+        resp = requests.get(f"{PROXY_URL}{path}")
+        assert resp.status_code == 200, path
+        assert resp.headers.get("cache-control") == "no-cache", path
+
+
+def test_revalidation_response_keeps_backend_cache_control():
+    """RFC 9111 4.3.4 merges a 304's headers into the stored response, so the
+    proxy must not inject on a 304 -- doing so would overwrite a publisher's own
+    directive in client caches one revalidation after it was honoured."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    etag = resp.headers.get("etag")
+    assert etag, "no ETag to revalidate against"
+
+    revalidated = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"If-None-Match": etag},
+    )
+    assert revalidated.status_code == 304
+    assert revalidated.headers.get("cache-control") is None
+
+
+def test_revalidation_still_returns_304():
+    """no-cache costs a conditional request, not a full transfer -- which only
+    holds if revalidation works. Guard that assumption."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    assert resp.status_code == 200
+    etag = resp.headers.get("etag")
+    assert etag, "no ETag to revalidate against"
+
+    revalidated = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"If-None-Match": etag},
+    )
+    assert revalidated.status_code == 304
+    assert not revalidated.content

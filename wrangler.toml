@@ -19,6 +19,11 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 AUTH_AUDIENCE = "fb15e9fb-00e7-4604-9df0-ac27ac5822f2,197e20e7-d52d-4d1d-9e54-4b73a342034b" # prod Ory client_ids: frontend + source-coop-cli
 AUTH_ISSUER = "https://auth.source.coop" 
 LOG_LEVEL = "WARN" 
+# `Cache-Control` for read responses whose backend object sets none. A value the
+# object itself carries always wins. Unset -> `no-cache`: storable but
+# revalidate-before-reuse, so a re-published object is never served stale (the
+# proxy already answers If-None-Match with a 304). Set to "" to send no header.
+# DEFAULT_CACHE_CONTROL = "no-cache"
 OIDC_PROVIDER_ISSUER = "https://data.source.coop" 
 OIDC_PROVIDER_KID = "data-proxy-1" 
 SOURCE_API_URL = "https://source.coop" 
