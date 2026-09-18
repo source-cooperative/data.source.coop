@@ -33,34 +33,52 @@
 ///
 /// Returns `Some(configured)` only when all of the following hold:
 ///
-/// * `configured` is non-empty — the empty string disables the default entirely,
-///   restoring the pre-#225 behaviour of sending no header.
+/// * `configured` is non-blank — the empty string (or any all-whitespace value)
+///   disables the default entirely, restoring the pre-#225 behaviour of sending
+///   no header. Blankness is judged after trimming on both sides of this
+///   comparison so a stray space in `DEFAULT_CACHE_CONTROL` cannot smuggle out a
+///   present-but-directive-less header, which is the very state #225 is about.
 /// * The request is a read (`GET`/`HEAD`). Responses to writes are not
 ///   heuristically cacheable and gain nothing from the header.
-/// * The path is not a control-plane endpoint (`/.well-known/*`, `/.sts`). Those
-///   manage their own caching — OIDC discovery in particular is served by
-///   `multistore-oidc-provider`, and overriding it here would be a surprise.
+/// * The response is not a `304 Not Modified`. Per [RFC 9111 §4.3.4] a cache
+///   *updates the stored response's headers* from the 304, so injecting here
+///   would overwrite a publisher's `max-age=31536000, immutable` — stored from
+///   the original 200 — with our default on every revalidation. That is exactly
+///   the override the passthrough rule below forbids, just deferred by a
+///   round-trip.
 /// * The response does not already carry a `Cache-Control`. **Passthrough always
 ///   wins**: a publisher who sets `max-age=31536000, immutable` on an immutable
 ///   object, or `no-cache` on one they overwrite in place, has said what they
 ///   want and the proxy must not second-guess it.
 ///
-/// Deliberately applied to *every* read status, not just 200. RFC 9111 §4.2.2
-/// heuristic freshness also covers 206, 404 and 410, so a missing object can be
-/// cached as missing for as long as a stale body can be cached as fresh.
+/// Deliberately applied to *every other* read status, not just 200. RFC 9111
+/// §4.2.2 heuristic freshness also covers 206, 404 and 410, so a missing object
+/// can be cached as missing for as long as a stale body can be cached as fresh.
+///
+/// It is applied to the control-plane reads (`/.well-known/*`) as well. Those
+/// look like they manage their own caching, but `multistore-oidc-provider`
+/// serves both discovery and JWKS through `ProxyResult::json`, which sets only
+/// `content-type` — leaving them in precisely the header-less state above. A
+/// JWKS cached past a `OIDC_PROVIDER_KID_PREVIOUS` rotation rejects tokens
+/// signed by the new key, so they want the default more than object reads do.
+/// Nothing is overridden by including them: if either endpoint ever does send a
+/// `Cache-Control`, the passthrough rule leaves it alone.
+///
+/// [RFC 9111 §4.3.4]: https://www.rfc-editor.org/rfc/rfc9111#section-4.3.4
 pub(crate) fn default_cache_control<'a>(
     method: &http::Method,
-    path: &str,
+    status: u16,
     existing: Option<&str>,
     configured: &'a str,
 ) -> Option<&'a str> {
+    let configured = configured.trim();
     if configured.is_empty() {
         return None;
     }
     if !matches!(*method, http::Method::GET | http::Method::HEAD) {
         return None;
     }
-    if is_control_plane(path) {
+    if status == 304 {
         return None;
     }
     // Treat a present-but-empty header as absent: it carries no directive, so
@@ -69,13 +87,4 @@ pub(crate) fn default_cache_control<'a>(
         return None;
     }
     Some(configured)
-}
-
-/// Whether a path is a proxy control-plane endpoint rather than a data read.
-///
-/// Matches the `is_special_path` test in `lib.rs`, plus the trailing-slash
-/// `/.sts/` form that `lib.rs` normalizes before routing — this function runs on
-/// the pre-normalization path in some call orders, so it accepts both.
-fn is_control_plane(path: &str) -> bool {
-    path.starts_with("/.well-known/") || path == "/.sts" || path == "/.sts/"
 }

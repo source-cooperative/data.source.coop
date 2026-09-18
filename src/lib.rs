@@ -422,10 +422,12 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // Only when the backend sent none: a publisher's own header always wins.
     // Without this the response carries `Last-Modified` but no freshness
     // directive, and RFC 9111 §4.2.2 lets caches invent one — which silently
-    // served pre-publish STAC metadata to browsers (#225).
+    // served pre-publish STAC metadata to browsers (#225). 304s are skipped:
+    // their headers are merged into the *stored* response, so injecting there
+    // would clobber the publisher's value a revalidation later.
     if let Some(value) = cache_control::default_cache_control(
         &parts.method,
-        &parts.path,
+        response.status(),
         response
             .headers()
             .get("cache-control")

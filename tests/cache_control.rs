@@ -15,11 +15,11 @@ const DEFAULT: &str = "no-cache";
 #[test]
 fn read_without_a_backend_header_gets_the_default() {
     assert_eq!(
-        default_cache_control(&Method::GET, "/acct/prod/collection.json", None, DEFAULT),
+        default_cache_control(&Method::GET, 200, None, DEFAULT),
         Some(DEFAULT)
     );
     assert_eq!(
-        default_cache_control(&Method::HEAD, "/acct/prod/collection.json", None, DEFAULT),
+        default_cache_control(&Method::HEAD, 200, None, DEFAULT),
         Some(DEFAULT)
     );
 }
@@ -36,12 +36,7 @@ fn a_backend_header_is_never_overridden() {
         "no-cache",
     ] {
         assert_eq!(
-            default_cache_control(
-                &Method::GET,
-                "/acct/prod/data.parquet",
-                Some(existing),
-                DEFAULT
-            ),
+            default_cache_control(&Method::GET, 200, Some(existing), DEFAULT),
             None,
             "should not override backend value {existing:?}"
         );
@@ -54,7 +49,7 @@ fn a_backend_header_is_never_overridden() {
 fn a_blank_backend_header_is_treated_as_absent() {
     for existing in ["", "   ", "\t"] {
         assert_eq!(
-            default_cache_control(&Method::GET, "/acct/prod/x.json", Some(existing), DEFAULT),
+            default_cache_control(&Method::GET, 200, Some(existing), DEFAULT),
             Some(DEFAULT),
             "blank value {existing:?} should not suppress the default"
         );
@@ -66,83 +61,67 @@ fn a_blank_backend_header_is_treated_as_absent() {
 fn writes_are_left_alone() {
     for method in [Method::PUT, Method::POST, Method::DELETE, Method::PATCH] {
         assert_eq!(
-            default_cache_control(&method, "/acct/prod/x.json", None, DEFAULT),
+            default_cache_control(&method, 200, None, DEFAULT),
             None,
             "{method} should not get a default"
         );
     }
 }
 
-/// Control-plane endpoints manage their own caching. OIDC discovery in
-/// particular is served by `multistore-oidc-provider`, and JWKS caching is a
-/// key-rotation concern, not a freshness one.
+/// RFC 9111 §4.3.4: a cache updates the *stored* response's headers from a 304.
+/// Injecting there would overwrite a publisher's `max-age=31536000, immutable`
+/// — stored from the original 200 — with our default, turning the passthrough
+/// guarantee into a one-round-trip delay rather than a rule.
 #[test]
-fn control_plane_endpoints_are_left_alone() {
-    for path in [
-        "/.well-known/openid-configuration",
-        "/.well-known/jwks.json",
-        "/.sts",
-        // `lib.rs` normalizes this before routing, but the policy accepts both
-        // so it cannot depend on call ordering.
-        "/.sts/",
-    ] {
-        assert_eq!(
-            default_cache_control(&Method::GET, path, None, DEFAULT),
-            None,
-            "{path} should not get a default"
-        );
-    }
-}
-
-/// A product whose account happens to start with a dot is still a data read —
-/// the control-plane test is on specific paths, not a bare `/.` prefix, so this
-/// must not be swept up with it.
-#[test]
-fn only_the_real_control_plane_paths_are_exempt() {
+fn not_modified_is_left_alone() {
     assert_eq!(
-        default_cache_control(&Method::GET, "/.well-knownish/x", None, DEFAULT),
-        Some(DEFAULT)
+        default_cache_control(&Method::GET, 304, None, DEFAULT),
+        None
     );
     assert_eq!(
-        default_cache_control(&Method::GET, "/.stsx", None, DEFAULT),
-        Some(DEFAULT)
-    );
-}
-
-/// The empty string is the documented escape hatch: send no header at all,
-/// restoring the pre-#225 behaviour without a code change.
-#[test]
-fn empty_configuration_disables_the_default() {
-    assert_eq!(
-        default_cache_control(&Method::GET, "/acct/prod/x.json", None, ""),
+        default_cache_control(&Method::HEAD, 304, None, DEFAULT),
         None
     );
 }
 
-/// The value is passed through verbatim, so an operator can set a real
-/// `max-age` policy without touching the code.
+/// Every other read status still gets it: heuristic freshness covers 206, 404
+/// and 410 too, so a missing object must not be cached as missing for a day.
+#[test]
+fn other_read_statuses_get_the_default() {
+    for status in [200, 206, 301, 404, 410, 500] {
+        assert_eq!(
+            default_cache_control(&Method::GET, status, None, DEFAULT),
+            Some(DEFAULT),
+            "{status} should get a default"
+        );
+    }
+}
+
+/// The empty string is the documented escape hatch: send no header at all,
+/// restoring the pre-#225 behaviour without a code change. An all-whitespace
+/// value means the same thing — emitting `cache-control: ` would leave the
+/// response directive-less, which is the bug, not the escape hatch.
+#[test]
+fn blank_configuration_disables_the_default() {
+    for configured in ["", " ", "\t", "\n"] {
+        assert_eq!(
+            default_cache_control(&Method::GET, 200, None, configured),
+            None,
+            "configured {configured:?} should disable the default"
+        );
+    }
+}
+
+/// The value is passed through verbatim (bar surrounding whitespace), so an
+/// operator can set a real `max-age` policy without touching the code.
 #[test]
 fn the_configured_value_is_used_verbatim() {
     assert_eq!(
-        default_cache_control(
-            &Method::GET,
-            "/acct/prod/x.json",
-            None,
-            "public, max-age=300"
-        ),
+        default_cache_control(&Method::GET, 200, None, "public, max-age=300"),
         Some("public, max-age=300")
     );
-}
-
-/// Listings and the account index are reads too, and equally subject to
-/// heuristic freshness.
-#[test]
-fn listings_and_index_get_the_default() {
-    for path in ["/", "/acct", "/acct/prod/"] {
-        assert_eq!(
-            default_cache_control(&Method::GET, path, None, DEFAULT),
-            Some(DEFAULT),
-            "{path} should get a default"
-        );
-    }
+    assert_eq!(
+        default_cache_control(&Method::GET, 200, None, "  public, max-age=300  "),
+        Some("public, max-age=300")
+    );
 }

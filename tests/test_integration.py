@@ -196,12 +196,17 @@ def test_head_sends_cache_control():
 
 
 def test_ranged_read_sends_cache_control():
-    """206s get it too: RFC 9111 4.2.2 heuristic freshness covers them."""
+    """206s get it too: RFC 9111 4.2.2 heuristic freshness covers them.
+
+    Accepts a 200 as well, like the other range tests above: a backend is
+    always free to ignore Range and return the whole body, and either way the
+    response is the one we care about the header on.
+    """
     resp = requests.get(
         f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
         headers={"Range": "bytes=0-99"},
     )
-    assert resp.status_code == 206
+    assert resp.status_code in (200, 206)
     assert resp.headers.get("cache-control") == "no-cache"
 
 
@@ -219,11 +224,32 @@ def test_listing_sends_cache_control():
     assert resp.headers.get("cache-control") == "no-cache"
 
 
-def test_control_plane_has_no_injected_cache_control():
-    """OIDC discovery manages its own caching; the proxy must not override it."""
-    resp = requests.get(f"{PROXY_URL}/.well-known/openid-configuration")
-    assert resp.status_code == 200
-    assert resp.headers.get("cache-control") != "no-cache"
+def test_control_plane_sends_cache_control():
+    """Discovery and JWKS are served by multistore-oidc-provider through
+    ProxyResult.json, which sets only content-type -- the same header-less state
+    as an object read. They need the default more than objects do: a JWKS cached
+    past an OIDC_PROVIDER_KID_PREVIOUS rotation rejects freshly signed tokens.
+    """
+    for path in ("/.well-known/openid-configuration", "/.well-known/jwks.json"):
+        resp = requests.get(f"{PROXY_URL}{path}")
+        assert resp.status_code == 200, path
+        assert resp.headers.get("cache-control") == "no-cache", path
+
+
+def test_revalidation_response_keeps_backend_cache_control():
+    """RFC 9111 4.3.4 merges a 304's headers into the stored response, so the
+    proxy must not inject on a 304 -- doing so would overwrite a publisher's own
+    directive in client caches one revalidation after it was honoured."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
+    etag = resp.headers.get("etag")
+    assert etag, "no ETag to revalidate against"
+
+    revalidated = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
+        headers={"If-None-Match": etag},
+    )
+    assert revalidated.status_code == 304
+    assert revalidated.headers.get("cache-control") is None
 
 
 def test_revalidation_still_returns_304():
