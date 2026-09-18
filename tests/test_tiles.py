@@ -161,7 +161,13 @@ def test_ordinary_object_read_is_unaffected():
 
 
 def test_listing_still_works_under_the_catch_all():
-    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}?list-type=2&prefix={PRODUCT}/")
+    """A two-segment list request is what actually reaches `/{bucket}/{*key}`.
+
+    A bare `/{account}` list matches the narrower `/{bucket}` route and never
+    passes the PMTiles handler at all, so asserting on it guards nothing: the
+    catch-all could claim every key and the test would still pass.
+    """
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}?list-type=2&delimiter=/")
     assert resp.status_code == 200
     assert ARCHIVE in resp.text
 
@@ -178,11 +184,21 @@ def test_wrong_extension_for_the_archive_type_is_404():
     assert resp.status_code == 404
 
 
-def test_non_pmtiles_object_is_404_not_a_500():
+def test_a_tile_url_naming_an_absent_archive_is_404_not_a_500():
+    """Note what this does and does not cover.
+
+    `countries.parquet.pmtiles` does not exist, so this exercises the
+    archive-absent path -- the handler declines and the object pipeline answers.
+    It does not reach the "object exists but is not a PMTiles v3 archive"
+    mapping, which would need a real non-archive object whose key ends in
+    `.pmtiles`; no fixture has one. That mapping is covered natively instead, by
+    `root_directory_is_addressable` in tests/tiles.rs.
+    """
     resp = requests.get(
         f"{PROXY_URL}/cholmes/admin-boundaries/countries.parquet.pmtiles/0/0/0.mvt"
     )
     assert resp.status_code == 404
+    assert "x-tile-cache" not in resp.headers
 
 
 def test_non_canonical_coordinates_fall_through_to_object_read():

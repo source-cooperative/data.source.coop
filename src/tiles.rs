@@ -233,6 +233,50 @@ fn parse_coord<T: std::str::FromStr>(s: &str) -> Option<T> {
     s.parse().ok()
 }
 
+/// Field names `tilejson::TileJSON` serializes itself, which therefore must not
+/// also appear in its flattened `other` map.
+///
+/// `other` carries `#[serde(flatten)]` and is emitted *after* these, so a key
+/// here that also lands in `other` produces a JSON document with the field
+/// twice — and `JSON.parse` keeps the last one.
+const TILEJSON_RESERVED_KEYS: &[&str] = &[
+    "tiles",
+    "vector_layers",
+    "attribution",
+    "bounds",
+    "center",
+    "data",
+    "description",
+    "fillzoom",
+    "grids",
+    "legend",
+    "maxzoom",
+    "minzoom",
+    "name",
+    "scheme",
+    "template",
+    "version",
+];
+
+/// Drop archive-metadata keys that would shadow a field the TileJSON document
+/// sets itself.
+///
+/// `AsyncPmTilesReader::parse_tilejson` copies unrecognized metadata straight
+/// into `TileJSON::other` (`pmtiles-0.24.0/src/async_reader.rs:289,298`), and
+/// that metadata is written by whoever published the archive. Anyone can publish
+/// a public product here, so an archive carrying
+/// `{"tiles": ["https://elsewhere.example/{z}/{x}/{y}.mvt"]}` would have its
+/// value emitted after the proxy's own `tiles`, and every map client reading
+/// that TileJSON from a source.coop URL would fetch its tiles from the
+/// publisher's chosen origin instead. The proxy's own values win.
+pub(crate) fn strip_reserved_tilejson_keys(
+    other: &mut std::collections::BTreeMap<String, serde_json::Value>,
+) {
+    for key in TILEJSON_RESERVED_KEYS {
+        other.remove(*key);
+    }
+}
+
 /// PMTiles v3 header size, and the window pmtiles reads up front for the header
 /// plus the root directory. Mirrored from `pmtiles::header`, where both are
 /// crate-private, and pinned by `root_directory_is_addressable`'s tests.
@@ -681,10 +725,13 @@ mod handler {
                     super::encode_path(product),
                     super::encode_path(target.archive_key),
                 );
-                let tj = reader
+                let mut tj = reader
                     .parse_tilejson(vec![template])
                     .await
                     .map_err(|e| map_pmt_error(e, archive_key))?;
+                // The archive's metadata is publisher-controlled and lands in a
+                // flattened map that serializes after these fields.
+                super::strip_reserved_tilejson_keys(&mut tj.other);
                 let body = serde_json::to_vec(&tj)
                     .map_err(|e| ProxyError::Internal(format!("tilejson encode failed: {e}")))?;
                 (body, "application/json".to_string())

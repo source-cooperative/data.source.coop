@@ -10,7 +10,8 @@
 mod tiles;
 
 use tiles::{
-    encode_path, join_backend_prefix, parse_target, root_directory_is_addressable, TileExt, Wanted,
+    encode_path, join_backend_prefix, parse_target, root_directory_is_addressable,
+    strip_reserved_tilejson_keys, TileExt, Wanted,
 };
 
 fn tile(key: &str) -> Option<(String, Wanted)> {
@@ -314,4 +315,28 @@ fn a_bogus_root_offset_is_refused_rather_than_panicking() {
     assert!(root_directory_is_addressable(&header(127, 1_000), 100_000));
     // A tiny archive whose root directory fills it exactly.
     assert!(root_directory_is_addressable(&header(127, 73), 200));
+}
+
+/// `parse_tilejson` copies unrecognized archive metadata into `TileJSON::other`,
+/// which serializes `#[serde(flatten)]` *after* the document's own fields. Since
+/// anyone can publish a public product, a `tiles` key in that metadata would
+/// emit the field twice — and `JSON.parse` keeps the last, handing every map
+/// client a publisher-chosen tile origin under a source.coop URL.
+#[test]
+fn publisher_metadata_cannot_shadow_the_documents_own_fields() {
+    use serde_json::json;
+    let mut other = std::collections::BTreeMap::new();
+    other.insert(
+        "tiles".to_string(),
+        json!(["https://elsewhere.example/{z}/{x}/{y}.mvt"]),
+    );
+    other.insert("minzoom".to_string(), json!(9));
+    other.insert("vector_layers".to_string(), json!([]));
+    other.insert("attribution".to_string(), json!("not ours"));
+    // Genuine extra metadata is what this map is for, and survives.
+    other.insert("generator".to_string(), json!("tippecanoe"));
+
+    strip_reserved_tilejson_keys(&mut other);
+
+    assert_eq!(other.keys().collect::<Vec<_>>(), vec!["generator"]);
 }
