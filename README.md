@@ -97,6 +97,8 @@ Client Request: GET /{account}/{product}/{key}
 | `OPTIONS *`                             | CORS preflight                                             |
 | `GET /.well-known/openid-configuration` | OIDC discovery document                                    |
 | `GET /.well-known/jwks.json`            | JSON Web Key Set for JWT verification                      |
+| `POST /.sts`                            | `AssumeRoleWithWebIdentity`: an ID token or API key for credentials |
+| `POST /.keys`                           | Sign an API key for a service account (called by source.coop) |
 
 Write operations (`PUT`, `POST`, `DELETE`, `PATCH`) return `405 Method Not Allowed`.
 
@@ -146,6 +148,24 @@ When configured with an RSA key, the proxy acts as its own OpenID Connect identi
 - `GET /.well-known/jwks.json` — public key(s) for JWT signature verification
 
 These endpoints are only active when `OIDC_PROVIDER_KEY` is configured.
+
+### API Keys
+
+An API key ([ADR-013](adrs/013-api-keys.md)) is a JWT signed with the same key,
+prefixed `sck_`, that a service account exchanges at `/.sts` exactly as a user
+exchanges an ID token: `AssumeRoleWithWebIdentity` with the key as
+`WebIdentityToken` and `RoleArn=_default`. The proxy verifies it against its
+own signing key in process (a Worker cannot fetch its own JWKS), then asks the
+Source API whether the key is still active before minting — cached for 60s, so
+revoking a key stops new exchanges within a minute. Expired, revoked and
+unknown keys all get the same `InvalidIdentityToken` answer; the reason is
+logged under the response's `x-request-id`.
+
+`POST /.keys` signs a key. source.coop calls it with the manager's ID token
+(`Authorization: Bearer`) and `{"account_id", "jti", "expires_at"}` once it
+has written the key's record; the proxy checks with the Source API that the
+caller manages the account before signing. Like `/.sts`, it answers 501 until
+`AUTH_AUDIENCE` is set.
 
 ### Setup
 

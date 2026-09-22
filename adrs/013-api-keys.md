@@ -36,6 +36,7 @@ An API key JWT contains:
 {
   "iss": "https://data.source.coop",
   "sub": "<account_id>",
+  "aud": "https://data.source.coop",
   "jti": "<unique_key_id>",
   "iat": 1711929600,
   "exp": 1743465600,
@@ -45,6 +46,7 @@ An API key JWT contains:
 
 - `iss` is the proxy's own issuer URL, not `auth.source.coop` (which is Ory Network and outside Source Cooperative's control for token minting)
 - `sub` identifies the Source Cooperative account that owns the key
+- `aud` is the proxy's own issuer too: the proxy is the only party meant to accept a key, and an exchange requires every token to name its audience
 - `jti` is a unique key identifier used for revocation checks
 - `exp` is optional — keys without an expiry are valid until explicitly revoked
 - `type` distinguishes API key JWTs from other tokens the proxy may issue (e.g. outbound federation tokens)

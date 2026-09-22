@@ -34,6 +34,10 @@ path = "tests/object_path.rs"
 name = "fixtures"
 path = "tests/fixtures.rs"
 
+[[test]]
+name = "keys"
+path = "tests/keys.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.7.2", features = ["azure", "gcp"] }
@@ -44,6 +48,7 @@ multistore-sts = "0.7.2"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = "0.4"
 
 # HTTP
 http = "1"
@@ -55,6 +60,11 @@ sha2 = "0.10"
 
 # Tracing
 tracing = "0.1"
+
+# Native only: `tests/keys.rs` generates a throwaway signing key.
+[dev-dependencies]
+rand = "0.8"
+rsa = "0.9"
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -86,3 +96,13 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.5", features = ["http"] }
 worker-macros = { version = "=0.7.5", features = ["http"] }
+
+# Until the multistore release that carries developmentseed/multistore#146
+# (fail-closed trust fields, `allow_missing_exp_from`) and #147
+# (`JwtSigner::sign_claims`). Drop this and bump the versions above on release.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "oidc/sign-claims" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "oidc/sign-claims" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "oidc/sign-claims" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "oidc/sign-claims" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "oidc/sign-claims" }
