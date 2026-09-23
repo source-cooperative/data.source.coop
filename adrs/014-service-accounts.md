@@ -31,7 +31,7 @@ No reserved id namespace. `type` is the discriminator and `owner_account_id` rec
 
 ### How it authenticates: identity bindings
 
-An account is found by *how it signed in*. `source.coop` holds an `identity-bindings` table keyed `(issuer, subject) → account_id` — the pair is the key, so a subject binds to one account per issuer and nothing more. An individual's Ory identity is not a binding: it stays on the account row as `identity_id`, which the session, the email lookup and the proxy credentials already read, and resolves through that index. The table holds identities the platform does not own — a service account is bound under the data proxy's own issuer for its API keys (ADR-013) and under whichever platform IdPs (ADR-009) it integrates with, one binding per exact subject.
+An account is found by *how it signed in*. `source.coop` holds an `identity-bindings` table keyed `(issuer, subject) → account_id` — the pair is the key, so a subject binds to one account per issuer and nothing more. An individual's Ory identity is not a binding: it stays on the account row as `identity_id`, which the session, the email lookup and the proxy credentials already read, and resolves through that index. The table holds subjects the platform cannot derive from an account: a service account is bound under whichever platform IdPs (ADR-009) it integrates with, one binding per exact subject. An API key's subject is the service account's own id (ADR-013), which the API resolves directly, so a key writes no binding either.
 
 **Attaching a binding requires proof of control of the subject.** For GitHub Actions: whoever manages the service account names the exact subject — one repository and one ref or one environment, never organisation-wide — and receives a short-lived signed challenge. The workflow proves it controls that subject by minting its ambient OIDC token with the challenge as the audience and posting it back; the token is verified against GitHub's keys *for that audience*, its subject must equal the challenge's, and only then is the binding written. Without proof, anyone could claim another organisation's CI subject and receive its access.
 
@@ -59,7 +59,7 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 ### ADR-013 — API keys
 
 - The `sub` of an API-key JWT is a **service account** id, not an arbitrary account id. A key belongs to one service account; an individual or organisation does not hold keys directly.
-- Under the bindings model, enabling keys on a service account is one binding: `(proxy issuer, account id)`. Revocation stays per key, by `jti`.
+- Enabling keys on a service account writes no binding: the key's subject is the account id itself, and the API resolves it as a service account by id after trying Ory. Whether an account has keys is the keys table's to say; revocation stays per key, by `jti`.
 - **No per-key Role binding in the first release.** The service account's memberships are the grant, and the hardcoded Roles only subtract, so any key may name either. The dependency on ADR-010 is dropped; ADR-013 depends on this ADR instead.
 - Expiry is optional and may be changed after issuance; a service account may hold several active keys, so rotation is overlap by construction.
 
