@@ -31,11 +31,11 @@ No reserved id namespace. `type` is the discriminator and `owner_account_id` rec
 
 ### How it authenticates: identity bindings
 
-An account is found by *how it signed in*. `source.coop` holds an `identity-bindings` table keyed `(issuer, subject) → account_id` — the pair is the key, so a subject binds to one account per issuer and nothing more. Every individual is bound under the Ory issuer; a service account is bound under whichever platform IdPs (ADR-009) it integrates with, one binding per exact subject.
+An account is found by *how it signed in*. `source.coop` holds an `identity-bindings` table keyed `(issuer, subject) → account_id` — the pair is the key, so a subject binds to one account per issuer and nothing more. An individual's Ory identity is not a binding: it stays on the account row as `identity_id`, which the session, the email lookup and the proxy credentials already read, and resolves through that index. The table holds identities the platform does not own — a service account is bound under the data proxy's own issuer for its API keys (ADR-013) and under whichever platform IdPs (ADR-009) it integrates with, one binding per exact subject.
 
 **Attaching a binding requires proof of control of the subject.** For GitHub Actions: whoever manages the service account names the exact subject — one repository and one ref or one environment, never organisation-wide — and receives a short-lived signed challenge. The workflow proves it controls that subject by minting its ambient OIDC token with the challenge as the audience and posting it back; the token is verified against GitHub's keys *for that audience*, its subject must equal the challenge's, and only then is the binding written. Without proof, anyone could claim another organisation's CI subject and receive its access.
 
-The token path is then: the proxy verifies a token from a trusted platform IdP, forwards the **issuer-qualified** subject to the API (source-cooperative/data.source.coop#222), and the API resolves `(issuer, subject)` through the bindings table to an account of any type. This is how the Organisation Subject Problem is resolved: the subject of a workload's credential is the *service account*, not the organisation that owns it.
+The token path is then: the proxy verifies a token from a trusted platform IdP, forwards the **issuer-qualified** subject to the API (source-cooperative/data.source.coop#222), and the API resolves `(issuer, subject)` through the bindings table to an account of any type — the Ory issuer excepted, which resolves through `identity_id`. This is how the Organisation Subject Problem is resolved: the subject of a workload's credential is the *service account*, not the organisation that owns it.
 
 ### What it may reach: memberships
 
@@ -83,7 +83,7 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 **Costs / Risks**
 
 - A new account type touches every place that branches on the existing two — around fifty sites — and the default at each is *exclude*.
-- The bindings table is a second source of truth for "who is this identity" until the `identity_id` index is retired; the dual-read window is a period in which a missed backfill row is a person who cannot sign in.
+- Two lookups by design, not one: an Ory identity resolves through `identity_id`, everything else through a binding. Until source-cooperative/data.source.coop#222 qualifies the subject with its issuer, the proxy forwards a bare `sub` and the API tries Ory first, so a service account whose id equals a person's Ory identity id would resolve to the person; such an account is refused a key.
 - Proof of control is a new subsystem per issuer, and its weakest point is the challenge's key handling.
 - Each service account consumes a public name; a per-owner cap is an open question.
 - Deleting an owner that owns service accounts must be blocked (account deletion is itself unimplemented, source-cooperative/source.coop#355).
