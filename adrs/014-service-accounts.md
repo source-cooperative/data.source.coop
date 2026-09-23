@@ -29,13 +29,13 @@ What an unattended workload needs is a principal with **its own grant**: revocab
 
 No reserved id namespace. `type` is the discriminator and `owner_account_id` records ownership; the id is an ordinary account id.
 
-### How it authenticates: identity bindings
+### How it authenticates: account trusts
 
-An account is found by *how it signed in*. `source.coop` holds an `identity-bindings` table keyed `(issuer, subject) → account_id` — the pair is the key, so a subject binds to one account per issuer and nothing more. An individual's Ory identity is not a binding: it stays on the account row as `identity_id`, which the session, the email lookup and the proxy credentials already read, and resolves through that index. The table holds subjects the platform cannot derive from an account: a service account is bound under whichever platform IdPs (ADR-009) it integrates with, one binding per exact subject. An API key's subject is the service account's own id (ADR-013), which the API resolves directly, so a key writes no binding either.
+An account says which subjects may act as it, the way an AWS role's trust policy does. `source.coop` holds an `account-trusts` table keyed by the account, with one row per issuer and exact subject the account trusts. A subject may be trusted by any number of accounts; nothing about a subject alone chooses an account. An individual's Ory identity is not a trust: it stays on the account row as `identity_id`, which the session, the email lookup and the proxy credentials already read. An API key's subject is the service account's own id (ADR-013), which the API resolves directly, so a key writes no trust either. The table holds what the platform cannot derive from an account: a service account's trust in whichever platform-IdP subjects (ADR-009) it integrates with — for GitHub Actions, one repository pinned to one ref or one environment, never organisation-wide.
 
-**Attaching a binding requires proof of control of the subject.** For GitHub Actions: whoever manages the service account names the exact subject — one repository and one ref or one environment, never organisation-wide — and receives a short-lived signed challenge. The workflow proves it controls that subject by minting its ambient OIDC token with the challenge as the audience and posting it back; the token is verified against GitHub's keys *for that audience*, its subject must equal the challenge's, and only then is the binding written. Without proof, anyone could claim another organisation's CI subject and receive its access.
+**A trust is written when a manager adds it; nothing has to prove control of the subject first.** The workload names the account it wants when it exchanges its token — the account segment of `RoleArn`, `arn:aws:iam::<service-account-id>:role/FullAccess` (or `ReadOnly`, or the `_default` alias) — and the exchange succeeds only if that account trusts the token's issuer and subject. Trusting a subject one does not control gains nothing: its workflows never ask for the account. This is AWS's model, and the flow people already know from integrating GitHub Actions with AWS.
 
-The token path is then: the proxy verifies a token from a trusted platform IdP, forwards the **issuer-qualified** subject to the API (source-cooperative/data.source.coop#222), and the API resolves `(issuer, subject)` through the bindings table to an account of any type — the Ory issuer excepted, which resolves through `identity_id`. This is how the Organisation Subject Problem is resolved: the subject of a workload's credential is the *service account*, not the organisation that owns it.
+The token path is then: the proxy verifies a token from a trusted platform IdP, reads the account named in `RoleArn`, and asks the API — `POST /api/v1/accounts/{id}/trusts/exchanges`, authenticated as that account — whether it trusts the token's issuer and subject (source-cooperative/data.source.coop#222, #223). Yes means credentials carrying the account's memberships; no means denied. For an Ory ID token the account segment is ignored, because the token itself says who the person is. This is how the Organisation Subject Problem is resolved: the subject of a workload's credential is the *service account*, not the organisation that owns it.
 
 ### What it may reach: memberships
 
@@ -67,7 +67,7 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 
 - **Scope:** account-owned Roles — CRUD, per-Role trust policies, user-authored permission statements, the API lookup on the credential path — are deferred. Two hardcoded Roles ship in their place (source-cooperative/data.source.coop#221).
 - The Organisation Subject Problem is resolved by this ADR rather than by making organisations authenticate: the subject is the service account.
-- When account-owned Roles do land, their identity constraints and a service account's bindings are not redundant. A binding says which subjects *are* this account; a Role's constraints say which of an account's subjects may assume *this* ceiling.
+- When account-owned Roles do land, their identity constraints and a service account's trusts are not redundant. A trust says which subjects may *be* this account; a Role's constraints say which of an account's subjects may assume *this* ceiling.
 
 ---
 
@@ -78,13 +78,13 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 - Automation gets a grant of its own — revocable in one place, never inheriting a person's broader access, and visible on the same membership pages as a person's.
 - Organisations can own automation without becoming subjects themselves.
 - Multi-issuer trust (ADR-009) becomes safe to enable per subject: a GitHub token maps to a service account with exactly the memberships it was given, not to a person's whole account.
-- The bindings table is the store every later issuer resolves against; GitLab, Azure DevOps and the rest are one proof-of-control flow each.
+- The trusts table is the store every later issuer checks against; GitLab, Azure DevOps and the rest are one subject grammar each, with nothing to prove.
 
 **Costs / Risks**
 
 - A new account type touches every place that branches on the existing two — around fifty sites — and the default at each is *exclude*.
-- Two lookups by design, not one: an Ory identity resolves through `identity_id`, everything else through a binding. Until source-cooperative/data.source.coop#222 qualifies the subject with its issuer, the proxy forwards a bare `sub` and the API tries Ory first, so a service account whose id equals a person's Ory identity id would resolve to the person; such an account is refused a key.
-- Proof of control is a new subsystem per issuer, and its weakest point is the challenge's key handling.
+- Two paths by design, not one: an Ory identity resolves through `identity_id`; a service account is named by the caller and checked against its trusts. The proxy forwards a bare `sub` and the API tries Ory first, so a service account whose id equals a person's Ory identity id would resolve to the person; such an account is refused a key.
+- A trust is only as narrow as its subject: the platform pins GitHub subjects to one repository and one ref or environment, and every later issuer needs the same care.
 - Each service account consumes a public name; a per-owner cap is an open question.
 - Deleting an owner that owns service accounts must be blocked (account deletion is itself unimplemented, source-cooperative/source.coop#355).
 
