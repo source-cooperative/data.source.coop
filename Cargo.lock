@@ -71,9 +71,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.17.3"
+version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00bdb5da18dac48ca2cc7cd4a98e533e8635a58e2361d13a1a4ee3888e0d72f1"
+checksum = "b281d307588d634de920874890732659e2e7672f72b5e10e81badc1a8a83621e"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -81,9 +81,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.43.0"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43103168cc76fe62678a375e722fc9cb3a0146159ac5828bc4f0dfd755c2224c"
+checksum = "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27"
 dependencies = [
  "cc",
  "cmake",
@@ -1035,8 +1035,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbf0d34cce7e97df06f76b1a711d6bd655ce079dc7b32bea049d2432cfa2780d"
+source = "git+https://github.com/developmentseed/multistore?branch=oidc%2Fsign-claims#2a985be0c13f5a5098c8bbde16352abc7cc7a7bf"
 dependencies = [
  "async-trait",
  "base64",
@@ -1064,8 +1063,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8d3c198c3e31ea7903e15f7af15c10b5d5b1c62f16b62a00e458872d5ae1d72"
+source = "git+https://github.com/developmentseed/multistore?branch=oidc%2Fsign-claims#2a985be0c13f5a5098c8bbde16352abc7cc7a7bf"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1091,8 +1089,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03ecb56666012a49cc8fdbaf60564337b04c1f89230bace11240604c4ddf56ef"
+source = "git+https://github.com/developmentseed/multistore?branch=oidc%2Fsign-claims#2a985be0c13f5a5098c8bbde16352abc7cc7a7bf"
 dependencies = [
  "base64",
  "chrono",
@@ -1110,8 +1107,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22e0738451d593e53eafdb2e33f7c2ceef622d2d8b21a42f59e389649a2c294d"
+source = "git+https://github.com/developmentseed/multistore?branch=oidc%2Fsign-claims#2a985be0c13f5a5098c8bbde16352abc7cc7a7bf"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -1121,8 +1117,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "449762c5aac6de3ca7f96430dc6af2e668b1f93c041e58aa181148bb5dd7bebb"
+source = "git+https://github.com/developmentseed/multistore?branch=oidc%2Fsign-claims#2a985be0c13f5a5098c8bbde16352abc7cc7a7bf"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1436,7 +1431,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1618,9 +1613,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -1670,7 +1665,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1681,9 +1676,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -1891,6 +1886,7 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.3.4"
 dependencies = [
+ "chrono",
  "console_error_panic_hook",
  "getrandom 0.4.3",
  "hmac",
@@ -1902,8 +1898,10 @@ dependencies = [
  "multistore-path-mapping",
  "multistore-sts",
  "percent-encoding",
+ "rand 0.8.7",
  "reqwest",
  "ring",
+ "rsa",
  "serde",
  "serde_json",
  "sha2",
@@ -2367,7 +2365,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

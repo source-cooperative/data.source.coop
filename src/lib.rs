@@ -12,29 +12,37 @@ mod authz;
 mod backend_auth;
 mod config;
 mod handlers;
+mod keys;
 mod location;
 mod object_path;
 mod pagination;
 mod source_api;
 mod sts;
 
+use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
 use handlers::{AccountListHandler, IndexHandler};
+use keys::KeyRequest;
 use multistore::api::response::ErrorResponse;
+use multistore::error::ProxyError;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::{ProxyResult, RequestInfo};
 use multistore::router::Router;
+use multistore::types::TemporaryCredentials;
 use multistore_cf_workers::{
-    collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
-    WorkerSubscriber,
+    collect_js_body, GatewayResponseExt, JsBody, NoopCredentialRegistry, RequestParts,
+    WorkerBackend, WorkerSubscriber,
 };
 use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
+use multistore_oidc_provider::jwt::JwtSigner;
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
+use multistore_sts::request::StsRequest;
 use multistore_sts::route_handler::StsRouterExt;
+use multistore_sts::{build_sts_error_response, build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
@@ -147,9 +155,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let request_id = extract_request_id(&parts.headers);
 
-    // Special endpoints (OIDC discovery, STS token exchange) manage their own
-    // methods and bypass the S3 object/bucket path mapping below.
-    let is_special_path = parts.path.starts_with("/.well-known/") || parts.path == "/.sts";
+    // Special endpoints (OIDC discovery, STS token exchange, API key minting)
+    // manage their own methods and bypass the S3 object/bucket path mapping
+    // below.
+    let is_special_path =
+        parts.path.starts_with("/.well-known/") || parts.path == "/.sts" || parts.path == "/.keys";
 
     // ── Short-circuit: OPTIONS preflight ────────────────────────────
     if parts.method == http::Method::OPTIONS {
@@ -169,8 +179,9 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
     // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
     // be exchanged for a user's credentials. When unset, refuse the endpoint
-    // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+    // with a 501 rather than serving it unrestricted. `/.keys` trusts the same
+    // tokens, so it is refused with it.
+    if (parts.path == "/.sts" || parts.path == "/.keys") && config.auth_audiences.is_empty() {
         let resp = ErrorResponse {
             code: "NotImplemented".to_string(),
             message: "STS token exchange is not configured".to_string(),
@@ -230,6 +241,20 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
     );
+
+    // ── API keys (ADR-013) ─────────────────────────────────────────
+    // Minting a key, and exchanging one at `/.sts`, are handled here rather
+    // than by a route handler: see `mint_key` and `api_key_exchange`.
+    if parts.path == "/.keys" {
+        let (status, body) = mint_key(config, &parts, js_body, &api_auth, &request_id).await;
+        return Ok(finish(ProxyResult::json(status, body), &request_id));
+    }
+    if parts.path == "/.sts" {
+        if let Some((status, xml)) = api_key_exchange(config, &parts, &api_auth, &request_id).await
+        {
+            return Ok(finish(ProxyResult::xml(status, xml), &request_id));
+        }
+    }
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
@@ -450,6 +475,155 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
+}
+
+/// A response answered before the gateway, with the CORS headers and request
+/// id every gateway response carries.
+fn finish(result: ProxyResult, request_id: &str) -> web_sys::Response {
+    let response = add_cors(GatewayResponse::Response(result).into_web_sys());
+    if !request_id.is_empty() {
+        let _ = response.headers().set("x-request-id", request_id);
+    }
+    response
+}
+
+// ── API keys ────────────────────────────────────────────────────────
+
+/// `POST /.keys`: sign an API key for a service account, on the say-so of a
+/// manager presenting their own identity token. The proxy holds the signing
+/// key; source.coop holds the record, and calls here once it has written it.
+/// The manager is checked with the Source API, so a token alone mints nothing.
+async fn mint_key(
+    config: &AppConfig,
+    parts: &RequestParts,
+    body: JsBody,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> (u16, String) {
+    match try_mint_key(config, parts, body, api_auth, request_id).await {
+        Ok(key) => (200, serde_json::json!({ "key": key }).to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "API key minting refused");
+            (
+                e.status_code(),
+                serde_json::json!({ "error": e.to_string() }).to_string(),
+            )
+        }
+    }
+}
+
+async fn try_mint_key(
+    config: &AppConfig,
+    parts: &RequestParts,
+    body: JsBody,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> std::result::Result<String, ProxyError> {
+    if parts.method != http::Method::POST {
+        return Err(ProxyError::InvalidRequest("POST /.keys".into()));
+    }
+    let bearer = header_str(&parts.headers, "authorization")
+        .strip_prefix("Bearer ")
+        .ok_or(ProxyError::MissingAuth)?;
+    // The trust `/.sts` extends: an ID token from the auth issuer, for one of
+    // the configured audiences.
+    let role = sts::default_role(
+        config.auth_issuer.clone(),
+        config.auth_audiences.clone(),
+        config.sts_max_session_duration_secs,
+    );
+    let jwks = jwks_cache().get_or_fetch(&config.auth_issuer).await?;
+    let claims = keys::verify_with_any_key(bearer, &jwks.keys, &config.auth_issuer, &role)?;
+    let manager = claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ProxyError::InvalidOidcToken("missing sub claim".into()))?;
+    let bytes = collect_js_body(body)
+        .await
+        .map_err(ProxyError::InvalidRequest)?;
+    let req: KeyRequest = serde_json::from_slice(&bytes)
+        .map_err(|e| ProxyError::InvalidRequest(format!("body: {e}")))?;
+    source_api::cache::assert_caller_manages_account(
+        &config.api_base_url,
+        &req.account_id,
+        api_auth,
+        request_id,
+        manager,
+    )
+    .await?;
+    keys::mint_api_key(
+        &config.oidc.signer,
+        &config.oidc.issuer,
+        &req,
+        chrono::Utc::now().timestamp(),
+    )
+}
+
+/// A key presented at `/.sts` — `sck_` + JWT — is exchanged here rather than
+/// by the STS route, because a Worker cannot fetch its own JWKS (Cloudflare
+/// refuses the self-request, error 1042). The token is verified against the
+/// signing key in process, and the key's standing is checked with the Source
+/// API — the step ADR-013 adds — before credentials are minted. `None` when
+/// the request is not an exchange of an API key.
+async fn api_key_exchange(
+    config: &AppConfig,
+    parts: &RequestParts,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Option<(u16, String)> {
+    let sts = try_parse_sts_request(parts.query.as_deref())
+        .or_else(|| try_parse_sts_request(parts.form_body.as_deref()))?
+        .ok()?; // a malformed request is the STS route's to report
+    let jwt = keys::strip_api_key(&sts.web_identity_token)?;
+    if !sts::is_default_role(&sts.role_arn) {
+        return Some(build_sts_error_response(&ProxyError::RoleNotFound(
+            sts.role_arn.clone(),
+        )));
+    }
+    Some(
+        match exchange_api_key(config, &sts, jwt, api_auth, request_id).await {
+            Ok(creds) => {
+                tracing::info!(subject = %creds.source_identity, "API key exchange succeeded");
+                build_sts_response(&creds)
+            }
+            // Bad signature, expired, revoked, unknown: one answer for all, so the
+            // response says nothing about the record. The reason is in the log,
+            // under the request id the response carries.
+            Err(e) => {
+                tracing::warn!(error = %e, "API key exchange refused");
+                build_sts_error_response(&ProxyError::InvalidOidcToken(
+                    "API key was not accepted".into(),
+                ))
+            }
+        },
+    )
+}
+
+async fn exchange_api_key(
+    config: &AppConfig,
+    sts: &StsRequest,
+    jwt: &str,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> std::result::Result<TemporaryCredentials, ProxyError> {
+    let signers: Vec<&JwtSigner> = std::iter::once(&config.oidc.signer)
+        .chain(config.oidc.previous_signer.as_ref())
+        .collect();
+    let role = keys::api_key_role(&config.oidc.issuer, config.sts_max_session_duration_secs);
+    let key = keys::verify_api_key(jwt, &keys::own_jwks(&signers), &config.oidc.issuer, &role)?;
+    let standing = source_api::cache::get_or_fetch_key_standing(
+        &config.api_base_url,
+        &key.jti,
+        api_auth,
+        request_id,
+        &key.account_id,
+    )
+    .await?;
+    if !standing.active {
+        return Err(ProxyError::AccessDenied);
+    }
+    keys::credentials_for(&role, &key, sts.duration_seconds, &config.session_token_key)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
