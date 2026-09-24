@@ -27,7 +27,7 @@ What an unattended workload needs is a principal with **its own grant**: revocab
 
 `service` joins `individual` and `organization`. A service account is owned by exactly one account, individual or organisation (`owner_account_id`), and is managed by whoever manages the owner — the owner's `owners` and `maintainers`, or an individual owner themselves. It has no Ory identity and no public profile. It never acts as admin whatever its flags say, and it creates neither products nor accounts. It has no rights over itself: the self-authorization shortcut that lets a person edit their own account is a person's alone.
 
-No reserved id namespace. `type` is the discriminator and `owner_account_id` records ownership; the id is an ordinary account id.
+A service account's id is namespaced under its owner: `{owner_account_id}--{id}`, such as `acme--nightly-sync`. The `--` is one no person's or organisation's id may contain, and the one account-owned data connections already use between owner and name. So the id is unique per owner, and every owner can have its own `nightly-sync`. A service account never takes a handle a person or organisation might want, and its id can never equal an Ory identity id, which is a UUID. `type` stays the discriminator and `owner_account_id` records ownership; the prefix only repeats it.
 
 ### How it authenticates: account trusts
 
@@ -83,9 +83,9 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 **Costs / Risks**
 
 - A new account type touches every place that branches on the existing two — around fifty sites — and the default at each is *exclude*.
-- Two paths by design, not one: an Ory identity resolves through `identity_id`; a service account is named by the caller and checked against its trusts. The proxy forwards a bare `sub` and the API tries Ory first, so a service account whose id equals a person's Ory identity id would resolve to the person; such an account is refused a key.
+- Two paths by design, not one: an Ory identity resolves through `identity_id`; a service account is named by the caller and checked against its trusts. The proxy forwards a bare `sub` and the API tries Ory first; a service account's id always contains `--` and an Ory identity id never does, so the two cannot be confused.
 - A trust is only as narrow as its subject: the platform pins GitHub subjects to one repository and one ref or environment, and every later issuer needs the same care.
-- Each service account consumes a public name; a per-owner cap is an open question.
+- A service account's id takes no public name, since it lives under its owner's, and the owner is fixed for good: it is part of the id. A per-owner cap is an open question.
 - Deleting an owner that owns service accounts must be blocked (account deletion is itself unimplemented, source-cooperative/source.coop#355).
 
 ---
@@ -98,6 +98,8 @@ The division of labour: **a Role answers "how narrow is this credential"; a serv
 
 **OAuth2 client credentials** — ADR-013 already rejected it as requiring "a bespoke service account system". This ADR is that system, built on the account model rather than beside it.
 
-**A reserved `svc--` id namespace** — rejected. `ID_REGEX` forbids consecutive hyphens in account ids, and `--` is already the data-connection composite-id delimiter; relaxing the rule would let user-chosen ids collide with connection ids. The account type is the discriminator.
+**A reserved `svc--` id prefix** — rejected. It marks the type, which `type` already does, and it keeps every id platform-wide: one owner's `svc--nightly-sync` is every owner's. Namespacing by owner uses the same `--` to scope the id instead. Loosening the id rule for everyone was the concern; it loosens for service accounts only, whose ids the platform composes from two ids that each pass the strict rule, and connection ids live in their own table.
+
+**Globally unique, un-namespaced ids** — rejected. The create form derives the id from the name, so the second owner to name a service account "Nightly Sync" is told `nightly-sync` is taken, and each one spends a handle a person or organisation might later want.
 
 **Roles selectable per service account ("tick which Roles it may use")** — rejected for the first release. A Role can only subtract, so any caller may safely name either hardcoded one; a tick-box would be a no-op that reads as a restriction.
