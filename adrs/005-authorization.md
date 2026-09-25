@@ -7,6 +7,9 @@
 **Implementation:** `src/authz.rs`, `src/backend_auth.rs`, `src/source_api/registry.rs`, `src/source_api/auth.rs`; `source.coop:src/lib/api/oidc.ts`
 **Implemented by:** #116 (registry + API resolution), #149 (product visibility model), #162 (authorize and enable writes), #170 (extract `decide_backend_auth` + CI ordering test), #183 (hermetic API stub, contract and failure-mode tests) · source.coop#283 (OIDC auth), source.coop#284 (require auth for restricted products)
 
+> [!NOTE]
+> **Amended by ADR-013 (revised 2026-09-25).** One route, `POST /api/v1/service-account-keys/exchanges`, is called before the proxy knows which account is calling, so the proxy authenticates it as itself: a proxy-signed assertion whose subject is the sentinel `urn:source:data-proxy`, accepted only on that route and resolving to no account anywhere else. Every other lookup stays on behalf of the caller, as below.
+
 ---
 
 ## Context
