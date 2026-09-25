@@ -36,16 +36,28 @@ impl StsCredentialRegistry {
         max_session_duration_secs: u64,
     ) -> Self {
         Self {
-            default_role: RoleConfig {
-                role_id: "_default".to_string(),
-                name: "Default".to_string(),
-                trusted_oidc_issuers: vec![oidc_issuer],
-                required_audiences,
-                subject_conditions: vec![],
-                allowed_scopes: vec![], // unlimited
-                max_session_duration_secs,
-            },
+            default_role: default_role(oidc_issuer, required_audiences, max_session_duration_secs),
         }
+    }
+}
+
+/// The `_default` role: trusts `oidc_issuer` for tokens minted for one of
+/// `required_audiences`, with no scope restriction. Shared with the API-key
+/// exchange, which mints under the same role once the API has named the
+/// account (`keys::credentials_for`).
+pub(crate) fn default_role(
+    oidc_issuer: String,
+    required_audiences: Vec<String>,
+    max_session_duration_secs: u64,
+) -> RoleConfig {
+    RoleConfig {
+        role_id: "_default".to_string(),
+        name: "Default".to_string(),
+        trusted_oidc_issuers: vec![oidc_issuer],
+        required_audiences,
+        subject_conditions: vec![],
+        allowed_scopes: vec![], // unlimited
+        max_session_duration_secs,
     }
 }
 

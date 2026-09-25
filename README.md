@@ -116,6 +116,16 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
 
+### Bindings
+
+| Binding              | Kind        | Description                                                                                                                                  |
+| -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KEY_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on API-key exchanges at `/.sts` (ADR-013). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
+
+### API keys
+
+A service account's API key (ADR-013) is an opaque `sck_` secret that source.coop stores as a hash. It is presented at `/.sts` as `WebIdentityToken`, from a POST form body only — a key in the URL is refused, because the URL is logged. The proxy trims and format-checks it, hashes it, and asks `POST {SOURCE_API_URL}/api/v1/service-account-keys/exchanges` for its standing as itself (subject `urn:source:data-proxy`), caching the answer for 60 seconds; then it mints credentials for the account the API names, exactly as it would for an ID token. Every refusal of the key reads `API key was not accepted (request id …)`; the reason is in the log under that id.
+
 ### Secrets
 
 **GitHub environment secrets are the source of truth.** The deploy workflow

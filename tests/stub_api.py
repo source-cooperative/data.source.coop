@@ -21,6 +21,7 @@ CI starts this before `wrangler dev` and points the worker at it via
 SOURCE_API_URL in .dev.vars.
 """
 
+import hashlib
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -112,9 +113,55 @@ assert (
 )
 
 
+# ── API keys ───────────────────────────────────────────────────────
+# Opaque keys the proxy resolves by SHA-256 at POST
+# /api/v1/service-account-keys/exchanges (ADR-013), as itself. The stub keys
+# its answers on the hash of each constant, so test_api_keys.py presents the
+# key and never the hash — exactly what the proxy is meant to send. A counter
+# per hash lets the tests prove the proxy's 60s standing cache is doing its
+# job: the second exchange of a key must not reach here.
+LIVE_KEY = "sck_" + "L" * 43
+REVOKED_KEY = "sck_" + "R" * 43
+UNKNOWN_KEY = "sck_" + "U" * 43
+ERR_500_KEY = "sck_" + "E" * 43
+KEY_ACCOUNT = "ci-tests--nightly-sync"
+
+
+def _hash(key):
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+KEY_STANDINGS = {
+    _hash(LIVE_KEY): (200, {"account_id": KEY_ACCOUNT, "key_id": "k-live", "active": True}),
+    _hash(REVOKED_KEY): (200, {"active": False}),
+    _hash(ERR_500_KEY): (500, {}),
+}
+KEY_EXCHANGE_COUNTS = {}
+
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        if path != "/api/v1/service-account-keys/exchanges":
+            return self._send(404, b"{}")
+        # The proxy authenticates as itself; the stub cannot verify the
+        # signature, but a missing header would mean the proxy sent nothing.
+        if not self.headers.get("Authorization", "").startswith("Bearer "):
+            return self._send(401, b"{}")
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            key_hash = json.loads(self.rfile.read(length))["key_hash"]
+        except (ValueError, KeyError, TypeError):
+            return self._send(400, b"{}")
+        KEY_EXCHANGE_COUNTS[key_hash] = KEY_EXCHANGE_COUNTS.get(key_hash, 0) + 1
+        status, body = KEY_STANDINGS.get(key_hash, (200, {"active": False}))
+        self._send(status, json.dumps(body).encode())
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        # Test-only: how many times each key's standing was asked for.
+        if path == "/_stub/key-exchange-counts":
+            return self._send(200, json.dumps(KEY_EXCHANGE_COUNTS).encode())
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
             return self._send(500, b"{}")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_BAD_JSON_PRODUCT}":
