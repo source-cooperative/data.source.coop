@@ -1,15 +1,16 @@
 # ADR-013: API Keys for Environments Without OIDC
 
-**Status:** Proposed — not implemented
-**Date:** 2026-04-01
-**RFC:** RFC-001
-**Depends on:** ADR-001, ADR-004, ADR-006, ADR-010
+**Status:** Proposed — not implemented (revised 2026-09-25)
+**Date:** 2026-04-01 · revised 2026-09-25
+**RFC:** RFC-001 §12
+**Depends on:** ADR-001, ADR-004, ADR-007, ADR-014
+**Amends:** ADR-005 (proxy-to-API authentication), ADR-014 (the amendment of this ADR)
 
 > [!NOTE]
 > The `api-keys` endpoints that exist in `source.coop` today are the **legacy** admin-managed keys used by the pre-Workers proxy. They are unrelated to this design, and the current proxy has no code path that accepts them (ADR-001). This ADR proposes a replacement, not a formalisation of what is there.
 
 > [!NOTE]
-> **Amended by ADR-014 (Service Accounts).** The `sub` of an API-key JWT is a **service account** id; a key belongs to one service account. There is no per-key Role binding in the first release — the account's memberships are the grant and the hardcoded Roles only subtract — so the dependency on ADR-010 is replaced by one on ADR-014. Expiry is optional and may be changed after issuance; several keys may be active at once. The examples below use ADR-010's `sc::` `RoleArn` grammar; clients send the AWS form ADR-014 describes, `arn:aws:iam::<account>:role/<Role>`.
+> **Revised 2026-09-25.** The original Decision — a long-lived JWT signed by the data proxy — was implemented (source-cooperative/data.source.coop#233, source-cooperative/source.coop#570) and withdrawn on review before release. The Decision below replaces it; the original design and why it was withdrawn are recorded under Context and Alternatives. ADR-014's amendment of this ADR (the key belongs to one service account; no per-key Role binding; editable expiry, several active keys) carries over.
 
 ---
 
@@ -25,132 +26,65 @@ However, a significant class of users has neither:
 
 These users have Source Cooperative accounts but operate in compute environments that do not issue OIDC tokens and cannot perform interactive browser authentication at runtime. ADR-001 and ADR-004 both identify this gap as future work.
 
+### Why the first Decision was withdrawn
+
+The first version of this ADR chose to issue API keys as long-lived JWTs signed by the data proxy, on the grounds that such a key could be exchanged at `/.sts` "with no new endpoint and no new validation logic beyond the `jti` check". ADR-014 kept that shape and made the key's subject a service account.
+
+Implementing it (source-cooperative/data.source.coop#233, developmentseed/multistore#147, source-cooperative/source.coop#570) showed the premise does not hold:
+
+- **The lookup was never optional.** Revocation needs a per-key check at the Source API on every exchange, cached for 60 seconds. A lookup keyed by the secret itself returns the account, so the signature's only remaining job, naming the account before the lookup, is one the lookup can do.
+- **The existing path could not be used.** A Cloudflare Worker cannot fetch its own JWKS (error 1042), so the proxy verified its own keys in process, ahead of the STS route, with a dedicated role and error mapping, plus a new `POST /.keys` for minting. That is the new endpoint and the new validation logic the JWT was meant to avoid.
+- **Minting became a cycle.** source.coop wrote the record, obtained an Ory ID token, called the proxy, and the proxy called source.coop back to confirm the caller manages the account, then signed. `/.keys` would sign any `jti` for a manager, so a manager could re-derive a live key for an existing record with no audit; "shown once" was not a property.
+- **Two sources of truth for expiry.** `exp` was baked into the token; the record's `expires_at` was editable. Extending or removing an expiry did not change what the proxy enforced.
+- **A rotation cliff.** The proxy's signing key also signs outbound federation assertions (ADR-006) and its own calls to the API (ADR-005). The proxy verified keys against the current and one previous signer. A key with no expiry, which ADR-014 promises, stopped verifying on the second rotation, and any rotation forced by the other two uses invalidated every key at once.
+
+A design comment on the epic (source-cooperative/source.coop#491, 2026-08-22) had already stated the principle: a long-lived credential "must not depend on a signature staying verifiable for years". That comment drew the two-hop conclusion revisited under Alternatives.
+
 ---
 
 ## Decision
 
-### API Keys as Long-Lived JWTs
+### The key is an opaque secret
 
-Source Cooperative issues API keys as long-lived JWTs signed by the data proxy's own signing key — the same key the proxy uses as an OIDC issuer for outbound storage authentication (ADR-006). The proxy already publishes its JWKS and `/.well-known/openid-configuration`; API key JWTs are verifiable against the same key material.
+An API key is `sck_` followed by 32 random bytes in base64url, a fixed 47 characters matching `^sck_[A-Za-z0-9_-]{43}$`, with no checksum. source.coop generates it, stores `sha256(key)` on the key record, shows it once, and never stores or logs the key. Nothing signs it. There is no key material for API keys anywhere on the platform. The hash needs no salt or key-derivation function: its input is 256 random bits, and the lookup is a key get, so there is no comparison to time.
 
-An API key JWT contains:
+The record holds `key_hash` (partition key), `key_id` (random, public, for the UI and management actions), `account_id` (a service account, per ADR-014), `label`, `created_at`, `created_by`, `expires_at` (nullable, editable after issuance), `revoked_at` and `last_used_at`. A service account may hold several active keys; rotation is issue-new, deploy, revoke-old. A disabled service account is refused a key.
 
-```json
-{
-  "iss": "https://data.source.coop",
-  "sub": "<account_id>",
-  "jti": "<unique_key_id>",
-  "iat": 1711929600,
-  "exp": 1743465600,
-  "type": "api_key"
-}
-```
+### The proxy resolves it by asking source.coop
 
-- `iss` is the proxy's own issuer URL, not `auth.source.coop` (which is Ory Network and outside Source Cooperative's control for token minting)
-- `sub` identifies the Source Cooperative account that owns the key
-- `jti` is a unique key identifier used for revocation checks
-- `exp` is optional — keys without an expiry are valid until explicitly revoked
-- `type` distinguishes API key JWTs from other tokens the proxy may issue (e.g. outbound federation tokens)
+`/.sts` accepts a key as `WebIdentityToken` in an `AssumeRoleWithWebIdentity` request, exactly as it accepts a JWT. The proxy:
 
-### Key Lifecycle
+1. Accepts a key **only from the form body of a POST**. A key anywhere in the query string is refused before any lookup, with a message that says so, because the platform logs request URLs.
+2. Trims surrounding whitespace, then checks the fixed format; a malformed value is refused locally.
+3. Hashes the key and looks up its standing at `POST /api/v1/service-account-keys/exchanges` with `{"key_hash"}`, authenticated as the proxy itself (see Amendments). The answer, `{account_id, key_id, active}` with `active: false` for an unknown hash, is cached for 60 seconds. An API failure fails closed and caches nothing.
+4. Refuses an inactive or unknown key with one client-visible outcome, `InvalidIdentityToken` "API key was not accepted (request id …)", the id in the message because SDKs surface only the message; the reason is in the log.
+5. Otherwise mints session credentials for `account_id` through the same minting, sealing and response code as every other exchange, with the same duration floor and cap. The account segment of `RoleArn` is ignored, as it is for an Ory ID token; the key names the account. The role must be one the proxy serves.
 
-**Creation:**
+source.coop answers `active` only when the key is not revoked, not expired, and its service account is not disabled, and records last use best-effort.
 
-Users create API keys via the Source Cooperative UI or CLI:
+Exchange attempts are rate-limited by client IP with the Workers rate-limiting binding, generously: a legitimate client exchanges about once a session, so a cluster behind one NAT stays far under the limit, while a flood of distinct junk keys, each of which costs the API one lookup, is what it bounds.
 
-```
-source keys create --label "ncar-cronjob" --role sc::my-org::role/publisher
-```
+### Clients
 
-The system:
-1. Generates a unique `jti`
-2. Stores key metadata in the policy store: `jti`, account ID, label, bound Role (optional), created-at, expires-at (nullable)
-3. Mints and signs the JWT
-4. Returns the raw JWT to the user — displayed once, never stored by the platform
+A stock AWS SDK or CLI needs `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE` pointing at a file containing the key, `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL_S3` and `AWS_REGION`. The SDK re-reads the file, exchanges, and refreshes on its own; nothing else runs on the machine. This is the same setup GitHub Actions uses with a real GitHub token. The Source CLI offers the same exchange with the key in the request body and can serve as an AWS `credential_process`, which is how tools that would otherwise send the STS request as a GET, such as GDAL, obtain credentials: the proxy refuses a key in a URL, and GDAL honours `credential_process` in the AWS config.
 
-**Revocation:**
+### Revocation
 
-Users revoke keys via the UI or CLI:
+Revoking a key, or its expiry passing, denies new exchanges within the 60-second standing cache. Session credentials already issued cannot be recalled; they live to their cap. **Disabling the service account** is the emergency stop for a leaked key: new exchanges are refused, and existing sessions degrade to anonymous as the proxy's per-request caches expire, writes within 60 seconds and reads of restricted products within five minutes; public reads are unaffected. Re-enabling makes any leaked keys live again. Rotating `SESSION_TOKEN_KEY` (ADR-001) invalidates every session on the platform and is not part of the key runbook.
 
-```
-source keys revoke <key_id>
-```
+A public self-revoke route lets anyone holding a key revoke it (source-cooperative/source.coop#561): the same hash lookup, body-only, a uniform response, the same rate limit.
 
-Revocation marks the key's `jti` as revoked in the policy store. The revocation takes effect within the `jti` validation cache TTL (see below).
+---
 
-**Management API:**
+## Amendments
 
-```
-POST   /api/accounts/{account_id}/keys
-GET    /api/accounts/{account_id}/keys
-DELETE /api/accounts/{account_id}/keys/{key_id}
-```
+### ADR-005 — Authorization delegated to the Source API
 
-The `GET` endpoint returns key metadata (ID, label, created-at, expires-at, last-used-at) but never the JWT itself. Only account owners and org admins can manage keys.
+ADR-005 rejected "a service-account identity for proxy-to-API calls" and authenticates every lookup as the caller. One route is the exception: `POST /api/v1/service-account-keys/exchanges` is called before the proxy knows which account is calling, so the proxy authenticates it **as itself**, with a proxy-signed assertion whose subject is the sentinel `urn:source:data-proxy`. That subject fails both account-id grammars, is accepted only on that route, and resolves to no account anywhere else. Every other lookup stays on behalf of the caller.
 
-### STS Exchange
+### ADR-014 — Service accounts
 
-API key JWTs are exchanged at `/.sts` using the same flow as any other OIDC token (ADR-004) — `AssumeRoleWithWebIdentity` is an action parameter, not a path segment:
-
-```
-Action=AssumeRoleWithWebIdentity
-&WebIdentityToken=<api_key_jwt>
-&RoleArn=sc::my-org::role/publisher
-&RoleSessionName=ncar-daily-sync
-```
-
-The STS exchange flow proceeds as defined in ADR-004 with one additional step:
-
-1. Parse `RoleArn` → extract `account_id` and `role_name`
-2. Load Role definition (cached)
-3. Extract `iss` from JWT → matches `https://data.source.coop`
-4. Verify JWT signature against the proxy's own JWKS
-5. Verify `exp` (if present), `nbf`, `iat`
-6. **Validate `jti` against the policy store** — confirm the key has not been revoked (cached, 30–60s TTL)
-7. Evaluate claim constraints for the matched IdP binding
-8. Validate `DurationSeconds` ≤ Role's `max_session_duration`
-9. Generate credentials and return response
-
-Step 6 is the only addition to the existing STS flow. For non-API-key tokens (those without `"type": "api_key"`), this step is skipped.
-
-### Platform IdP Registration
-
-The proxy's own issuer is registered as a platform IdP:
-
-```json
-{
-  "id": "source-coop-api-key",
-  "issuer_url": "https://data.source.coop",
-  "display_name": "Source Cooperative API Key",
-  "well_known_claims": ["type"],
-  "audience_hint": "https://data.source.coop"
-}
-```
-
-Roles that should be assumable via API key must include an identity constraint binding for this IdP:
-
-```json
-{
-  "idp": "source-coop-api-key",
-  "claim_constraints": [
-    {"claim": "type", "operator": "equals", "value": "api_key"}
-  ]
-}
-```
-
-This reuses the Role and identity constraint model from ADR-010 without modification — and therefore depends on it, since no such model exists today. Account owners explicitly opt in to API key access per Role: a Role without a `source-coop-api-key` binding cannot be assumed with an API key.
-
-### Role Binding
-
-API keys can optionally be bound to a specific Role at creation time. A bound key can only be used to assume that Role. An unbound key can assume any Role the account owns that has a `source-coop-api-key` identity constraint.
-
-Bound keys reduce blast radius: if leaked, the key can only access what that specific Role permits. For high-value automated workflows, bound keys are recommended.
-
-### Caching and Revocation Latency
-
-The `jti` validity check uses the same caching infrastructure as other policy store lookups (ADR-007): the Cloudflare Cache API, with a short TTL in line with the permission lookup.
-
-This means revocation takes effect within roughly a minute. For the target use case (long-running cronjobs, batch pipelines), that latency is acceptable. If faster revocation is needed, rotating `SESSION_TOKEN_KEY` (ADR-001) invalidates all active STS sessions immediately — a more disruptive but available emergency response.
+The first two bullets of ADR-014's amendment of this ADR are replaced: a key is an opaque secret whose record names the service account; revocation is per key, by record, not by `jti`. The remaining bullets, no per-key Role binding and editable expiry with several active keys, stand.
 
 ---
 
@@ -158,30 +92,34 @@ This means revocation takes effect within roughly a minute. For the target use c
 
 **Benefits**
 
-- Covers the authentication gap for environments without OIDC or browser access
-- No new auth path at the proxy layer — API key JWTs flow through the existing `/.sts` exchange
-- Reuses the proxy's existing OIDC issuer infrastructure (signing key, JWKS) from ADR-006
-- Reuses the Role and identity constraint model from ADR-010
-- Revocation is explicit and auditable via `jti` lookup
-- Optional Role binding limits blast radius of leaked keys
+- One source of truth. Existence, account, expiry, revocation and disablement are all the record's, read by one lookup the proxy already had to make.
+- No signing key on the key path. The proxy's key stays reserved for outbound federation and its API calls; rotating it cannot affect an API key. Non-expiring keys need no retained key ring.
+- Issuance is one DynamoDB write, with no cross-service call and no compensating delete.
+- The proxy never holds a key at rest and forwards only its hash. Enumeration is infeasible at 256 bits.
+- The stock-SDK experience the epic promises for GitHub Actions holds for every environment.
+- The secret-scanning marker is a fixed-length, all-entropy pattern.
 
 **Costs / Risks**
 
-- API key JWTs are bearer tokens — anyone with the raw JWT can use it. Users must treat them like passwords (store in environment variables or secret files, not in source control)
-- The `jti` revocation check adds a policy store dependency to the STS exchange path for API key tokens. Cache misses add latency.
-- Keys without expiry are valid indefinitely until revoked. If a user loses access to the management UI (e.g. leaves a university), orphaned keys persist unless an org admin revokes them.
-- The proxy's signing key is now used for two purposes: outbound federation tokens (ADR-006) and API key JWTs. A signing key compromise affects both. Key rotation must account for both uses.
+- `/.sts` gains a second verification branch ahead of the STS route. It reuses the STS crate's minting, sealing and response builders, but restates the duration floor and default in a few lines because the crate has no pre-resolved-subject entry point.
+- A long-lived secret rides in `WebIdentityToken`, a parameter defined for signed assertions. It is accepted only in a POST body over TLS and hashed on arrival. Clients that send the STS request as a GET are refused and must go through the CLI.
+- The exchanges route is the first Source API route that authenticates the proxy as itself. It is confined to that route and its sentinel subject.
+- This is the first `/.sts` path where an unverified caller triggers a Source API call, so the rate limit ships with the branch, not after it.
+- Revocation is bounded by the 60-second cache, and outstanding session credentials by their cap and by the per-request caches. Both are true of every credential the proxy issues.
+- The public self-revoke route is a second surface that takes a raw key, under the same rules.
 
 ---
 
 ## Alternatives Considered
 
-**Ory-issued long-lived tokens** — not feasible. `auth.source.coop` is Ory Network, which controls its own signing keys. Source Cooperative cannot mint arbitrary long-lived JWTs from Ory's issuer.
+**Proxy-signed JWT keys (this ADR's first Decision)** — withdrawn for the reasons in Context: the lookup makes the signature redundant, the platform prevented reuse of the JWT path, and the shared signing key created an issuance cycle, a re-mint hole, an expiry conflict and a rotation cliff.
 
-**OAuth2 client credentials grant** — considered. The client credentials grant authenticates an application, not a user — the resulting token's `sub` is the client ID, not a user identity. Mapping OAuth2 clients back to Source Cooperative accounts would require a bespoke service account system built on top of OAuth2.
+**source.coop-signed JWT keys, verified at the proxy via a source.coop JWKS** — the trust direction is right (the control plane issues, the data plane verifies as it verifies GitHub), and it avoids the self-JWKS problem. It keeps the lookup, the `exp`-versus-record conflict and the obligation to retain every signing key forever, now on Vercel where secrets are baked at build. It buys nothing over an opaque key that the lookup does not already provide.
 
-**Ory personal access tokens** — investigated. Ory Network's PAT/API key concept (`ory_pat_`) is for project admin API access, not end-user authentication. User-scoped PATs are an [open feature request](https://github.com/ory/kratos/issues/1106) on Ory Kratos but not available.
+**Two-hop: opaque key exchanged at source.coop for a short-lived token, then `/.sts`** — the most conventional shape (OAuth 2.0 client credentials; AWS IAM Roles Anywhere), and the conclusion of the 2026-08-22 design comment. A spike against the staging Ory project on 2026-09-25 (run output in source-cooperative/data.source.coop#234) showed Ory Network mints an ID token for a service-account subject through the headless flow source.coop already uses, so the proxy would need no change. Rejected for the first release because it charges its cost to the users this ADR exists for: every HPC node, instrument and VM would need the Source CLI as a credential helper or a timer rewriting a token file, where this design needs environment variables and a stock SDK. It also widens the revocation window from 60 seconds to the token lifetime and puts Ory's admin API on the machine path. It remains available as an addition, without changing the key format, should a use case need a JWT derived from a key.
 
-**Opaque API keys with hash-based validation** — considered. The platform generates a random secret, stores a hash, and validates by re-hashing. This works but requires a dedicated validation endpoint or a new auth path at `/.sts`. The JWT approach avoids this by making API keys indistinguishable from other OIDC tokens at the STS layer — no new endpoint, no new validation logic beyond the `jti` check.
+**Long-lived credentials via the proxy's `get_credential` slot** — rejected in the same design comment: SigV4 is symmetric, so the proxy would need the secret in the clear.
 
-**Long-lived Ory refresh tokens** — considered as a near-term workaround. The user performs a one-time `source login` (device flow) and stores the refresh token. Cronjobs silently refresh access tokens. This works without new infrastructure but refresh tokens expire eventually, causing silent failures in unattended workflows. Suitable as an interim measure but not a durable solution for indefinitely recurring workloads.
+**Ory personal access tokens; OAuth 2.0 client credentials at Ory directly** — not available for end users, and a client is not an account (retained from the first version).
+
+**Long-lived Ory refresh tokens** — retained from the first version: a one-time `source login` whose refresh token cronjobs use silently. Refresh tokens expire eventually, causing silent failures in unattended workflows; an interim measure, not a durable one.
