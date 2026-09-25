@@ -574,9 +574,14 @@ async fn exchange_api_key(
         tracing::warn!(%request_id, reason = "malformed", "API key exchange refused");
         return Err(ProxyError::InvalidOidcToken("malformed".into()));
     };
-    if !sts::is_default_role(&sts.role_arn) {
+    let Some(role) = sts::role(
+        &sts.role_arn,
+        config.auth_issuer.clone(),
+        config.auth_audiences.clone(),
+        config.sts_max_session_duration_secs,
+    ) else {
         return Err(ProxyError::RoleNotFound(sts.role_arn.clone()));
-    }
+    };
     let key_hash = keys::key_hash(key);
     let standing = source_api::cache::get_or_fetch_key_standing(
         &config.api_base_url,
@@ -602,18 +607,13 @@ async fn exchange_api_key(
             return Err(ProxyError::InvalidOidcToken("inactive".into()));
         }
     };
-    let role = sts::default_role(
-        config.auth_issuer.clone(),
-        config.auth_audiences.clone(),
-        config.sts_max_session_duration_secs,
-    );
     let creds = keys::credentials_for(
         &role,
         &account_id,
         sts.duration_seconds,
         &config.session_token_key,
     )?;
-    tracing::info!(%request_id, key_id, %account_id, "API key exchanged");
+    tracing::info!(%request_id, key_id, %account_id, role = %role.role_id, "API key exchanged");
     Ok(creds)
 }
 

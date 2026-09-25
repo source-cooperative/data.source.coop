@@ -126,6 +126,18 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 A service account's API key (ADR-013) is an opaque `sck_` secret that source.coop stores as a hash. It is presented at `/.sts` as `WebIdentityToken`, from a POST form body only — a key in the URL is refused, because the URL is logged. The proxy trims and format-checks it, hashes it, and asks `POST {SOURCE_API_URL}/api/v1/service-account-keys/exchanges` for its standing as itself (subject `urn:source:data-proxy`), caching the answer for 60 seconds; then it mints credentials for the account the API names, exactly as it would for an ID token. Every refusal of the key reads `API key was not accepted (request id …)`; the reason is in the log under that id.
 
+### Roles
+
+Every exchange at `/.sts`, of an ID token or an API key, names a Role in `RoleArn`, either bare or as the resource of an ARN of any partition and account (`arn:aws:iam::000000000000:role/ReadOnly`), since AWS SDKs insist on an ARN. The Roles are hardcoded (ADR-014):
+
+| Role         | Credentials may                                          |
+| ------------ | -------------------------------------------------------- |
+| `FullAccess` | do everything the account's memberships allow            |
+| `ReadOnly`   | do the same, except write                                |
+| `_default`   | do what `FullAccess` does; the name existing clients use |
+
+Any other name is refused with `MalformedPolicyDocument`, never mapped to a default. A Role only subtracts: its ceiling is sealed into the session token and checked locally before the account's own permissions are looked up (ADR-011), and a request it refuses gets the same `AccessDenied` as any other refusal.
+
 ### Secrets
 
 **GitHub environment secrets are the source of truth.** The deploy workflow
