@@ -52,6 +52,11 @@ const PERMISSIONS_CACHE_SECS: u32 = 60; // 1 minute
 /// cached too — an unknown key costs one lookup a minute, not one a request.
 const KEY_STANDING_CACHE_SECS: u32 = 60; // 1 minute
 
+/// Whether an account trusts a platform token's issuer and subject
+/// (`/accounts/{id}/trusts/exchanges`). The permissions TTL, for the same
+/// reason: a trust that is removed should stop minting quickly (ADR-014).
+const TRUST_CACHE_SECS: u32 = 60; // 1 minute
+
 // ── Public cache functions ─────────────────────────────────────────
 
 /// Fetch a single product's metadata, cached for `PRODUCT_CACHE_SECS`.
@@ -202,6 +207,57 @@ pub async fn get_or_fetch_key_standing(
         ApiCaller::Proxy,
     )
     .await
+}
+
+/// Whether `account` trusts `issuer`'s `subject` to act as it: `Ok` if so,
+/// `AccessDenied` if not, the way a role's own trust policy decides an
+/// assume-role call. Asked as the account itself. Only a yes is cached, for
+/// `TRUST_CACHE_SECS`: the route says no with a 403, and no 403 is cached, so
+/// a trust just added works on the next attempt.
+pub async fn get_or_fetch_trust(
+    api_base_url: &str,
+    account: &str,
+    issuer: &str,
+    subject: &str,
+    api_auth: &crate::ApiAuth,
+    request_id: &str,
+) -> Result<(), ProxyError> {
+    let api_url = format!(
+        "{}/api/v1/accounts/{}/trusts/exchanges",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+    );
+    // The Cache API keys on URLs: the account is in the path, and the issuer
+    // and subject vary with it.
+    let cache_key = format!(
+        "{api_url}?issuer={}&subject={}",
+        utf8_percent_encode(issuer, PATH_SEGMENT),
+        utf8_percent_encode(subject, PATH_SEGMENT),
+    );
+    let body = serde_json::json!({ "issuer": issuer, "subject": subject }).to_string();
+    let answer: TrustAnswer = cached_fetch(
+        &cache_key,
+        &api_url,
+        "POST",
+        Some(&body),
+        TRUST_CACHE_SECS,
+        api_auth,
+        request_id,
+        ApiCaller::Account(account),
+    )
+    .await?;
+    if answer.trusted {
+        Ok(())
+    } else {
+        Err(ProxyError::AccessDenied)
+    }
+}
+
+/// The trusts route's answer. Its status already says yes (200) or no (403);
+/// the body is read too, so that a 200 saying no mints nothing.
+#[derive(serde::Deserialize)]
+struct TrustAnswer {
+    trusted: bool,
 }
 
 // ── Internal helpers ──────────────────────────────────────────────
