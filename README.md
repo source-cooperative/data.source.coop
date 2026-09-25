@@ -110,8 +110,9 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | ---------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `SOURCE_API_URL`             | `https://source.coop`       | Source Cooperative API base URL                                                                                                    |
 | `LOG_LEVEL`                  | `WARN`                      | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                                                          |
-| `AUTH_ISSUER`                | `https://auth.source.coop`  | OIDC issuer trusted for `/.sts` token exchange                                                                                     |
+| `AUTH_ISSUER`                | `https://auth.source.coop`  | The person issuer trusted for `/.sts` token exchange; its tokens act as their own subject                                          |
 | `AUTH_AUDIENCE`              | —                           | Comma-separated OAuth client ID(s) that `/.sts` subject tokens must be issued to (`aud` claim); a token is accepted if it matches any. Unset = `/.sts` token exchange is disabled (returns 501) |
+| `PLATFORM_ISSUERS`           | —                           | JSON object from each platform issuer URL to the audiences its tokens must carry, such as `{"https://token.actions.githubusercontent.com": ["https://data.source.coop"]}`. An issuer with no audience is refused. Unset = no platform issuer is trusted |
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
@@ -120,7 +121,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 | Binding              | Kind        | Description                                                                                                                                  |
 | -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KEY_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on API-key exchanges at `/.sts` (ADR-013). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
+| `STS_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on `/.sts` exchanges that cost a Source API call: API keys (ADR-013) and platform tokens (ADR-014). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
 
 ### API keys
 
@@ -128,7 +129,7 @@ A service account's API key (ADR-013) is an opaque `sck_` secret that source.coo
 
 ### Roles
 
-Every exchange at `/.sts`, of an ID token or an API key, names a Role in `RoleArn`, either bare or as the resource of an ARN of any partition and account (`arn:aws:iam::000000000000:role/ReadOnly`), since AWS SDKs insist on an ARN. The Roles are hardcoded (ADR-014):
+Every exchange at `/.sts`, of an ID token or an API key, names a Role in `RoleArn`, either bare or as the resource of an ARN of any partition and account (`arn:aws:iam::000000000000:role/ReadOnly`), since AWS SDKs insist on an ARN. The account matters only to a platform token (below). The Roles are hardcoded (ADR-014):
 
 | Role         | Credentials may                                          |
 | ------------ | -------------------------------------------------------- |
@@ -137,6 +138,12 @@ Every exchange at `/.sts`, of an ID token or an API key, names a Role in `RoleAr
 | `_default`   | do what `FullAccess` does; the name existing clients use |
 
 Any other name is refused with `MalformedPolicyDocument`, never mapped to a default. A Role only subtracts: its ceiling is sealed into the session token and checked locally before the account's own permissions are looked up (ADR-011), and a request it refuses gets the same `AccessDenied` as any other refusal.
+
+### Platform identity providers
+
+A token from a platform issuer in `PLATFORM_ISSUERS`, such as GitHub Actions, says which workload is calling but not which account it may act as. At `/.sts` it acts as the service account in `RoleArn`, `arn:aws:iam::<owner>--<name>:role/FullAccess`, and only if that account trusts the token's issuer and subject (ADR-014); an account that is not a service account is refused before anything else. The proxy verifies the token against the issuer's JWKS, with that issuer's own audiences and a required `exp`, then, within `STS_EXCHANGE_LIMIT`, asks `POST {SOURCE_API_URL}/api/v1/accounts/{account}/trusts/exchanges` with `{"issuer", "subject"}`, as the account. Per account, issuer and subject, a yes is cached for 60 seconds and a no for 10, and the credentials' principal is the account, never the token's subject. Every refusal reads `AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity (request id …)`. A token from `AUTH_ISSUER` still acts as its own subject and ignores the account in `RoleArn`.
+
+`aws-actions/configure-aws-credentials` fails after the exchange succeeds: it checks the credentials it exports with `GetCallerIdentity`, which the proxy cannot answer until developmentseed/multistore#126 lands. Until then a workflow saves its token to a file and lets an AWS SDK exchange it, with `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ENDPOINT_URL_STS=<proxy>/.sts`, `AWS_ENDPOINT_URL_S3=<proxy>` and `AWS_REGION`.
 
 ### Secrets
 

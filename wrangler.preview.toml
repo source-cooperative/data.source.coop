@@ -21,6 +21,10 @@ OIDC_PROVIDER_KID = "data-proxy-1"
 # AUTH_AUDIENCE must be set or /.sts fail-closes with 501.
 AUTH_ISSUER = "https://auth.staging.source.coop"
 AUTH_AUDIENCE = "1123dfa8-469f-44fe-b9f4-9b76f06fd325,a79c9537-be78-454a-9ea1-b96a1be811cc"  # staging frontend + source-coop-cli client_ids
+# Staging's platform issuers too: a GitHub Actions workflow calling a preview
+# mints its token for the staging proxy's origin, since a preview's own
+# hostname differs per PR.
+PLATFORM_ISSUERS = '{"https://token.actions.githubusercontent.com": ["https://data.staging.source.coop"]}'
 
 [build]
 command = "cargo install -q worker-build@0.7.5 && worker-build --release"
@@ -48,9 +52,10 @@ dataset = "source_data_proxy_staging"
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
 
-# API-key exchange rate limit, per client IP; see wrangler.toml.
+# Limit on /.sts exchanges that cost a Source API call, per client IP; see
+# wrangler.toml.
 [[unsafe.bindings]]
-name = "KEY_EXCHANGE_LIMIT"
+name = "STS_EXCHANGE_LIMIT"
 type = "ratelimit"
 namespace_id = "1003"
 simple = { limit = 100, period = 60 }
