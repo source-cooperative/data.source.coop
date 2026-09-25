@@ -211,9 +211,9 @@ pub async fn get_or_fetch_key_standing(
 
 /// Whether `account` trusts `issuer`'s `subject` to act as it: `Ok` if so,
 /// `AccessDenied` if not, the way a role's own trust policy decides an
-/// assume-role call. Asked as the account itself. Only a yes is cached, for
-/// `TRUST_CACHE_SECS`: the route says no with a 403, and no 403 is cached, so
-/// a trust just added works on the next attempt.
+/// assume-role call. Asked as the account itself. The route says yes with a
+/// 200, cached for `TRUST_CACHE_SECS` like every 200, and no with a 403, which
+/// is never cached, so a trust just added works on the next attempt.
 pub async fn get_or_fetch_trust(
     api_base_url: &str,
     account: &str,
@@ -254,7 +254,8 @@ pub async fn get_or_fetch_trust(
 }
 
 /// The trusts route's answer. Its status already says yes (200) or no (403);
-/// the body is read too, so that a 200 saying no mints nothing.
+/// the body is read too, so that a 200 saying no, cached like any 200, still
+/// mints nothing.
 #[derive(serde::Deserialize)]
 struct TrustAnswer {
     trusted: bool,
