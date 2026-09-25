@@ -8,6 +8,9 @@
 > [!NOTE]
 > The `api-keys` endpoints that exist in `source.coop` today are the **legacy** admin-managed keys used by the pre-Workers proxy. They are unrelated to this design, and the current proxy has no code path that accepts them (ADR-001). This ADR proposes a replacement, not a formalisation of what is there.
 
+> [!NOTE]
+> **Amended by ADR-014 (Service Accounts).** The `sub` of an API-key JWT is a **service account** id; a key belongs to one service account. There is no per-key Role binding in the first release — the account's memberships are the grant and the hardcoded Roles only subtract — so the dependency on ADR-010 is replaced by one on ADR-014. Expiry is optional and may be changed after issuance; several keys may be active at once. The examples below use ADR-010's `sc::` `RoleArn` grammar; clients send the AWS form ADR-014 describes, `arn:aws:iam::<account>:role/<Role>`.
+
 ---
 
 ## Context
