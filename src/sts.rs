@@ -110,6 +110,27 @@ pub(crate) fn account(role_arn: &str) -> Option<&str> {
     }
 }
 
+/// Whether `id` is a service account's id, `{owner}--{name}`: source.coop's
+/// `SERVICE_ACCOUNT_ID_REGEX` and its 82-character limit. Each half is at least
+/// two of `a-z`, `0-9` and inner single hyphens, so the one `--` is the
+/// separator, and no person's or organisation's handle, nor an Ory identity
+/// id, can match.
+pub(crate) fn is_service_account_id(id: &str) -> bool {
+    let half = |part: &str| {
+        part.len() >= 2
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && !part.contains("--")
+    };
+    id.len() <= 82
+        && id
+            .split_once("--")
+            .is_some_and(|(owner, name)| half(owner) && half(name))
+}
+
 impl CredentialRegistry for StsCredentialRegistry {
     async fn get_credential(
         &self,

@@ -247,7 +247,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         if let Some(result) = api_key_exchange(config, &parts, &env, &api_auth, &request_id).await {
             return Ok(finish(result, &request_id));
         }
-        if let Some(result) = platform_exchange(config, &parts, &api_auth, &request_id).await {
+        if let Some(result) = platform_exchange(config, &parts, &env, &api_auth, &request_id).await
+        {
             return Ok(finish(result, &request_id));
         }
     }
@@ -488,8 +489,9 @@ fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
     response
 }
 
-/// The rate-limiter binding for API-key exchanges, keyed by client IP.
-const KEY_EXCHANGE_LIMIT: &str = "KEY_EXCHANGE_LIMIT";
+/// The rate-limiter binding for `/.sts` exchanges that cost a Source API call,
+/// of API keys and platform tokens alike, keyed by client IP.
+const STS_EXCHANGE_LIMIT: &str = "STS_EXCHANGE_LIMIT";
 
 /// The API-key exchange, if this request is one: `None` when it is not an
 /// `AssumeRoleWithWebIdentity` carrying an `sck_` key, so the STS route takes
@@ -527,13 +529,7 @@ async fn api_key_exchange(
     let client_ip = header_str(&parts.headers, "cf-connecting-ip");
     if !within_rate_limit(env, client_ip).await {
         tracing::warn!(%request_id, reason = "rate_limited", "API key exchange refused");
-        return Some((
-            429,
-            sts_error_xml(
-                "Throttling",
-                "too many API key exchanges from this address; retry later",
-            ),
-        ));
+        return Some(throttled());
     }
 
     Some(
@@ -637,7 +633,7 @@ async fn within_rate_limit(env: &Env, client_ip: &str) -> bool {
     } else {
         client_ip
     };
-    match env.rate_limiter(KEY_EXCHANGE_LIMIT) {
+    match env.rate_limiter(STS_EXCHANGE_LIMIT) {
         Ok(limiter) => match limiter.limit(key.to_string()).await {
             Ok(outcome) => outcome.success,
             Err(e) => {
@@ -647,11 +643,22 @@ async fn within_rate_limit(env: &Env, client_ip: &str) -> bool {
         },
         Err(_) => {
             tracing::error!(
-                "{KEY_EXCHANGE_LIMIT} binding is not configured; API-key exchanges are unlimited"
+                "{STS_EXCHANGE_LIMIT} binding is not configured; exchanges are unlimited"
             );
             true
         }
     }
+}
+
+/// The answer to an exchange over `STS_EXCHANGE_LIMIT`, which SDKs back off on.
+fn throttled() -> (u16, String) {
+    (
+        429,
+        sts_error_xml(
+            "Throttling",
+            "too many exchanges from this address; retry later",
+        ),
+    )
 }
 
 /// An STS-shaped error body with a code or message `build_sts_error_response`
@@ -666,12 +673,11 @@ fn sts_error_xml(code: &str, message: &str) -> String {
 
 /// The exchange of a platform issuer's token, if this request carries one:
 /// `None` for any other token, which the STS route takes. Parameters come from
-/// the query string or the form body, never both, as at the STS route. Every
-/// refusal of the account's trust reads the same, whether the account does not
-/// exist or does not trust the token.
+/// the query string or the form body, never both, as at the STS route.
 async fn platform_exchange(
     config: &AppConfig,
     parts: &RequestParts,
+    env: &Env,
     api_auth: &ApiAuth,
     request_id: &str,
 ) -> Option<(u16, String)> {
@@ -681,58 +687,70 @@ async fn platform_exchange(
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
     let audiences = config.platform_issuers.get(issuer)?;
+    let client_ip = header_str(&parts.headers, "cf-connecting-ip");
     Some(
         match exchange_platform_token(
-            config, &sts, &header, issuer, audiences, api_auth, request_id,
+            config, env, client_ip, &sts, &header, issuer, audiences, api_auth, request_id,
         )
         .await
         {
             Ok(creds) => build_sts_response(&creds),
-            // `exchange_platform_token` has logged who asked to act as whom.
-            Err(ProxyError::AccessDenied) => (
-                403,
-                sts_error_xml(
-                    "AccessDenied",
-                    &with_request_id(
-                        "Not authorized to perform sts:AssumeRoleWithWebIdentity",
-                        request_id,
-                    ),
-                ),
-            ),
-            Err(e) => {
-                tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
-                build_sts_error_response(&e)
-            }
+            Err(response) => response,
         },
     )
 }
 
-/// Verify a platform issuer's token, then mint for the account `RoleArn`
-/// names if that account trusts the token's issuer and subject (ADR-014). The
-/// credentials act as the account, never as the token's subject. Everything
-/// local comes first, so a token that fails it costs the Source API nothing.
+/// Verify a platform issuer's token, then mint for the service account
+/// `RoleArn` names if that account trusts the token's issuer and subject
+/// (ADR-014). The credentials act as the account, never as the token's
+/// subject. Everything local comes first, so a token that fails it costs the
+/// Source API nothing; what does cost a call is rate-limited per address.
+/// Every refusal of the account's trust reads the same, whatever the reason.
+#[allow(clippy::too_many_arguments)]
 async fn exchange_platform_token(
     config: &AppConfig,
+    env: &Env,
+    client_ip: &str,
     sts: &multistore_sts::request::StsRequest,
     header: &serde_json::Value,
     issuer: &str,
     audiences: &[String],
     api_auth: &ApiAuth,
     request_id: &str,
-) -> Result<TemporaryCredentials, ProxyError> {
+) -> Result<TemporaryCredentials, (u16, String)> {
+    let failed = |e: ProxyError| {
+        tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
+        build_sts_error_response(&e)
+    };
+    let not_authorized = || {
+        let message = "Not authorized to perform sts:AssumeRoleWithWebIdentity";
+        (
+            403,
+            sts_error_xml("AccessDenied", &with_request_id(message, request_id)),
+        )
+    };
+
     let role = sts::role(
         &sts.role_arn,
         issuer.to_string(),
         audiences.to_vec(),
         config.sts_max_session_duration_secs,
     )
-    .ok_or_else(|| ProxyError::RoleNotFound(sts.role_arn.clone()))?;
+    .ok_or_else(|| failed(ProxyError::RoleNotFound(sts.role_arn.clone())))?;
     // No angle brackets in the message: the STS error body carries it unescaped.
     let account = sts::account(&sts.role_arn).ok_or_else(|| {
-        ProxyError::InvalidRequest(
+        failed(ProxyError::InvalidRequest(
             "RoleArn must name the account to act as: arn:aws:iam::ACCOUNT:role/ROLE".into(),
-        )
+        ))
     })?;
+    // Only a service account trusts subjects (ADR-014), and the credentials'
+    // principal is this segment as given, which source.coop tries as an Ory
+    // identity first. So anything else is refused before the token is
+    // verified or anything is signed as it.
+    if !sts::is_service_account_id(account) {
+        tracing::warn!(%request_id, %issuer, %account, "RoleArn names no service account");
+        return Err(not_authorized());
+    }
     let subject = platform::verify(
         &sts.web_identity_token,
         header,
@@ -740,8 +758,15 @@ async fn exchange_platform_token(
         &role,
         &jwks_cache(),
     )
-    .await?;
-    source_api::cache::get_or_fetch_trust(
+    .await
+    .map_err(failed)?;
+    // Anyone can mint a token for this audience in their own workflow, and
+    // every exchange from here on may cost the Source API a call.
+    if !within_rate_limit(env, client_ip).await {
+        tracing::warn!(%request_id, %issuer, reason = "rate_limited", "platform token exchange refused");
+        return Err(throttled());
+    }
+    match source_api::cache::get_or_fetch_trust(
         &config.api_base_url,
         account,
         issuer,
@@ -750,22 +775,28 @@ async fn exchange_platform_token(
         request_id,
     )
     .await
-    .map_err(|e| match e {
-        ProxyError::AccessDenied => {
+    {
+        Ok(()) => {}
+        Err(ProxyError::AccessDenied) => {
             tracing::warn!(%request_id, %issuer, %subject, %account, "account does not trust the token");
-            e
+            return Err(not_authorized());
         }
         // The route answers for any account; a 404 means the API does not
         // serve it, which is a deployment mismatch, not a refusal.
-        ProxyError::BucketNotFound(_) => ProxyError::Internal("trusts route not found".into()),
-        e => e,
-    })?;
+        Err(ProxyError::BucketNotFound(_)) => {
+            return Err(failed(ProxyError::Internal(
+                "trusts route not found".into(),
+            )))
+        }
+        Err(e) => return Err(failed(e)),
+    }
     let creds = keys::credentials_for(
         &role,
         account,
         sts.duration_seconds,
         &config.session_token_key,
-    )?;
+    )
+    .map_err(failed)?;
     tracing::info!(%request_id, %issuer, %subject, %account, role = %role.role_id, "platform token exchanged");
     Ok(creds)
 }
