@@ -75,6 +75,9 @@ The API trusts the proxy to assert any `sub`. That trust rests on the JWT signat
 > [!NOTE]
 > **The subject is an individual identity, not an account.** The proxy signs with the caller's Ory identity id, and the API resolves it through the identity index. Organisation accounts are never the subject of a proxy-issued token. The RFC anticipated `sub` = `account_id`, which "may be a user or an organisation", to support a CI workflow assuming an org-owned Role. That path arrives with ADR-010; until then there is no Role for an organisation to own.
 
+> [!NOTE]
+> **Amended by ADR-014 (Service Accounts).** The workload path the note above expects from ADR-010 arrives through ADR-014 instead: a subject may also be a service account's id, which the API resolves as that account. Organisations still never authenticate. For a platform issuer's token, the proxy signs as the account `RoleArn` names to ask whether that account trusts the token, which is the one lookup made as an account before the caller is established.
+
 ### Batch Delete
 
 Per-key authorization for batch delete confirms only that the operation is a write, relying on the product-level authorization already performed during resolution. This is sufficient because Source Cooperative authorizes writes at the product level, and defensible as defence in depth — it is only reached for write batch operations and never blanket-allows a read. It would be insufficient if a future multistore invoked it without a prior successful resolution for the same bucket.

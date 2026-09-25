@@ -4,7 +4,7 @@
 **Date:** 2026-09-21
 **RFC:** RFC-001 §7
 **Depends on:** ADR-004, ADR-005, ADR-009
-**Amends:** ADR-010 (scope), ADR-013 (subject and Role binding)
+**Amends:** ADR-004 (the `RoleArn` account segment), ADR-005 (who a subject may be), ADR-010 (scope), ADR-013 (subject and Role binding)
 
 ---
 
