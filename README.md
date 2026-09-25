@@ -121,7 +121,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 | Binding              | Kind        | Description                                                                                                                                  |
 | -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KEY_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on API-key exchanges at `/.sts` (ADR-013). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
+| `STS_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on `/.sts` exchanges that cost a Source API call: API keys (ADR-013) and platform tokens (ADR-014). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
 
 ### API keys
 
@@ -141,7 +141,7 @@ Any other name is refused with `MalformedPolicyDocument`, never mapped to a defa
 
 ### Platform identity providers
 
-A token from a platform issuer in `PLATFORM_ISSUERS`, such as GitHub Actions, says which workload is calling but not which account it may act as. At `/.sts` it acts as the account in `RoleArn`, `arn:aws:iam::<account>:role/FullAccess`, and only if that account trusts the token's issuer and subject (ADR-014). The proxy verifies the token against the issuer's JWKS, with that issuer's own audiences and a required `exp`, then asks `POST {SOURCE_API_URL}/api/v1/accounts/{account}/trusts/exchanges` with `{"issuer", "subject"}`, as the account. A yes is cached for 60 seconds per account, issuer and subject, and the credentials' principal is the account, never the token's subject. Any other answer reads `AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity (request id …)`. A token from `AUTH_ISSUER` still acts as its own subject and ignores the account in `RoleArn`.
+A token from a platform issuer in `PLATFORM_ISSUERS`, such as GitHub Actions, says which workload is calling but not which account it may act as. At `/.sts` it acts as the service account in `RoleArn`, `arn:aws:iam::<owner>--<name>:role/FullAccess`, and only if that account trusts the token's issuer and subject (ADR-014); an account that is not a service account is refused before anything else. The proxy verifies the token against the issuer's JWKS, with that issuer's own audiences and a required `exp`, then, within `STS_EXCHANGE_LIMIT`, asks `POST {SOURCE_API_URL}/api/v1/accounts/{account}/trusts/exchanges` with `{"issuer", "subject"}`, as the account. Per account, issuer and subject, a yes is cached for 60 seconds and a no for 10, and the credentials' principal is the account, never the token's subject. Every refusal reads `AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity (request id …)`. A token from `AUTH_ISSUER` still acts as its own subject and ignores the account in `RoleArn`.
 
 `aws-actions/configure-aws-credentials` fails after the exchange succeeds: it checks the credentials it exports with `GetCallerIdentity`, which the proxy cannot answer until developmentseed/multistore#126 lands. Until then a workflow saves its token to a file and lets an AWS SDK exchange it, with `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ENDPOINT_URL_STS=<proxy>/.sts`, `AWS_ENDPOINT_URL_S3=<proxy>` and `AWS_REGION`.
 
