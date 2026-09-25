@@ -63,6 +63,22 @@ def test_a_platform_token_must_name_the_account_it_acts_as():
     assert "RoleArn must name the account" in sts_fields(resp)["Message"]
 
 
+@pytest.mark.parametrize(
+    "account",
+    ["alice", "2c5b4f0e-8a3b-4e2d-9a1f-3c4d5e6f7a8b", "000000000000"],
+    ids=["person", "ory-identity-id", "placeholder"],
+)
+def test_only_a_service_account_can_be_named(account):
+    """Refused as an account that does not trust the token is, and before the
+    token is verified: this one is forged, and still no lookup happens."""
+    resp = exchange(forged(), as_account(account))
+    assert resp.status_code == 403
+    assert sts_fields(resp)["Message"] == (
+        f"Not authorized to perform sts:AssumeRoleWithWebIdentity (request id {RAY})"
+    )
+    assert trust_lookups(account) == 0
+
+
 def test_a_forged_token_is_refused_before_any_trust_lookup():
     before = trust_lookups(TRUST_ACCOUNT)
     resp = exchange(forged(), as_account(TRUST_ACCOUNT))
@@ -101,13 +117,18 @@ def test_a_trusted_workflow_gets_credentials_that_act_as_the_account():
 
 @needs_token
 def test_an_account_that_does_not_trust_the_workflow_refuses_it():
-    resp = exchange(ID_TOKEN, as_account("ci-tests--someone-else"))
+    untrusting = as_account("ci-tests--someone-else")
+    resp = exchange(ID_TOKEN, untrusting)
     assert resp.status_code == 403
     fields = sts_fields(resp)
     assert fields["Code"] == "AccessDenied"
     assert fields["Message"] == (
         f"Not authorized to perform sts:AssumeRoleWithWebIdentity (request id {RAY})"
     )
+    # The refusal is cached briefly, so replaying the token costs no lookup.
+    before = trust_lookups("ci-tests--someone-else")
+    assert exchange(ID_TOKEN, untrusting).status_code == 403
+    assert trust_lookups("ci-tests--someone-else") == before
 
 
 @needs_token

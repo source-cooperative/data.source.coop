@@ -85,3 +85,44 @@ fn the_account_is_the_arns_account_segment() {
         assert_eq!(sts::account(role_arn), None, "{role_arn}");
     }
 }
+
+#[test]
+fn a_service_account_id_is_owner_dash_dash_name() {
+    let longest = format!("{}--{}", "a".repeat(40), "b".repeat(40));
+    for id in [
+        "acme--nightly-sync",
+        "ab--cd",
+        "my-org-1--a1-b2",
+        longest.as_str(),
+    ] {
+        assert!(sts::is_service_account_id(id), "{id}");
+    }
+}
+
+#[test]
+fn nothing_else_is_a_service_account_id() {
+    let too_long = format!("{}--{}", "a".repeat(40), "b".repeat(41));
+    for id in [
+        "",
+        // A person's or organisation's handle.
+        "alice",
+        "my-org",
+        // An Ory identity id, which fits the handle grammar.
+        "2c5b4f0e-8a3b-4e2d-9a1f-3c4d5e6f7a8b",
+        "000000000000",
+        "Acme--sync",
+        "acme--sync_1",
+        "acme--",
+        "--sync",
+        "a--sync",
+        "acme--s",
+        "acme---sync",
+        "acme--sync--x",
+        "-acme--sync",
+        "acme--sync-",
+        "acme---",
+        too_long.as_str(),
+    ] {
+        assert!(!sts::is_service_account_id(id), "{id}");
+    }
+}
