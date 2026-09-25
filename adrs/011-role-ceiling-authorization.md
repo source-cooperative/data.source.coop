@@ -1,6 +1,6 @@
 # ADR-011: Role-Ceiling Authorization
 
-**Status:** Proposed — not implemented
+**Status:** Proposed — implemented in part (#236: step 2 and the denial semantics, for the hardcoded `ReadOnly` Role's action ceiling)
 **Date:** 2026-08-09
 **RFC:** RFC-001 §8
 **Depends on:** ADR-005, ADR-010
