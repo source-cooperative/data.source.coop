@@ -4,15 +4,26 @@ A key is opaque: the proxy hashes it and asks the stub for its standing, as
 itself, then mints credentials for the account the stub names. These tests
 pin the parts that only run in the worker — the form-body-only rule, the
 uniform refusal, the 60s standing cache, and fail-closed on an API error —
-by counting how often each key's standing reaches the stub.
+by counting how often each key's standing reaches the stub, and the ceiling of
+the Role a key is exchanged for.
 """
 
 import re
+import uuid
 import xml.etree.ElementTree as ET
 
+import pytest
 import requests
 
-from stub_api import ERR_500_KEY, KEY_ACCOUNT, LIVE_KEY, REVOKED_KEY, UNKNOWN_KEY, _hash
+from stub_api import (
+    ERR_500_KEY,
+    KEY_ACCOUNT,
+    LIVE_KEY,
+    REVOKED_KEY,
+    UNKNOWN_KEY,
+    WRITE_ACCOUNT,
+    _hash,
+)
 
 PROXY_URL = "http://localhost:8787"
 STUB_URL = "http://localhost:9000"
@@ -122,6 +133,41 @@ def test_a_wrong_role_is_reported_as_such():
     resp = exchange(LIVE_KEY, role="arn:aws:iam::000000000000:role/nope")
     assert resp.status_code == 400
     assert sts_fields(resp)["Code"] == "MalformedPolicyDocument"
+
+
+def test_read_only_refuses_a_write_before_anything_is_looked_up():
+    """ReadOnly's ceiling is checked locally, ahead of every lookup, so it
+    refuses a write with AccessDenied even for a product the API has never
+    heard of. FullAccess, and ReadOnly reading, get past it to the product
+    lookup, which finds no such product. (A write that reached the upstream
+    would fail closed in CI anyway, so the lookup is where to tell them apart.)"""
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+
+    def client(role):
+        fields = sts_fields(exchange(LIVE_KEY, role=f"arn:aws:iam::000000000000:role/{role}"))
+        return boto3.client(
+            "s3",
+            endpoint_url=PROXY_URL,
+            aws_access_key_id=fields["AccessKeyId"],
+            aws_secret_access_key=fields["SecretAccessKey"],
+            aws_session_token=fields["SessionToken"],
+            region_name="us-east-1",
+            config=Config(s3={"addressing_style": "path"}),
+        )
+
+    def error_code(call):
+        with pytest.raises(ClientError) as exc:
+            call()
+        return exc.value.response["Error"]["Code"]
+
+    key = f"no-such-product-{uuid.uuid4().hex}/x.txt"
+    read_only, full_access = client("ReadOnly"), client("FullAccess")
+    put = {"Bucket": WRITE_ACCOUNT, "Key": key, "Body": b"x"}
+    assert error_code(lambda: read_only.put_object(**put)) == "AccessDenied"
+    assert error_code(lambda: full_access.put_object(**put)) == "NoSuchBucket"
+    assert error_code(lambda: read_only.get_object(Bucket=WRITE_ACCOUNT, Key=key)) == "NoSuchBucket"
 
 
 def test_an_api_failure_fails_closed_and_is_not_cached():

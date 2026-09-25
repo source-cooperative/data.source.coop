@@ -2,19 +2,21 @@
 //! (the lib itself is `cdylib` with `test = false`). Mirrors the pattern in
 //! `tests/backend_auth.rs`.
 //!
-//! `authz` references `crate::backend_auth`, so that module is pulled in here too
-//! (under the test crate root) so the `crate::` path resolves the same way it
-//! does in the lib build.
+//! `authz` references `crate::backend_auth` and `crate::sts`, so those modules
+//! are pulled in here too (under the test crate root) so the `crate::` paths
+//! resolve the same way they do in the lib build.
 
 #[path = "../src/authz.rs"]
 mod authz;
 #[path = "../src/backend_auth.rs"]
 mod backend_auth;
+#[path = "../src/sts.rs"]
+mod sts;
 
-use authz::{decide_backend_auth, is_write_action};
+use authz::{ceiling_permits, decide_backend_auth, is_write_action};
 use backend_auth::BackendAuth;
 use multistore::error::ProxyError;
-use multistore::types::Action;
+use multistore::types::{AccessScope, Action};
 use std::collections::HashMap;
 
 #[test]
@@ -35,6 +37,72 @@ fn mutations_are_writes() {
         Action::AbortMultipartUpload,
     ] {
         assert!(is_write_action(action), "{action:?} should be a write");
+    }
+}
+
+// ── ceiling_permits: the Role ceiling (ADR-011) ─────────────────────────────
+
+const EVERY_ACTION: [Action; 10] = [
+    Action::GetObject,
+    Action::GetObjectVersion,
+    Action::HeadObject,
+    Action::PutObject,
+    Action::ListBucket,
+    Action::CreateMultipartUpload,
+    Action::UploadPart,
+    Action::CompleteMultipartUpload,
+    Action::AbortMultipartUpload,
+    Action::DeleteObject,
+];
+
+/// The scopes a Role seals into every session it mints.
+fn sealed(role: &str) -> Vec<AccessScope> {
+    sts::role(role, "https://auth.example.test".into(), vec![], 3600)
+        .unwrap()
+        .allowed_scopes
+}
+
+/// The ceiling and the write gate must agree on what a read is, or ReadOnly
+/// either refuses a read or lets a write through.
+#[test]
+fn read_only_allows_exactly_the_reads() {
+    let read_only = sealed("ReadOnly");
+    for action in EVERY_ACTION {
+        assert_eq!(
+            ceiling_permits(&read_only, action),
+            !is_write_action(action),
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn full_access_and_its_alias_have_no_ceiling() {
+    for role in ["FullAccess", "_default"] {
+        let scopes = sealed(role);
+        for action in EVERY_ACTION {
+            assert!(ceiling_permits(&scopes, action), "{role} {action:?}");
+        }
+    }
+}
+
+/// Nothing the proxy mints is narrower than every product, so a scope that is
+/// must not be read as if it were.
+#[test]
+fn a_scope_narrower_than_every_product_permits_nothing() {
+    for scope in [
+        AccessScope {
+            bucket: "acme:data".into(),
+            prefixes: vec![],
+            actions: vec![Action::GetObject],
+        },
+        AccessScope {
+            bucket: "*".into(),
+            prefixes: vec!["public/".into()],
+            actions: vec![Action::GetObject],
+        },
+    ] {
+        assert!(!ceiling_permits(&[scope], Action::GetObject));
     }
 }
 

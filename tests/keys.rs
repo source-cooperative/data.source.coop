@@ -74,14 +74,21 @@ fn token_key() -> TokenKey {
     TokenKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()
 }
 
-fn role(cap: u64) -> multistore::types::RoleConfig {
-    sts::default_role("https://auth.example.test".into(), vec!["aud".into()], cap)
+fn role(name: &str, cap: u64) -> multistore::types::RoleConfig {
+    sts::role(
+        name,
+        "https://auth.example.test".into(),
+        vec!["aud".into()],
+        cap,
+    )
+    .unwrap()
 }
 
 #[test]
 fn credentials_are_sealed_for_the_account_within_floor_and_cap() {
     let key = token_key();
-    let creds = credentials_for(&role(43_200), "acme--nightly-sync", None, &key).unwrap();
+    let creds =
+        credentials_for(&role("_default", 43_200), "acme--nightly-sync", None, &key).unwrap();
     assert_eq!(creds.source_identity, "acme--nightly-sync");
     assert_eq!(creds.assumed_role_id, "_default");
     assert!(creds.access_key_id.starts_with("STSPRXY"));
@@ -90,12 +97,25 @@ fn credentials_are_sealed_for_the_account_within_floor_and_cap() {
     assert_eq!(unsealed.source_identity, "acme--nightly-sync");
 
     let now = chrono_now();
-    let default = credentials_for(&role(43_200), "a", None, &key).unwrap();
+    let default = credentials_for(&role("_default", 43_200), "a", None, &key).unwrap();
     assert!((default.expiration.timestamp() - now - 3600).abs() <= 2);
-    let floored = credentials_for(&role(43_200), "a", Some(1), &key).unwrap();
+    let floored = credentials_for(&role("_default", 43_200), "a", Some(1), &key).unwrap();
     assert!((floored.expiration.timestamp() - now - 900).abs() <= 2);
-    let capped = credentials_for(&role(3_600), "a", Some(86_400), &key).unwrap();
+    let capped = credentials_for(&role("_default", 3_600), "a", Some(86_400), &key).unwrap();
     assert!((capped.expiration.timestamp() - now - 3600).abs() <= 2);
+}
+
+#[test]
+fn credentials_carry_the_named_roles_ceiling() {
+    let key = token_key();
+    let read_only = role("ReadOnly", 3_600);
+    let creds = credentials_for(&read_only, "acme--nightly-sync", None, &key).unwrap();
+    let unsealed = key.unseal(&creds.session_token).unwrap().unwrap();
+    assert_eq!(unsealed.assumed_role_id, "ReadOnly");
+    assert_eq!(
+        serde_json::to_value(&unsealed.allowed_scopes).unwrap(),
+        serde_json::to_value(&read_only.allowed_scopes).unwrap()
+    );
 }
 
 fn chrono_now() -> i64 {
