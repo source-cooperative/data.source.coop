@@ -47,3 +47,10 @@ dataset = "source_data_proxy_staging"
 [[services]]
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
+
+# API-key exchange rate limit, per client IP; see wrangler.toml.
+[[unsafe.bindings]]
+name = "KEY_EXCHANGE_LIMIT"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 100, period = 60 }

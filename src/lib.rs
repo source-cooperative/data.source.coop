@@ -12,19 +12,23 @@ mod authz;
 mod backend_auth;
 mod config;
 mod handlers;
+mod keys;
 mod location;
 mod object_path;
 mod pagination;
 mod source_api;
 mod sts;
 
+use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
+use multistore::error::ProxyError;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::{ProxyResult, RequestInfo};
 use multistore::router::Router;
+use multistore::types::TemporaryCredentials;
 use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
     WorkerSubscriber,
@@ -35,6 +39,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
+use multistore_sts::{build_sts_error_response, build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
@@ -230,6 +235,16 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
     );
+
+    // ── Short-circuit: API-key exchange ─────────────────────────────
+    // An `sck_` key at `/.sts` is not a token: nothing verifies it here —
+    // source.coop answers for it, by hash (ADR-013). Handled ahead of the STS
+    // route, which would refuse it as a malformed JWT.
+    if parts.path == "/.sts" {
+        if let Some(result) = api_key_exchange(config, &parts, &env, &api_auth, &request_id).await {
+            return Ok(finish(result, &request_id));
+        }
+    }
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
@@ -450,6 +465,189 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
+}
+
+// ── API keys ────────────────────────────────────────────────────────
+
+/// A response answered before the gateway, with the CORS headers and the
+/// request id every gateway response carries — as `x-request-id`, and as
+/// `x-amzn-requestid`, the header AWS SDKs read it from.
+fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
+    let response =
+        add_cors(GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys());
+    if !request_id.is_empty() {
+        let _ = response.headers().set("x-request-id", request_id);
+        let _ = response.headers().set("x-amzn-requestid", request_id);
+    }
+    response
+}
+
+/// The rate-limiter binding for API-key exchanges, keyed by client IP.
+const KEY_EXCHANGE_LIMIT: &str = "KEY_EXCHANGE_LIMIT";
+
+/// The API-key exchange, if this request is one: `None` when it is not an
+/// `AssumeRoleWithWebIdentity` carrying an `sck_` key, so the STS route takes
+/// it. A key is accepted from the form body only — Cloudflare logs the URL —
+/// and the refusal for one in the query string says so, because that is the
+/// one mistake a user can fix.
+async fn api_key_exchange(
+    config: &AppConfig,
+    parts: &RequestParts,
+    env: &Env,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Option<(u16, String)> {
+    if let Some(parsed) = try_parse_sts_request(parts.query.as_deref()) {
+        let is_key = parsed
+            .as_ref()
+            .is_ok_and(|sts| keys::looks_like_api_key(&sts.web_identity_token));
+        if !is_key {
+            return None; // a token in the query string is the STS route's
+        }
+        tracing::warn!(%request_id, reason = "query_string", "API key exchange refused");
+        return Some(key_refusal(
+            "API key must be sent in the request body, not the URL",
+            request_id,
+        ));
+    }
+    let sts = try_parse_sts_request(parts.form_body.as_deref())?.ok()?;
+    if !keys::looks_like_api_key(&sts.web_identity_token) {
+        return None;
+    }
+
+    // Every attempt costs a lookup for a distinct key, so the flood to bound is
+    // distinct junk keys from one place. Legitimate exchanges are rare — once
+    // per session — so even a cluster behind one NAT stays well under the limit.
+    let client_ip = header_str(&parts.headers, "cf-connecting-ip");
+    if !within_rate_limit(env, client_ip).await {
+        tracing::warn!(%request_id, reason = "rate_limited", "API key exchange refused");
+        return Some((
+            429,
+            sts_error_xml(
+                "Throttling",
+                "too many API key exchanges from this address; retry later",
+            ),
+        ));
+    }
+
+    Some(
+        match exchange_api_key(config, &sts, api_auth, request_id).await {
+            Ok(creds) => build_sts_response(&creds),
+            // One answer for every refusal of the key itself — unknown, revoked,
+            // expired, disabled, malformed. `exchange_api_key` has logged why.
+            Err(ProxyError::InvalidOidcToken(_)) => {
+                key_refusal("API key was not accepted", request_id)
+            }
+            // A bad role is about the request, not the key; anything else is the
+            // API being unreachable, which fails closed as a 500 the SDK retries.
+            Err(e) => {
+                tracing::warn!(%request_id, error = %e, "API key exchange failed");
+                build_sts_error_response(&e)
+            }
+        },
+    )
+}
+
+/// `InvalidIdentityToken` with the request id in the message: SDKs show a
+/// user the message and nothing else, and the id is what finds the log line.
+fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
+    let message = if request_id.is_empty() {
+        message.to_string()
+    } else {
+        format!("{message} (request id {request_id})")
+    };
+    build_sts_error_response(&ProxyError::InvalidOidcToken(message))
+}
+
+/// Hash the key, ask source.coop for its standing, and mint for the account
+/// it names. A refused key is logged here, once, and returned as
+/// `InvalidOidcToken`. The proxy knows only "malformed" or "inactive": which
+/// of unknown, revoked, expired or disabled is in source.coop's log under the
+/// same request id.
+async fn exchange_api_key(
+    config: &AppConfig,
+    sts: &multistore_sts::request::StsRequest,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Result<TemporaryCredentials, ProxyError> {
+    let Some(key) = keys::parse_api_key(&sts.web_identity_token) else {
+        tracing::warn!(%request_id, reason = "malformed", "API key exchange refused");
+        return Err(ProxyError::InvalidOidcToken("malformed".into()));
+    };
+    if !sts::is_default_role(&sts.role_arn) {
+        return Err(ProxyError::RoleNotFound(sts.role_arn.clone()));
+    }
+    let key_hash = keys::key_hash(key);
+    let standing = source_api::cache::get_or_fetch_key_standing(
+        &config.api_base_url,
+        &key_hash,
+        api_auth,
+        request_id,
+    )
+    .await
+    .map_err(|e| match e {
+        // The route answers 200 for any well-formed hash; a 404 means the API
+        // does not serve it, which is a deployment mismatch, not an unknown key.
+        ProxyError::BucketNotFound(_) => {
+            ProxyError::Internal("key standing route not found".into())
+        }
+        e => e,
+    })?;
+    let key_id = standing.key_id.as_deref().unwrap_or("");
+    let hash_prefix = &key_hash[..8];
+    let account_id = match (standing.active, standing.account_id) {
+        (true, Some(account_id)) => account_id,
+        _ => {
+            tracing::warn!(%request_id, key_id, hash_prefix, "API key is not active");
+            return Err(ProxyError::InvalidOidcToken("inactive".into()));
+        }
+    };
+    let role = sts::default_role(
+        config.auth_issuer.clone(),
+        config.auth_audiences.clone(),
+        config.sts_max_session_duration_secs,
+    );
+    let creds = keys::credentials_for(
+        &role,
+        &account_id,
+        sts.duration_seconds,
+        &config.session_token_key,
+    )?;
+    tracing::info!(%request_id, key_id, %account_id, "API key exchanged");
+    Ok(creds)
+}
+
+/// Whether `client_ip` may make another exchange attempt now. A missing
+/// binding is a deployment error, logged as such; it does not refuse traffic.
+async fn within_rate_limit(env: &Env, client_ip: &str) -> bool {
+    let key = if client_ip.is_empty() {
+        "unknown"
+    } else {
+        client_ip
+    };
+    match env.rate_limiter(KEY_EXCHANGE_LIMIT) {
+        Ok(limiter) => match limiter.limit(key.to_string()).await {
+            Ok(outcome) => outcome.success,
+            Err(e) => {
+                tracing::warn!("rate limiter call failed: {e}");
+                true
+            }
+        },
+        Err(_) => {
+            tracing::error!(
+                "{KEY_EXCHANGE_LIMIT} binding is not configured; API-key exchanges are unlimited"
+            );
+            true
+        }
+    }
+}
+
+/// An STS-shaped error body for a status `build_sts_error_response` has no
+/// variant for.
+fn sts_error_xml(code: &str, message: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Code>{code}</Code><Message>{message}</Message></Error></ErrorResponse>"
+    )
 }
 
 // ── CORS ────────────────────────────────────────────────────────────
