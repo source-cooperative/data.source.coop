@@ -58,14 +58,12 @@ jobs:
         # A GitHub Actions OIDC token, minted per run — short-lived by design
         # and never stored, unlike a token parked in a repo secret.
         #
-        # Dormant until Source registers GitHub as a valid IdP, so that products
-        # can accept writes from GitHub Actions. Two things must land first:
-        # the deployment's AUTH_ISSUER must accept GitHub's issuer (today it is
-        # a single Ory URL — src/config.rs reads AUTH_ISSUER as one String,
-        # unlike the comma-separated AUTH_AUDIENCE, so this needs a code change
-        # too), and the audience Source expects must be set as
-        # FEDERATION_TEST_AUDIENCE. Until then no token is minted and the
-        # copy-source authz test skips; the rest of the suite is unaffected.
+        # Dormant until FEDERATION_TEST_AUDIENCE is set to the staging proxy's
+        # origin, the audience staging's PLATFORM_ISSUERS accepts for GitHub,
+        # and FEDERATION_TEST_TRUST_ACCOUNT to a staging service account that
+        # trusts this repository's workflows (ADR-014): the token acts as that
+        # account. Until then no token is minted and the copy-source authz
+        # test skips; the rest of the suite is unaffected.
         if: vars.FEDERATION_TEST_AUDIENCE != ''
         run: |
           set -euo pipefail
@@ -88,6 +86,7 @@ jobs:
           FEDERATION_WRITE_PRODUCT: ${{ vars.FEDERATION_WRITE_PRODUCT }}
           # Set by the mint step above, and only when it runs.
           CI_WRITE_ID_TOKEN: ${{ env.CI_WRITE_ID_TOKEN }}
+          CI_TRUST_ACCOUNT: ${{ vars.FEDERATION_TEST_TRUST_ACCOUNT }}
         # boto3: the copy-source authz test signs SigV4 through the AWS SDK
         # rather than hand-rolling requests.
         run: uvx --with requests --with boto3 pytest tests/test_federation.py -v
