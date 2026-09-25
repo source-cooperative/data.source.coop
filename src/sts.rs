@@ -100,6 +100,16 @@ fn role_name(role_arn: &str) -> Option<&str> {
     role_arn.splitn(6, ':').nth(5)?.strip_prefix("role/")
 }
 
+/// The account segment of an ARN-form `role_arn`
+/// (`arn:aws:iam::<account>:role/<name>`): the account a platform IdP's token
+/// asks to act as (ADR-014). `None` for a bare name or an empty account.
+pub(crate) fn account(role_arn: &str) -> Option<&str> {
+    match role_arn.splitn(6, ':').collect::<Vec<_>>()[..] {
+        ["arn", _, _, _, account, _] if !account.is_empty() => Some(account),
+        _ => None,
+    }
+}
+
 impl CredentialRegistry for StsCredentialRegistry {
     async fn get_credential(
         &self,

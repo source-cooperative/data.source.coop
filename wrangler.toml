@@ -21,6 +21,11 @@ AUTH_ISSUER = "https://auth.source.coop"
 LOG_LEVEL = "WARN" 
 OIDC_PROVIDER_ISSUER = "https://data.source.coop" 
 OIDC_PROVIDER_KID = "data-proxy-1" 
+# Platform identity providers, each with the audiences its tokens must carry.
+# A platform token acts as the account RoleArn names, if that account trusts
+# its issuer and subject (ADR-014). GitHub Actions workflows mint their token
+# for the proxy's own origin, as source.coop's workflow snippet does.
+PLATFORM_ISSUERS = '{"https://token.actions.githubusercontent.com": ["https://data.source.coop"]}'
 SOURCE_API_URL = "https://source.coop" 
 # Ceiling for client-requested /.sts DurationSeconds (seconds). 43200 = 12h,
 # 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
@@ -41,6 +46,9 @@ STS_MAX_SESSION_DURATION_SECS = "43200"
 #   AUTH_AUDIENCE - comma-separated OAuth client_id(s) that /.sts subject tokens
 #                   must be issued to (the `aud` claim). A token is accepted if
 #                   it matches any. Unset = /.sts is disabled (returns 501).
+# Optional vars:
+#   PLATFORM_ISSUERS - JSON object from platform issuer URL to the audiences its
+#                      tokens must carry. Unset = no platform issuer is trusted.
 # TODO: Set different sampling rates for prod vs staging
 [observability]
 enabled = true
@@ -89,6 +97,7 @@ AUTH_AUDIENCE = "1123dfa8-469f-44fe-b9f4-9b76f06fd325,a79c9537-be78-454a-9ea1-b9
 AUTH_ISSUER = "https://auth.staging.source.coop"
 OIDC_PROVIDER_ISSUER = "https://data.staging.source.coop"
 OIDC_PROVIDER_KID = "data-proxy-1"
+PLATFORM_ISSUERS = '{"https://token.actions.githubusercontent.com": ["https://data.staging.source.coop"]}'
 SOURCE_API_URL = "https://staging.source.coop"
 STS_MAX_SESSION_DURATION_SECS = "43200"  # 12h ceiling for client-requested /.sts DurationSeconds
 

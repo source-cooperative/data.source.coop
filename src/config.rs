@@ -1,5 +1,6 @@
 //! Process-wide configuration parsed once from Worker env vars + secrets.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use multistore_oidc_provider::jwt::JwtSigner;
@@ -100,6 +101,13 @@ fn build_config(env: &Env) -> AppConfig {
         tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
     }
 
+    // Platform identity providers (GitHub Actions, say), each with its own
+    // audiences. Unset trusts none.
+    let platform_issuers = env
+        .var("PLATFORM_ISSUERS")
+        .map(|v| crate::platform::parse_issuers(&v.to_string()))
+        .unwrap_or_default();
+
     // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
     // matching multistore's own default so behavior is unchanged until raised.
     let sts_max_session_duration_secs = match env.var("STS_MAX_SESSION_DURATION_SECS") {
@@ -141,6 +149,7 @@ fn build_config(env: &Env) -> AppConfig {
         session_token_key,
         auth_issuer,
         auth_audiences,
+        platform_issuers,
         sts_max_session_duration_secs,
         ip_hash_salt,
     }
@@ -151,13 +160,19 @@ pub struct AppConfig {
     pub oidc: OidcConfig,
     /// AES key for sealing/unsealing STS session tokens.
     pub session_token_key: TokenKey,
-    /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
+    /// OIDC issuer URL for the Source Cooperative auth provider (e.g.
+    /// `https://auth.source.coop`): the person issuer, whose tokens say who the
+    /// caller is.
     pub auth_issuer: String,
     /// OAuth client IDs that subject tokens presented to `/.sts` may be issued
     /// to (the `aud` claim); a token is accepted if it matches any. Parsed from
     /// the comma-separated `AUTH_AUDIENCE`. Empty disables `/.sts` entirely
     /// (returns 501) rather than accepting any audience.
     pub auth_audiences: Vec<String>,
+    /// Platform issuers and the audiences each one's tokens must carry, from
+    /// the JSON object in `PLATFORM_ISSUERS`. A platform token acts as the
+    /// account `RoleArn` names, if that account trusts it (ADR-014).
+    pub platform_issuers: HashMap<String, Vec<String>>,
     /// Ceiling for client-requested STS session length (`DurationSeconds`),
     /// in seconds. From `STS_MAX_SESSION_DURATION_SECS`; defaults to 3600 (1h).
     pub sts_max_session_duration_secs: u64,
