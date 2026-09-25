@@ -66,3 +66,22 @@ fn unknown_names_are_refused_not_defaulted() {
         assert_eq!(named(arn), None, "{arn}");
     }
 }
+
+#[test]
+fn the_account_is_the_arns_account_segment() {
+    assert_eq!(
+        sts::account("arn:aws:iam::acme--nightly-sync:role/FullAccess"),
+        Some("acme--nightly-sync")
+    );
+    assert_eq!(
+        sts::account("arn:aws:iam::000000000000:role/_default"),
+        Some("000000000000")
+    );
+    for role_arn in [
+        "FullAccess",
+        "arn:aws:iam:::role/FullAccess",
+        "arn:aws:iam::acme",
+    ] {
+        assert_eq!(sts::account(role_arn), None, "{role_arn}");
+    }
+}

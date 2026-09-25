@@ -16,6 +16,7 @@ mod keys;
 mod location;
 mod object_path;
 mod pagination;
+mod platform;
 mod source_api;
 mod sts;
 
@@ -236,12 +237,17 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.api_base_url.clone(),
     );
 
-    // ── Short-circuit: API-key exchange ─────────────────────────────
+    // ── Short-circuit: API-key and platform-token exchanges ────────
     // An `sck_` key at `/.sts` is not a token: nothing verifies it here —
-    // source.coop answers for it, by hash (ADR-013). Handled ahead of the STS
-    // route, which would refuse it as a malformed JWT.
+    // source.coop answers for it, by hash (ADR-013). A platform IdP's token
+    // (GitHub Actions, say) is verified here, then acts as the account
+    // `RoleArn` names only if that account trusts it (ADR-014). Both are
+    // handled ahead of the STS route, which serves the person issuer alone.
     if parts.path == "/.sts" {
         if let Some(result) = api_key_exchange(config, &parts, &env, &api_auth, &request_id).await {
+            return Ok(finish(result, &request_id));
+        }
+        if let Some(result) = platform_exchange(config, &parts, &api_auth, &request_id).await {
             return Ok(finish(result, &request_id));
         }
     }
@@ -548,15 +554,21 @@ async fn api_key_exchange(
     )
 }
 
-/// `InvalidIdentityToken` with the request id in the message: SDKs show a
-/// user the message and nothing else, and the id is what finds the log line.
+/// `InvalidIdentityToken`, with the request id in the message.
 fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
-    let message = if request_id.is_empty() {
+    build_sts_error_response(&ProxyError::InvalidOidcToken(with_request_id(
+        message, request_id,
+    )))
+}
+
+/// `message` with the request id, if there is one: SDKs show a user the
+/// message and nothing else, and the id is what finds the log line.
+fn with_request_id(message: &str, request_id: &str) -> String {
+    if request_id.is_empty() {
         message.to_string()
     } else {
         format!("{message} (request id {request_id})")
-    };
-    build_sts_error_response(&ProxyError::InvalidOidcToken(message))
+    }
 }
 
 /// Hash the key, ask source.coop for its standing, and mint for the account
@@ -642,12 +654,120 @@ async fn within_rate_limit(env: &Env, client_ip: &str) -> bool {
     }
 }
 
-/// An STS-shaped error body for a status `build_sts_error_response` has no
-/// variant for.
+/// An STS-shaped error body with a code or message `build_sts_error_response`
+/// does not produce.
 fn sts_error_xml(code: &str, message: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Code>{code}</Code><Message>{message}</Message></Error></ErrorResponse>"
     )
+}
+
+// ── Platform identity providers ─────────────────────────────────────
+
+/// The exchange of a platform issuer's token, if this request carries one:
+/// `None` for any other token, which the STS route takes. Parameters come from
+/// the query string or the form body, never both, as at the STS route. Every
+/// refusal of the account's trust reads the same, whether the account does not
+/// exist or does not trust the token.
+async fn platform_exchange(
+    config: &AppConfig,
+    parts: &RequestParts,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Option<(u16, String)> {
+    let sts = try_parse_sts_request(parts.query.as_deref())
+        .or_else(|| try_parse_sts_request(parts.form_body.as_deref()))?
+        .ok()?;
+    let (header, claims) = platform::unverified(&sts.web_identity_token)?;
+    let issuer = claims.get("iss")?.as_str()?;
+    let audiences = config.platform_issuers.get(issuer)?;
+    Some(
+        match exchange_platform_token(
+            config, &sts, &header, issuer, audiences, api_auth, request_id,
+        )
+        .await
+        {
+            Ok(creds) => build_sts_response(&creds),
+            // `exchange_platform_token` has logged who asked to act as whom.
+            Err(ProxyError::AccessDenied) => (
+                403,
+                sts_error_xml(
+                    "AccessDenied",
+                    &with_request_id(
+                        "Not authorized to perform sts:AssumeRoleWithWebIdentity",
+                        request_id,
+                    ),
+                ),
+            ),
+            Err(e) => {
+                tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
+                build_sts_error_response(&e)
+            }
+        },
+    )
+}
+
+/// Verify a platform issuer's token, then mint for the account `RoleArn`
+/// names if that account trusts the token's issuer and subject (ADR-014). The
+/// credentials act as the account, never as the token's subject. Everything
+/// local comes first, so a token that fails it costs the Source API nothing.
+async fn exchange_platform_token(
+    config: &AppConfig,
+    sts: &multistore_sts::request::StsRequest,
+    header: &serde_json::Value,
+    issuer: &str,
+    audiences: &[String],
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Result<TemporaryCredentials, ProxyError> {
+    let role = sts::role(
+        &sts.role_arn,
+        issuer.to_string(),
+        audiences.to_vec(),
+        config.sts_max_session_duration_secs,
+    )
+    .ok_or_else(|| ProxyError::RoleNotFound(sts.role_arn.clone()))?;
+    // No angle brackets in the message: the STS error body carries it unescaped.
+    let account = sts::account(&sts.role_arn).ok_or_else(|| {
+        ProxyError::InvalidRequest(
+            "RoleArn must name the account to act as: arn:aws:iam::ACCOUNT:role/ROLE".into(),
+        )
+    })?;
+    let subject = platform::verify(
+        &sts.web_identity_token,
+        header,
+        issuer,
+        &role,
+        &jwks_cache(),
+    )
+    .await?;
+    source_api::cache::get_or_fetch_trust(
+        &config.api_base_url,
+        account,
+        issuer,
+        &subject,
+        api_auth,
+        request_id,
+    )
+    .await
+    .map_err(|e| match e {
+        ProxyError::AccessDenied => {
+            tracing::warn!(%request_id, %issuer, %subject, %account, "account does not trust the token");
+            e
+        }
+        // The route answers for any account; a 404 means the API does not
+        // serve it, which is a deployment mismatch, not a refusal.
+        ProxyError::BucketNotFound(_) => ProxyError::Internal("trusts route not found".into()),
+        e => e,
+    })?;
+    let creds = keys::credentials_for(
+        &role,
+        account,
+        sts.duration_seconds,
+        &config.session_token_key,
+    )?;
+    tracing::info!(%request_id, %issuer, %subject, %account, role = %role.role_id, "platform token exchanged");
+    Ok(creds)
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

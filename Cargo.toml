@@ -57,6 +57,9 @@ percent-encoding = "2"
 hmac = "0.12"
 sha2 = "0.10"
 
+# Reading a platform IdP's token before verifying it (issuer, key id)
+base64 = "0.22"
+
 # Tracing
 tracing = "0.1"
 

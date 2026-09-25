@@ -85,7 +85,7 @@ jobs:
     permissions:
       contents: read
       # Mint a GitHub OIDC token as the write tests' caller identity — the
-      # worker verifies it against GitHub's JWKS (AUTH_ISSUER below).
+      # worker verifies it against GitHub's JWKS (PLATFORM_ISSUERS below).
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -106,16 +106,20 @@ jobs:
         # dependency in this job can't mint federation assertions any AWS role
         # trusts. Federated end-to-end coverage lives in the deployed-environment
         # smoke tests (tests/test_federation.py, wired into staging.yml) instead.
-        # Inbound callers authenticate with GitHub Actions OIDC tokens:
-        # AUTH_ISSUER points at GitHub and AUTH_AUDIENCE matches the audience
-        # requested in "Mint caller identity token" below.
+        # Inbound callers authenticate with GitHub Actions OIDC tokens. GitHub
+        # is a platform issuer, as in production: PLATFORM_ISSUERS names the
+        # audience requested in "Mint caller identity token" below, and a
+        # token acts as an account the stub says trusts this repository. No
+        # person-issuer token exists in CI; AUTH_ISSUER names an issuer that
+        # mints nothing, and AUTH_AUDIENCE keeps /.sts from answering 501.
         run: |
           {
             openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
             printf 'OIDC_PROVIDER_KEY="%s"\n' "$(cat /tmp/oidc.pem)"
             echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
-            echo "AUTH_ISSUER=https://token.actions.githubusercontent.com"
+            echo "AUTH_ISSUER=https://auth.example.invalid"
             echo "AUTH_AUDIENCE=source-data-proxy-ci"
+            echo 'PLATFORM_ISSUERS={"https://token.actions.githubusercontent.com": ["source-data-proxy-ci"]}'
             echo "SOURCE_API_URL=http://localhost:9000"
           } > .dev.vars
       - name: Mint caller identity token (GitHub OIDC)
@@ -144,9 +148,9 @@ jobs:
           fi
           echo "::add-mask::$token"
           echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
-          # A second, validly-signed token whose audience mismatches
-          # AUTH_AUDIENCE: test_writes.py asserts the /.sts aud gate rejects
-          # it (signature checks alone would let it through).
+          # A second, validly-signed token whose audience is not GitHub's in
+          # PLATFORM_ISSUERS: test_writes.py asserts the /.sts aud gate
+          # rejects it (signature checks alone would let it through).
           wrong=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=not-the-data-proxy" | jq -r '.value')
           if [ -z "$wrong" ] || [ "$wrong" = "null" ]; then

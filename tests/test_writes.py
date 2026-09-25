@@ -3,15 +3,15 @@
 Data requests to the proxy are SigV4-only (Bearer JWTs are rejected), so an
 authenticated write follows the real client flow end-to-end:
 
-  1. Obtain an OIDC identity token whose `aud` is in the worker's AUTH_AUDIENCE.
-     In CI this is a GitHub Actions OIDC token (AUTH_ISSUER =
-     https://token.actions.githubusercontent.com); the proxy verifies it via
-     OIDC discovery against GitHub's JWKS.
-  2. Exchange it at POST /.sts (AssumeRoleWithWebIdentity, RoleArn=_default)
-     for temporary credentials whose SessionToken is sealed under
-     SESSION_TOKEN_KEY.
+  1. Obtain a GitHub Actions OIDC token with an audience the worker accepts
+     for GitHub, a platform issuer (PLATFORM_ISSUERS in ci.yml). The proxy
+     verifies it via OIDC discovery against GitHub's JWKS.
+  2. Exchange it at POST /.sts (AssumeRoleWithWebIdentity) with a RoleArn
+     naming TRUST_ACCOUNT, which the stub says trusts this repository's
+     workflows, for temporary credentials whose SessionToken is sealed under
+     SESSION_TOKEN_KEY (ADR-014).
   3. SigV4-sign S3 requests with those credentials; the proxy unseals the
-     token, verifies the signature, and recovers the subject (the JWT's `sub`).
+     token, verifies the signature, and recovers the principal: the account.
 
 Two tiers, so the suite degrades gracefully:
 
@@ -33,11 +33,15 @@ import xml.etree.ElementTree as ET
 import pytest
 import requests
 
+from stub_api import TRUST_ACCOUNT as STUB_TRUST_ACCOUNT
 from stub_api import WRITE_ACCOUNT, WRITE_PRODUCT
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
 ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
 WRONG_AUD_TOKEN = os.environ.get("CI_WRONG_AUDIENCE_TOKEN")
+# The account the caller's token acts as: the stub's, or against a deployed
+# proxy (staging.yml) a service account there that trusts this repository.
+TRUST_ACCOUNT = os.environ.get("CI_TRUST_ACCOUNT") or STUB_TRUST_ACCOUNT
 
 # When CI declares a token must exist (same-repo runs export CI_EXPECT_OIDC),
 # a missing token means the mint->env plumbing broke: run the tests and fail
@@ -60,7 +64,7 @@ def sts_exchange(token, *, form_body=False):
     request body, with no query string — instead of in the query string."""
     params = {
         "Action": "AssumeRoleWithWebIdentity",
-        "RoleArn": "_default",
+        "RoleArn": f"arn:aws:iam::{TRUST_ACCOUNT}:role/FullAccess",
         "WebIdentityToken": token,
     }
     if form_body:
@@ -274,9 +278,9 @@ def test_sts_rejects_tampered_signature():
 
 @needs_wrong_aud_token
 def test_sts_rejects_wrong_audience():
-    """A validly-signed token whose aud isn't in AUTH_AUDIENCE must be
-    rejected — this is the gate that keeps other GitHub OIDC consumers'
-    tokens from minting credentials here."""
+    """A validly-signed token whose aud isn't one PLATFORM_ISSUERS lists for
+    GitHub must be rejected — this is the gate that keeps other GitHub OIDC
+    consumers' tokens from minting credentials here."""
     # Presence assert, not just the skipif: with the token missing,
     # sts_exchange(None) sends no WebIdentityToken and the 4xx assertion
     # below would pass vacuously — testing nothing.

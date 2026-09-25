@@ -31,17 +31,15 @@ deployed worker once the ``FEDERATION_TEST_*`` repo variables are set:
                              OIDC token, minted per run by staging.yml (short-
                              lived by design, never stored) once
                              FEDERATION_TEST_AUDIENCE is set.
+  CI_TRUST_ACCOUNT           the account that token acts as: a service account
+                             that trusts this repository's workflows (ADR-014).
 
-                             Dormant until Source registers GitHub as a valid
-                             IdP so products can accept writes from GitHub
-                             Actions. That needs the deployment's AUTH_ISSUER to
-                             accept GitHub's issuer — today it is a single Ory
-                             URL, and ``src/config.rs`` reads AUTH_ISSUER as one
-                             String (unlike the comma-separated AUTH_AUDIENCE),
-                             so it is a code change as well as config — and the
-                             audience Source expects to be set as
-                             FEDERATION_TEST_AUDIENCE. Until then this test
-                             skips. The caller must also hold write on
+                             Dormant until FEDERATION_TEST_AUDIENCE is set to
+                             the staging proxy's origin, the audience its
+                             PLATFORM_ISSUERS accepts for GitHub, and a staging
+                             service account that trusts this repository is set
+                             as FEDERATION_TEST_TRUST_ACCOUNT. Until then this
+                             test skips. That account must also hold write on
                              FEDERATION_WRITE_PRODUCT
 """
 

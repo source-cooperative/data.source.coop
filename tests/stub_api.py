@@ -21,11 +21,14 @@ CI starts this before `wrangler dev` and points the worker at it via
 SOURCE_API_URL in .dev.vars.
 """
 
+import base64
 import hashlib
 import json
 import os
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 PORT = 9000
 
@@ -139,9 +142,37 @@ KEY_STANDINGS = {
 KEY_EXCHANGE_COUNTS = {}
 
 
+# ── Account trusts ─────────────────────────────────────────────────
+# Whether an account trusts a platform token's issuer and subject, at POST
+# /api/v1/accounts/{account}/trusts/exchanges (ADR-014). The proxy asks as the
+# account itself. Only TRUST_ACCOUNT trusts anyone: GitHub Actions workflows
+# in this repository, whatever event minted the token. A counter per account
+# lets test_platform_trust.py prove the proxy caches a yes.
+TRUST_ACCOUNT = "ci-tests--github-ci"
+TRUSTED_ISSUER = "https://token.actions.githubusercontent.com"
+TRUSTED_SUBJECT_PREFIX = "repo:source-cooperative/data.source.coop:"
+TRUST_EXCHANGE_COUNTS = {}
+
+# Who the proxy said it was asking as, per product path, so a test can check
+# which principal a session carries: see test_platform_trust.py.
+PRODUCT_LOOKUP_SUBJECTS = {}
+
+
+def _bearer_subject(authorization):
+    """The `sub` of the proxy's assertion, unverified: the stub has no key."""
+    try:
+        payload = authorization.removeprefix("Bearer ").split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["sub"]
+    except (IndexError, ValueError, KeyError):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
+        trust = re.fullmatch(r"/api/v1/accounts/([^/]+)/trusts/exchanges", path)
+        if trust:
+            return self._trust_exchange(unquote(trust.group(1)))
         if path != "/api/v1/service-account-keys/exchanges":
             return self._send(404, b"{}")
         # The proxy authenticates as itself; the stub cannot verify the
@@ -157,11 +188,37 @@ class Handler(BaseHTTPRequestHandler):
         status, body = KEY_STANDINGS.get(key_hash, (200, {"active": False}))
         self._send(status, json.dumps(body).encode())
 
+    def _trust_exchange(self, account):
+        # Anyone but the account itself is refused, as the real route does.
+        if _bearer_subject(self.headers.get("Authorization", "")) != account:
+            return self._send(401, b'{"error": "Unauthorized"}')
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length))
+            issuer, subject = body["issuer"], body["subject"]
+        except (ValueError, KeyError, TypeError):
+            return self._send(400, b"{}")
+        TRUST_EXCHANGE_COUNTS[account] = TRUST_EXCHANGE_COUNTS.get(account, 0) + 1
+        trusted = (
+            account == TRUST_ACCOUNT
+            and issuer == TRUSTED_ISSUER
+            and subject.startswith(TRUSTED_SUBJECT_PREFIX)
+        )
+        self._send(200 if trusted else 403, json.dumps({"trusted": trusted}).encode())
+
     def do_GET(self):
         path = self.path.split("?")[0]
         # Test-only: how many times each key's standing was asked for.
         if path == "/_stub/key-exchange-counts":
             return self._send(200, json.dumps(KEY_EXCHANGE_COUNTS).encode())
+        # Test-only: how many times each account's trust was asked for.
+        if path == "/_stub/trust-exchange-counts":
+            return self._send(200, json.dumps(TRUST_EXCHANGE_COUNTS).encode())
+        # Test-only: the subject each product was last looked up as.
+        if path == "/_stub/product-lookup-subjects":
+            return self._send(200, json.dumps(PRODUCT_LOOKUP_SUBJECTS).encode())
+        if path.startswith("/api/v1/products/") and self.headers.get("Authorization"):
+            PRODUCT_LOOKUP_SUBJECTS[path] = _bearer_subject(self.headers["Authorization"])
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
             return self._send(500, b"{}")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_BAD_JSON_PRODUCT}":
