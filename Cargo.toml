@@ -27,6 +27,10 @@ name = "authz"
 path = "tests/authz.rs"
 
 [[test]]
+name = "sts_cache"
+path = "tests/sts_cache.rs"
+
+[[test]]
 name = "object_path"
 path = "tests/object_path.rs"
 
@@ -55,6 +59,9 @@ sha2 = "0.10"
 
 # Tracing
 tracing = "0.1"
+
+# chrono: parse the STS `<Expiration>` for the L2 TTL (transitive via multistore).
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 
 # Wasm-only dependencies (Cloudflare Workers runtime)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
