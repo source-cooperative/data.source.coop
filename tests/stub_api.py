@@ -84,6 +84,23 @@ ERR_BAD_JSON_PRODUCT = "err-bad-json"
 RESTRICTED_PRODUCT = "restricted-probe"
 RESTRICTED_PRODUCT_JSON = _fixture("product_restricted")
 
+# ── PMTiles tile endpoint ──────────────────────────────────────────
+# A real public product holding a real PMTiles v3 archive
+# (cholmes/nyc-taxi-zones/taxi_zones.pmtiles, ~526 KB, MVT, z0-13), on the same
+# unsigned connection as the read product -- so tile tests exercise the actual
+# archive in the public bucket, not a mock.
+TILES_PRODUCT = "nyc-taxi-zones"
+TILES_PRODUCT_JSON = _fixture("product_tiles")
+TILES_ARCHIVE = "taxi_zones.pmtiles"
+
+# Same archive, served as an *unlisted* product. The API returns it (so the
+# subject-less fetch succeeds), which leaves `SourceProduct::is_public` as the
+# only thing standing between a non-public tileset and a shared edge cache.
+# That gate is load-bearing, so it gets its own probe rather than riding on the
+# 404 that RESTRICTED_PRODUCT already covers.
+TILES_UNLISTED_PRODUCT = "tiles-unlisted-probe"
+TILES_UNLISTED_PRODUCT_JSON = _fixture("product_tiles_unlisted")
+
 ROUTES = {
     f"/api/v1/products/{ACCOUNT}": {"products": [PRODUCT_JSON]},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
@@ -94,6 +111,9 @@ ROUTES = {
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
     f"/api/v1/data-connections/{WRITE_CONNECTION}": WRITE_CONNECTION_JSON,
+    # Tile endpoint (see above).
+    f"/api/v1/products/{ACCOUNT}/{TILES_PRODUCT}": TILES_PRODUCT_JSON,
+    f"/api/v1/products/{ACCOUNT}/{TILES_UNLISTED_PRODUCT}": TILES_UNLISTED_PRODUCT_JSON,
 }
 
 # Import-time drift guards: routes are keyed on the constants above, bodies
@@ -105,6 +125,10 @@ assert CONNECTION in PRODUCT_JSON["metadata"]["mirrors"]
 assert WRITE_PRODUCT_JSON["product_id"] == WRITE_PRODUCT
 assert WRITE_CONNECTION in WRITE_PRODUCT_JSON["metadata"]["mirrors"]
 assert RESTRICTED_PRODUCT_JSON["product_id"] == RESTRICTED_PRODUCT
+assert TILES_PRODUCT_JSON["product_id"] == TILES_PRODUCT
+assert CONNECTION in TILES_PRODUCT_JSON["metadata"]["mirrors"]
+assert TILES_UNLISTED_PRODUCT_JSON["product_id"] == TILES_UNLISTED_PRODUCT
+assert TILES_UNLISTED_PRODUCT_JSON["visibility"] != "public"
 assert ROUTES[f"/api/v1/data-connections/{CONNECTION}"]["data_connection_id"] == CONNECTION
 assert (
     ROUTES[f"/api/v1/data-connections/{WRITE_CONNECTION}"]["data_connection_id"]

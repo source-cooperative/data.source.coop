@@ -1,0 +1,14 @@
+{
+  "product_id": "tiles-unlisted-probe",
+  "disabled": false,
+  "visibility": "unlisted",
+  "metadata": {
+    "mirrors": {
+      "aws-opendata-us-west-2": {
+        "connection_id": "aws-opendata-us-west-2",
+        "prefix": "cholmes/nyc-taxi-zones/"
+      }
+    },
+    "primary_mirror": "aws-opendata-us-west-2"
+  }
+}

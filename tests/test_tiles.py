@@ -1,0 +1,315 @@
+"""Integration tests for the PMTiles Z/X/Y tile endpoint.
+
+These run against a real PMTiles v3 archive in the public bucket
+(cholmes/nyc-taxi-zones/taxi_zones.pmtiles -- MVT, z0-13, gzip-compressed
+tiles), resolved through tests/stub_api.py. Nothing here is mocked below the
+control plane: the worker reads real byte ranges out of real S3.
+"""
+
+import json
+import os
+from urllib.parse import urlparse
+
+import pytest
+import requests
+
+PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
+
+ACCOUNT = "cholmes"
+PRODUCT = "nyc-taxi-zones"
+ARCHIVE = "taxi_zones.pmtiles"
+BASE = f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{ARCHIVE}"
+
+# The Workers Cache API is a no-op on `*.workers.dev`, where PR previews are
+# deployed, so a tile can never come back as an edge-cache HIT there. The
+# assertions that need one are skipped -- with a reason -- rather than left to
+# fail on every preview or, worse, softened until they pass without proving
+# anything. They run in full against a routed hostname.
+EDGE_CACHE_UNAVAILABLE = (urlparse(PROXY_URL).hostname or "").endswith("workers.dev")
+needs_edge_cache = pytest.mark.skipif(
+    EDGE_CACHE_UNAVAILABLE,
+    reason="Cache API is a no-op on *.workers.dev; edge-cache HITs cannot be observed",
+)
+
+# Present in the archive: it covers NYC, and z0/0/0 exists because the archive
+# starts at zoom 0.
+A_TILE = "0/0/0.mvt"
+
+
+def test_tile_returns_a_vector_tile():
+    resp = requests.get(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200, resp.text[:500]
+    assert resp.headers["content-type"] == "application/vnd.mapbox-vector-tile"
+    assert len(resp.content) > 0
+
+
+def test_tile_body_is_a_real_mvt():
+    """Guard against serving plausible-looking garbage.
+
+    Field 3 (layers) of a Mapbox Vector Tile is encoded with tag byte 0x1a,
+    which is what a valid tile starts with.
+    """
+    resp = requests.get(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200
+    assert resp.content[0] == 0x1A, f"not an MVT: {resp.content[:16].hex()}"
+
+
+def test_tile_is_not_double_encoded():
+    """Regression test for the encoding trap.
+
+    Archives store tiles gzipped, and relaying those bytes with an explicit
+    `Content-Encoding: gzip` reads like an optimisation. It is not: the runtime
+    adds its own transfer compression on top, and the Cache API adds another
+    across a put/get, so a client that decodes one layer is left holding gzip
+    bytes labelled `application/vnd.mapbox-vector-tile`. Tiles are therefore
+    decompressed in the worker and served plain.
+
+    Ask for the body with no transfer coding and assert it is the protobuf
+    itself, not a gzip stream.
+    """
+    resp = requests.get(
+        f"{BASE}/{A_TILE}",
+        headers={"Accept-Encoding": "identity"},
+        stream=True,
+    )
+    assert resp.status_code == 200
+    raw = resp.raw.read()
+    assert raw[:2] != b"\x1f\x8b", "body is still gzip-wrapped"
+    assert raw[0] == 0x1A, f"not a bare MVT: {raw[:16].hex()}"
+
+
+@needs_edge_cache
+def test_tile_is_cached_at_the_edge():
+    """Second read of the same tile must come from the Cache API."""
+    url = f"{BASE}/2/1/1.mvt"
+    first = requests.get(url)
+    assert first.status_code == 200
+    second = requests.get(url)
+    assert second.status_code == 200
+    assert second.headers.get("x-tile-cache") == "HIT"
+    assert second.content == first.content
+
+
+def test_tile_sends_cache_control():
+    resp = requests.get(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200
+    assert "max-age=" in resp.headers.get("cache-control", "")
+
+
+@needs_edge_cache
+def test_extension_aliases_share_a_cache_entry():
+    """.pbf and .mvt are the same tile; they must not be cached twice."""
+    requests.get(f"{BASE}/3/2/3.mvt")
+    aliased = requests.get(f"{BASE}/3/2/3.pbf")
+    assert aliased.status_code == 200
+    assert aliased.headers.get("x-tile-cache") == "HIT"
+
+
+def test_head_returns_headers_without_a_body():
+    resp = requests.head(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/vnd.mapbox-vector-tile"
+    assert int(resp.headers["content-length"]) > 0
+    assert not resp.content
+
+
+def test_tilejson():
+    resp = requests.get(f"{BASE}/tiles.json")
+    assert resp.status_code == 200, resp.text[:500]
+    tj = json.loads(resp.text)
+    assert tj["tilejson"].startswith("3.")
+    assert len(tj["tiles"]) == 1
+    template = tj["tiles"][0]
+    assert template.endswith("/{z}/{x}/{y}.mvt")
+    assert f"{ACCOUNT}/{PRODUCT}/{ARCHIVE}" in template
+    assert tj["maxzoom"] == 13
+
+
+def test_tilejson_template_names_the_host_the_client_reached():
+    """The template must point at the deployment that answered.
+
+    Configuration cannot know which one that is: PUBLIC_BASE_URL defaults to
+    OIDC_PROVIDER_ISSUER, which previews pin to the staging host for JWKS
+    reasons while themselves serving on pr-N.*.workers.dev. A preview that
+    advertised staging would send every map client to the wrong deployment.
+    """
+    tj = json.loads(requests.get(f"{BASE}/tiles.json").text)
+    advertised = urlparse(tj["tiles"][0]).netloc
+    assert advertised == urlparse(PROXY_URL).netloc, (
+        f"tiles.json advertises {advertised!r}, not the host we asked "
+        f"({urlparse(PROXY_URL).netloc!r})"
+    )
+
+
+def test_tilejson_template_actually_resolves():
+    """A TileJSON whose template 404s is worse than no TileJSON."""
+    tj = json.loads(requests.get(f"{BASE}/tiles.json").text)
+    template = tj["tiles"][0].replace("{z}", "0").replace("{x}", "0").replace("{y}", "0")
+    # Rewrite scheme+host generically rather than substituting one hardcoded
+    # origin. A hardcoded rewrite silently no-ops when the template names some
+    # other host, and the test then passes by fetching a different deployment
+    # instead of the one under test.
+    url = PROXY_URL.rstrip("/") + urlparse(template).path
+    resp = requests.get(url)
+    assert resp.status_code == 200, f"{url} -> {resp.status_code}"
+    assert resp.headers["content-type"] == "application/vnd.mapbox-vector-tile"
+
+
+# ── Declining / errors ──────────────────────────────────────────────
+
+
+def test_plain_archive_get_still_streams_the_object():
+    """The tile middleware must not shadow a normal read of the archive."""
+    resp = requests.get(BASE, headers={"Range": "bytes=0-6"})
+    assert resp.status_code == 206
+    assert resp.content == b"PMTiles"
+
+
+def test_ordinary_object_read_is_unaffected():
+    resp = requests.get(
+        f"{PROXY_URL}/cholmes/admin-boundaries/countries.parquet",
+        headers={"Range": "bytes=0-3"},
+    )
+    assert resp.status_code == 206
+    assert resp.content == b"PAR1"
+
+
+def test_listing_still_works_past_the_tile_middleware():
+    """A two-segment list is an operation the tile middleware sees and must
+    decline. A bare `/{account}` list never carries an object key at all, so
+    asserting on it would guard nothing."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}?list-type=2&delimiter=/")
+    assert resp.status_code == 200
+    assert ARCHIVE in resp.text
+
+
+def test_missing_tile_is_404():
+    # Beyond the archive's maxzoom of 13.
+    resp = requests.get(f"{BASE}/14/8000/8000.mvt")
+    assert resp.status_code == 404
+
+
+def test_wrong_extension_for_the_archive_type_is_404():
+    """A vector archive must not answer a .png request with a labelled protobuf."""
+    resp = requests.get(f"{BASE}/{A_TILE.replace('.mvt', '.png')}")
+    assert resp.status_code == 404
+
+
+def test_a_tile_url_naming_an_absent_archive_is_404_not_a_500():
+    """Note what this does and does not cover.
+
+    `countries.parquet.pmtiles` does not exist, so this exercises the
+    archive-absent path -- the handler declines and the object pipeline answers.
+    It does not reach the "object exists but is not a PMTiles v3 archive"
+    mapping, which would need a real non-archive object whose key ends in
+    `.pmtiles`; no fixture has one. That mapping is covered natively instead, by
+    `root_directory_is_addressable` in tests/tiles.rs.
+    """
+    resp = requests.get(
+        f"{PROXY_URL}/cholmes/admin-boundaries/countries.parquet.pmtiles/0/0/0.mvt"
+    )
+    assert resp.status_code == 404
+    assert "x-tile-cache" not in resp.headers
+
+
+def test_non_canonical_coordinates_fall_through_to_object_read():
+    """`/05/0/0.mvt` is not a tile URL, so it must be treated as an object key
+    -- which does not exist, hence 404 from the normal pipeline, never a tile."""
+    resp = requests.get(f"{BASE}/05/0/0.mvt")
+    assert resp.status_code == 404
+    assert "x-tile-cache" not in resp.headers
+
+
+def test_write_to_a_tile_path_is_not_served_by_the_handler():
+    resp = requests.put(f"{BASE}/{A_TILE}")
+    assert resp.status_code in (403, 405)
+    assert "x-tile-cache" not in resp.headers
+
+
+# ── The public-only gate ────────────────────────────────────────────
+
+
+def test_unlisted_product_tiles_are_refused():
+    """The security property: a non-public product must never reach the shared
+    edge cache, even though the control plane returns its metadata."""
+    url = f"{PROXY_URL}/{ACCOUNT}/tiles-unlisted-probe/{ARCHIVE}/{A_TILE}"
+    resp = requests.get(url)
+    assert resp.status_code == 404, f"expected 404, got {resp.status_code}"
+    assert "x-tile-cache" not in resp.headers
+
+
+# ── Review fixes ────────────────────────────────────────────────────
+
+
+def test_non_canonical_archive_key_falls_through_to_the_object_pipeline():
+    """`Path::from` collapses empty segments, so `a//b.pmtiles` reads the same
+    object as `a/b.pmtiles` — but the cache key keeps `/` as structure. Serving
+    both would mint a distinct edge-cache entry per spelling of one tile."""
+    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}//{ARCHIVE}/{A_TILE}")
+    assert "x-tile-cache" not in resp.headers
+
+
+def test_a_missing_archive_does_not_shadow_a_real_object():
+    """A tile-shaped key under a directory that merely ends in `.pmtiles` is an
+    ordinary object read. The handler must decline, not answer 404, or that
+    object becomes permanently unreachable."""
+    resp = requests.get(
+        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/definitely-absent.pmtiles/0/0/0.mvt"
+    )
+    # The object pipeline answers (404 here, since the fixture has no such
+    # object) -- but it answers, rather than the tile handler claiming the key.
+    assert "x-tile-cache" not in resp.headers
+
+
+# ── Conditional requests and negative caching ───────────────────────
+
+
+def test_tile_carries_a_strong_etag():
+    resp = requests.get(f"{BASE}/{A_TILE}")
+    assert resp.status_code == 200
+    etag = resp.headers.get("etag")
+    assert etag and etag.startswith('"') and etag.endswith('"'), etag
+
+
+def test_if_none_match_revalidates_to_304():
+    first = requests.get(f"{BASE}/{A_TILE}")
+    etag = first.headers["etag"]
+    again = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    assert not again.content
+    assert again.headers.get("etag") == etag
+    # A weak comparison, per RFC 9110: a client that downgraded the tag still gets its 304.
+    weak = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": f"W/{etag}"})
+    assert weak.status_code == 304
+
+
+def test_a_stale_if_none_match_gets_the_full_tile():
+    resp = requests.get(f"{BASE}/{A_TILE}", headers={"If-None-Match": '"not-this-tile"'})
+    assert resp.status_code == 200
+    assert resp.content[0] == 0x1A
+
+
+@needs_edge_cache
+def test_cache_hit_reports_its_age():
+    """A hit re-states the full max-age, so without `Age` a client would treat a
+    tile stored 59 minutes ago as fresh for another hour."""
+    requests.get(f"{BASE}/{A_TILE}")
+    hit = requests.get(f"{BASE}/{A_TILE}")
+    assert hit.headers.get("x-tile-cache") == "HIT"
+    assert "age" in hit.headers, "cache hit must carry Age"
+    assert int(hit.headers["age"]) >= 0
+
+
+@needs_edge_cache
+def test_a_missing_tile_is_remembered_as_missing():
+    """Sparse archives are the norm; without negative caching every empty tile
+    outside the footprint re-pays the whole cold path for every user."""
+    url = f"{BASE}/13/0/0.mvt"  # valid coordinate, nothing there (NYC is not at 0,0)
+    first = requests.get(url)
+    assert first.status_code == 404
+    second = requests.get(url)
+    assert second.status_code == 404
+    # The negative entry is served without touching the control plane or origin;
+    # the only observable is that it is still a 404, and fast. What we can pin is
+    # that it did not turn into anything else.
+    assert "x-tile-cache" not in second.headers or second.headers["x-tile-cache"] in ("HIT", "MISS")

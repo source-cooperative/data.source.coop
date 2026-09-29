@@ -17,6 +17,7 @@ mod object_path;
 mod pagination;
 mod source_api;
 mod sts;
+mod tiles;
 
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
@@ -288,6 +289,20 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         .clone();
     let backend_auth = MaybeOidcAuth::Enabled(Box::new(AwsBackendAuth::new(provider)));
 
+    // ── PMTiles tile endpoint ─────────────────────────────────────
+    // Middleware, not a route: it runs after identity resolution with the
+    // gateway's authorized `BucketConfig`, and after `backend_auth` so that
+    // config already carries federated credentials where the connection needs
+    // them. It claims `…/{archive}.pmtiles/{z}/{x}/{y}.{ext}` and `tiles.json`
+    // reads of public products and hands everything else to `next`, so an
+    // ordinary object that happens to sit under a `*.pmtiles/` directory, or a
+    // private tileset read by its owner, still reaches the object pipeline.
+    let tiles = tiles::PmTilesMiddleware::new(
+        registry.clone(),
+        config.tile_cache_max_age,
+        config.public_base_url.clone(),
+    );
+
     let gateway = ProxyGateway::new(
         WorkerBackend,
         MappedRegistry::new(registry, mapping.clone()),
@@ -295,6 +310,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         None,
     )
     .with_middleware(backend_auth)
+    .with_middleware(tiles)
     .with_router(router)
     .with_debug_errors(max_level >= tracing::Level::DEBUG)
     .with_credential_resolver(config.session_token_key.clone());
@@ -398,9 +414,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     // ── Broadcast location to WebSocket viewers ──────────────────
-    // Only successful GET reads of a real product (not /.well-known or /.sts).
+    // Only successful GET reads of a real product (not /.well-known or /.sts),
+    // and never a tile: one map pan is 50-200 tile requests, each of which would
+    // otherwise spawn a product fetch plus a PUBLIC_LOG_STREAM subrequest and
+    // push a near-identical point (`5/9/12.mvt`) onto the live map. That drowns
+    // out genuine object reads, spends the per-request subrequest budget, and
+    // lands even on the warm path the tile endpoint exists to make cheap.
     if let (&http::Method::GET, Some(acct), Some(prod)) = (&parts.method, account, product) {
-        if response.status() < 400 && !parts.path.starts_with("/.") {
+        let is_tile = key.is_some_and(|k| tiles::parse_target(k).is_some());
+        if response.status() < 400 && !parts.path.starts_with("/.") && !is_tile {
             location::maybe_broadcast_location(
                 &ctx,
                 &env,
