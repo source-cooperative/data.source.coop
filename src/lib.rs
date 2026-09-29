@@ -533,8 +533,15 @@ async fn api_key_exchange(
     Some(
         match exchange_api_key(config, &sts, api_auth, request_id).await {
             Ok(creds) => build_sts_response(&creds),
-            // One answer for every refusal of the key itself — unknown, revoked,
-            // expired, disabled, malformed. `exchange_api_key` has logged why.
+            // A key that fails its shape or checksum was cut short or mistyped,
+            // which the user can fix; saying so reveals nothing, since the
+            // format is public and no lookup was made.
+            Err(ProxyError::InvalidOidcToken(reason)) if reason == "malformed" => key_refusal(
+                "API key is malformed; check that it was copied whole",
+                request_id,
+            ),
+            // One answer for every other refusal of the key — unknown, revoked,
+            // expired, disabled. `exchange_api_key` has logged why.
             Err(ProxyError::InvalidOidcToken(_)) => {
                 key_refusal("API key was not accepted", request_id)
             }

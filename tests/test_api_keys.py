@@ -111,10 +111,15 @@ def test_a_key_in_the_query_string_is_refused_before_any_lookup():
 
 def test_a_malformed_key_is_refused_locally():
     before = sum(requests.get(f"{STUB_URL}/_stub/key-exchange-counts").json().values())
-    for bad in ["sck_tooshort", "sck_" + "x" * 44, "SCK_" + "L" * 43]:
+    mistyped = LIVE_KEY[:4] + "M" + LIVE_KEY[5:]
+    for bad in ["sck_tooshort", LIVE_KEY[:-1], LIVE_KEY + "x", mistyped]:
         resp = exchange(bad)
         assert resp.status_code == 400, bad
-        assert sts_fields(resp)["Code"] == "InvalidIdentityToken", bad
+        fields = sts_fields(resp)
+        assert fields["Code"] == "InvalidIdentityToken", bad
+        assert fields["Message"] == f"API key is malformed; check that it was copied whole (request id {RAY})", bad
+    # The wrong case is no key at all, so the JWT path refuses it.
+    assert exchange(LIVE_KEY.replace("sck_", "SCK_")).status_code == 400
     assert sum(requests.get(f"{STUB_URL}/_stub/key-exchange-counts").json().values()) == before
 
 

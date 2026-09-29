@@ -124,7 +124,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 ### API keys
 
-A service account's API key (ADR-013) is an opaque `sck_` secret that source.coop stores as a hash. It is presented at `/.sts` as `WebIdentityToken`, from a POST form body only — a key in the URL is refused, because the URL is logged. The proxy trims and format-checks it, hashes it, and asks `POST {SOURCE_API_URL}/api/v1/service-account-keys/exchanges` for its standing as itself (subject `urn:source:data-proxy`), caching the answer for 60 seconds; then it mints credentials for the account the API names, exactly as it would for an ID token. Every refusal of the key reads `API key was not accepted (request id …)`; the reason is in the log under that id.
+A service account's API key (ADR-013) is an opaque `sck_` secret that source.coop stores as a hash. It is presented at `/.sts` as `WebIdentityToken`, from a POST form body only — a key in the URL is refused, because the URL is logged. The proxy trims it and checks its shape and checksum (the last six characters are a CRC-32 of the thirty random ones before them, in base62), hashes it, and asks `POST {SOURCE_API_URL}/api/v1/service-account-keys/exchanges` for its standing as itself (subject `urn:source:data-proxy`), caching the answer for 60 seconds; then it mints credentials for the account the API names, exactly as it would for an ID token. A key that fails its shape or checksum was cut short or mistyped, and is refused as such without a lookup; every other refusal of the key reads `API key was not accepted (request id …)`, and the reason is in the log under that id.
 
 ### Secrets
 

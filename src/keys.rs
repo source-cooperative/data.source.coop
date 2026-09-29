@@ -11,23 +11,48 @@ use multistore_sts::TokenKey;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// Every key starts with this, followed by 32 random bytes in base64url:
-/// a fixed 47 characters, the pattern secret scanners are given.
+/// Every key starts with this, followed by 30 random base62 characters and
+/// the six-character checksum of those 30: a fixed 40 characters, the pattern
+/// secret scanners are given.
 pub const API_KEY_PREFIX: &str = "sck_";
-const API_KEY_LEN: usize = 47;
+const API_KEY_LEN: usize = 40;
+const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// The token, trimmed, if it has exactly a key's shape; `None` for anything
-/// else — a JWT, a truncated key, the wrong case — so the JWT path or a local
-/// refusal takes it without a lookup. Whitespace is trimmed first because
-/// every hand-made token file ends in a newline, and some SDKs send it.
+/// The token, trimmed, if it has exactly a key's shape and its checksum
+/// holds; `None` for anything else — a JWT, a truncated or mistyped key, the
+/// wrong case — so the JWT path or a local refusal takes it without a lookup.
+/// Whitespace is trimmed first because every hand-made token file ends in a
+/// newline, and some SDKs send it.
 pub fn parse_api_key(token: &str) -> Option<&str> {
     let key = token.trim();
+    let rest = key.strip_prefix(API_KEY_PREFIX)?;
     (key.len() == API_KEY_LEN
-        && key.starts_with(API_KEY_PREFIX)
-        && key[API_KEY_PREFIX.len()..]
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        && rest.bytes().all(|b| b.is_ascii_alphanumeric())
+        && rest.as_bytes()[30..] == checksum(&rest.as_bytes()[..30]))
     .then_some(key)
+}
+
+/// A key's last six characters: the CRC-32 of the thirty before them (IEEE,
+/// as zlib computes it), in base62, most significant digit first.
+fn checksum(body: &[u8]) -> [u8; 6] {
+    let mut crc = !0u32;
+    for &b in body {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    let mut n = !crc;
+    let mut digits = [b'0'; 6];
+    for digit in digits.iter_mut().rev() {
+        *digit = BASE62[(n % 62) as usize];
+        n /= 62;
+    }
+    digits
 }
 
 /// Whether the token so much as looks like a key — the prefix alone. Used to

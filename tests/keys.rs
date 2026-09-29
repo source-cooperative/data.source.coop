@@ -10,16 +10,20 @@ mod sts;
 use keys::*;
 use multistore_sts::TokenKey;
 
-const KEY: &str = "sck_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+// Keys whose checksums were computed independently, with Python's zlib.crc32.
+const KEY: &str = "sck_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1yLcDB";
 
 // ── recognising a key ──────────────────────────────────────────────
 
 #[test]
 fn a_well_formed_key_is_a_key() {
     assert_eq!(parse_api_key(KEY), Some(KEY));
-    let mixed = "sck_Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09A";
-    assert_eq!(mixed.len(), 47);
+    // Every character class, and a CRC above 2^31.
+    let mixed = "sck_0123456789ABCDEFGHIJabcdefghij4Us3aw";
     assert_eq!(parse_api_key(mixed), Some(mixed));
+    // A CRC below 62^5, whose checksum keeps its leading zero.
+    let padded = "sck_000000000000000000000000000001010Ohw";
+    assert_eq!(parse_api_key(padded), Some(padded));
 }
 
 #[test]
@@ -32,14 +36,33 @@ fn surrounding_whitespace_is_trimmed() {
 
 #[test]
 fn anything_else_is_not_a_key() {
-    assert_eq!(parse_api_key(&KEY[..46]), None, "too short");
+    assert_eq!(parse_api_key(&KEY[..39]), None, "too short");
     assert_eq!(parse_api_key(&format!("{KEY}a")), None, "too long");
     assert_eq!(
         parse_api_key(&KEY.replace("sck_", "SCK_")),
         None,
         "wrong case"
     );
-    assert_eq!(parse_api_key(&KEY.replace('a', "+")), None, "not base64url");
+    assert_eq!(
+        parse_api_key(&KEY.replacen('a', "b", 1)),
+        None,
+        "a mistyped character"
+    );
+    assert_eq!(
+        parse_api_key("sck_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1yLcDC"),
+        None,
+        "a mistyped checksum"
+    );
+    assert_eq!(
+        parse_api_key("sck_aaaaaaaaaaaaaaaaaaaaaaaaaa-_aa1yLcDB"),
+        None,
+        "not base62"
+    );
+    assert_eq!(
+        parse_api_key("sck_Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09Ab-_09A"),
+        None,
+        "the checksum-less 47-character format"
+    );
     assert_eq!(
         parse_api_key("eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig"),
         None,
@@ -60,10 +83,10 @@ fn the_prefix_alone_marks_a_key_for_refusal() {
 
 #[test]
 fn the_hash_is_hex_sha256_of_the_key() {
-    // Computed independently: sha256("sck_" + "a" * 43).
+    // Computed independently: sha256 of KEY.
     assert_eq!(
         key_hash(KEY),
-        "079124300599a6ace561d0554a60dccf90edb04d486b55062bba42ff230d4f5f"
+        "613aab548f220de88af7132782834dd7af6ec9ded8df4a7b19840545280968db"
     );
     assert_eq!(key_hash(KEY).len(), 64);
 }

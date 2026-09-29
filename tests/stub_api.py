@@ -24,6 +24,7 @@ SOURCE_API_URL in .dev.vars.
 import hashlib
 import json
 import os
+import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -120,10 +121,22 @@ assert (
 # key and never the hash — exactly what the proxy is meant to send. A counter
 # per hash lets the tests prove the proxy's 60s standing cache is doing its
 # job: the second exchange of a key must not reach here.
-LIVE_KEY = "sck_" + "L" * 43
-REVOKED_KEY = "sck_" + "R" * 43
-UNKNOWN_KEY = "sck_" + "U" * 43
-ERR_500_KEY = "sck_" + "E" * 43
+BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def _key(char):
+    """A well-formed key: 30 of `char`, then their CRC-32 in six base62 digits."""
+    body, n, checksum = char * 30, zlib.crc32((char * 30).encode()), ""
+    for _ in range(6):
+        n, digit = divmod(n, 62)
+        checksum = BASE62[digit] + checksum
+    return "sck_" + body + checksum
+
+
+LIVE_KEY = _key("L")
+REVOKED_KEY = _key("R")
+UNKNOWN_KEY = _key("U")
+ERR_500_KEY = _key("E")
 KEY_ACCOUNT = "ci-tests--nightly-sync"
 
 
