@@ -3,7 +3,9 @@
 //! Each public function caches one API call type with its own TTL.
 //! Adjust the `*_CACHE_SECS` constants to tune per-datatype expiry.
 
+use super::auth::ApiCaller;
 use super::types::{DataConnection, SourceProduct, SourceProductList};
+use crate::keys::KeyStanding;
 use multistore::error::ProxyError;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
@@ -44,6 +46,12 @@ const PRODUCT_LIST_CACHE_SECS: u32 = 60; // 1 minute
 /// so a revoked grant should stop taking effect quickly.
 const PERMISSIONS_CACHE_SECS: u32 = 60; // 1 minute
 
+/// A presented API key's standing (`/service-account-keys/exchanges`). The
+/// permissions TTL, for the same reason: it gates access, so a revoked key
+/// should stop being exchangeable quickly (ADR-013). Inactive answers are
+/// cached too — an unknown key costs one lookup a minute, not one a request.
+const KEY_STANDING_CACHE_SECS: u32 = 60; // 1 minute
+
 // ── Public cache functions ─────────────────────────────────────────
 
 /// Fetch a single product's metadata, cached for `PRODUCT_CACHE_SECS`.
@@ -65,10 +73,12 @@ pub async fn get_or_fetch_product(
     cached_fetch(
         &cache_key,
         &api_url,
+        "GET",
+        None,
         PRODUCT_CACHE_SECS,
         api_auth,
         request_id,
-        subject,
+        subject.into(),
     )
     .await
 }
@@ -94,10 +104,12 @@ pub async fn get_or_fetch_permissions(
     cached_fetch(
         &cache_key,
         &api_url,
+        "GET",
+        None,
         PERMISSIONS_CACHE_SECS,
         api_auth,
         request_id,
-        Some(subject),
+        ApiCaller::Account(subject),
     )
     .await
 }
@@ -125,10 +137,12 @@ pub async fn get_or_fetch_data_connection(
     cached_fetch(
         &cache_key,
         &api_url,
+        "GET",
+        None,
         DATA_CONNECTION_CACHE_SECS,
         api_auth,
         request_id,
-        subject,
+        subject.into(),
     )
     .await
 }
@@ -150,10 +164,42 @@ pub async fn get_or_fetch_product_list(
     cached_fetch(
         &cache_key,
         &api_url,
+        "GET",
+        None,
         PRODUCT_LIST_CACHE_SECS,
         api_auth,
         request_id,
-        subject,
+        subject.into(),
+    )
+    .await
+}
+
+/// A presented API key's standing, cached for `KEY_STANDING_CACHE_SECS`,
+/// looked up by the key's hash — the key itself never leaves the proxy.
+/// Asked as the proxy itself: nothing names an account before the answer.
+/// A POST, because the API records the use as it answers; the route answers
+/// 200 for any well-formed hash, inactive ones included, so the cache holds
+/// every answer alike.
+pub async fn get_or_fetch_key_standing(
+    api_base_url: &str,
+    key_hash: &str,
+    api_auth: &crate::ApiAuth,
+    request_id: &str,
+) -> Result<KeyStanding, ProxyError> {
+    let api_url = format!("{}/api/v1/service-account-keys/exchanges", api_base_url);
+    // The Cache API keys on URLs; the base URL scopes the entry to this
+    // environment's API, and the hash is the only thing that varies.
+    let cache_key = format!("{api_url}?key_hash={key_hash}");
+    let body = serde_json::json!({ "key_hash": key_hash }).to_string();
+    cached_fetch(
+        &cache_key,
+        &api_url,
+        "POST",
+        Some(&body),
+        KEY_STANDING_CACHE_SECS,
+        api_auth,
+        request_id,
+        ApiCaller::Proxy,
     )
     .await
 }
@@ -181,15 +227,18 @@ fn cache_key_with_subject(api_url: &str, subject: Option<&str>) -> String {
 }
 
 /// Generic cache-or-fetch: check the Cache API, return cached JSON on hit,
-/// otherwise fetch from `api_url`, store in cache with the given TTL, and
-/// return the deserialized result.
+/// otherwise fetch from `api_url` with `method` (and a JSON `body`, if any),
+/// store in cache with the given TTL, and return the deserialized result.
+#[allow(clippy::too_many_arguments)]
 async fn cached_fetch<T: serde::de::DeserializeOwned>(
     cache_key: &str,
     api_url: &str,
+    method: &str,
+    body: Option<&str>,
     ttl_secs: u32,
     api_auth: &crate::ApiAuth,
     request_id: &str,
-    subject: Option<&str>,
+    caller: ApiCaller<'_>,
 ) -> Result<T, ProxyError> {
     let span = tracing::info_span!(
         "cached_fetch",
@@ -219,17 +268,21 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     // ── Cache miss — fetch from API ────────────────────────────
     span.record("cache_hit", false);
     let init = web_sys::RequestInit::new();
-    init.set_method("GET");
+    init.set_method(method);
     let req_headers = web_sys::Headers::new()
         .map_err(|e| ProxyError::Internal(format!("headers build failed: {:?}", e)))?;
     // Only authenticate to the API when we have an identified caller.
     // Anonymous proxy requests hit the API without credentials.
-    if let Some(subj) = subject {
-        if let Some(auth_value) = api_auth.authorization_header(subj) {
-            req_headers
-                .set("Authorization", &auth_value)
-                .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
-        }
+    if let Some(auth_value) = api_auth.authorization_header_for(caller) {
+        req_headers
+            .set("Authorization", &auth_value)
+            .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+    }
+    if let Some(body) = body {
+        req_headers
+            .set("content-type", "application/json")
+            .map_err(|e| ProxyError::Internal(format!("header set failed: {:?}", e)))?;
+        init.set_body(&wasm_bindgen::JsValue::from_str(body));
     }
     if !request_id.is_empty() {
         let _ = req_headers.set("x-request-id", request_id);
