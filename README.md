@@ -14,7 +14,7 @@ The proxy supports `GET`, `HEAD`, and S3-compatible `LIST` operations with anony
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install worker-build@0.7.5
-npm install -g wrangler@3
+npm install -g wrangler@4
 ```
 
 ### Run Locally
@@ -120,7 +120,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 
 | Binding              | Kind        | Description                                                                                                                                  |
 | -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KEY_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on API-key exchanges at `/.sts` (ADR-013). Declared under `[[unsafe.bindings]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
+| `KEY_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on API-key exchanges at `/.sts` (ADR-013). Declared under `[[ratelimits]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
 
 ### API keys
 

@@ -49,8 +49,7 @@ binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
 
 # API-key exchange rate limit, per client IP; see wrangler.toml.
-[[unsafe.bindings]]
+[[ratelimits]]
 name = "KEY_EXCHANGE_LIMIT"
-type = "ratelimit"
 namespace_id = "1003"
 simple = { limit = 100, period = 60 }
