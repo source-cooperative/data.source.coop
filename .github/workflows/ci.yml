@@ -98,7 +98,7 @@ jobs:
           node-version: "22"
       - uses: astral-sh/setup-uv@v5
       - name: Install wrangler
-        run: npm install -g wrangler@3
+        run: npm install -g wrangler@4
       - name: Generate test secrets
         # Required by `load_config` in src/config.rs (`JwtSigner::from_pem` and
         # `TokenKey::from_base64` validate at startup). The signing key is a
