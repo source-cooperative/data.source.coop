@@ -1,7 +1,7 @@
 # ADR-013: API Keys for Environments Without OIDC
 
-**Status:** Proposed — not implemented (revised 2026-09-25)
-**Date:** 2026-04-01 · revised 2026-09-25
+**Status:** Proposed — not implemented (revised 2026-09-25; key format 2026-09-29)
+**Date:** 2026-04-01 · revised 2026-09-25 and 2026-09-29
 **RFC:** RFC-001 §12
 **Depends on:** ADR-001, ADR-004, ADR-007, ADR-014
 **Amends:** ADR-005 (proxy-to-API authentication), ADR-014 (the amendment of this ADR)
@@ -46,7 +46,7 @@ A design comment on the epic (source-cooperative/source.coop#491, 2026-08-22) ha
 
 ### The key is an opaque secret
 
-An API key is `sck_` followed by 32 random bytes in base64url, a fixed 47 characters matching `^sck_[A-Za-z0-9_-]{43}$`, with no checksum. source.coop generates it, stores `sha256(key)` on the key record, shows it once, and never stores or logs the key. Nothing signs it. There is no key material for API keys anywhere on the platform. The hash needs no salt or key-derivation function: its input is 256 random bits, and the lookup is a key get, so there is no comparison to time.
+An API key is `sck_` followed by 30 random base62 characters and a six-character checksum: a fixed 40 characters matching `^sck_[0-9A-Za-z]{36}$`. The checksum is the CRC-32 of the 30 random characters (IEEE, as zlib computes it), written in base62 with the digits `0-9A-Za-z`, most significant first, padded with `0` to six. This is GitHub's own token layout, and it follows the guidance of GitHub's secret-scanning partner program — a unique prefix, high entropy, a 32-bit checksum — so that a scanner, the proxy or the CLI can tell a key from a look-alike, a truncated key or a mistyped one without a lookup. The checksum adds no security: anyone can compute it. Base62 rather than base64url keeps `-` out of the key, so a double-click selects all of it. source.coop generates it, stores `sha256(key)` on the key record, shows it once, and never stores or logs the key. Nothing signs it. There is no key material for API keys anywhere on the platform. The hash needs no salt or key-derivation function: its input carries 178 random bits, and the lookup is a key get, so there is no comparison to time.
 
 The record holds `key_hash` (partition key), `key_id` (random, public, for the UI and management actions), `account_id` (a service account, per ADR-014), `label`, `created_at`, `created_by`, `expires_at` (nullable, editable after issuance), `revoked_at` and `last_used_at`. A service account may hold several active keys; rotation is issue-new, deploy, revoke-old. A disabled service account is refused a key.
 
@@ -55,7 +55,7 @@ The record holds `key_hash` (partition key), `key_id` (random, public, for the U
 `/.sts` accepts a key as `WebIdentityToken` in an `AssumeRoleWithWebIdentity` request, exactly as it accepts a JWT. The proxy:
 
 1. Accepts a key **only from the form body of a POST**. A key anywhere in the query string is refused before any lookup, with a message that says so, because the platform logs request URLs.
-2. Trims surrounding whitespace, then checks the fixed format; a malformed value is refused locally.
+2. Trims surrounding whitespace, then checks the fixed format and the checksum. A malformed value is refused locally with a message of its own, "API key is malformed; check that it was copied whole": the format is public, so saying so reveals nothing about any key, and it is the one refusal a user can fix.
 3. Hashes the key and looks up its standing at `POST /api/v1/service-account-keys/exchanges` with `{"key_hash"}`, authenticated as the proxy itself (see Amendments). The answer, `{account_id, key_id, active}` with `active: false` for an unknown hash, is cached for 60 seconds. An API failure fails closed and caches nothing.
 4. Refuses an inactive or unknown key with one client-visible outcome, `InvalidIdentityToken` "API key was not accepted (request id …)", the id in the message because SDKs surface only the message; the reason is in the log.
 5. Otherwise mints session credentials for `account_id` through the same minting, sealing and response code as every other exchange, with the same duration floor and cap. The account segment of `RoleArn` is ignored, as it is for an Ory ID token; the key names the account. The role must be one the proxy serves.
@@ -95,9 +95,9 @@ The first two bullets of ADR-014's amendment of this ADR are replaced: a key is 
 - One source of truth. Existence, account, expiry, revocation and disablement are all the record's, read by one lookup the proxy already had to make.
 - No signing key on the key path. The proxy's key stays reserved for outbound federation and its API calls; rotating it cannot affect an API key. Non-expiring keys need no retained key ring.
 - Issuance is one DynamoDB write, with no cross-service call and no compensating delete.
-- The proxy never holds a key at rest and forwards only its hash. Enumeration is infeasible at 256 bits.
+- The proxy never holds a key at rest and forwards only its hash. Enumeration is infeasible at 178 bits.
 - The stock-SDK experience the epic promises for GitHub Actions holds for every environment.
-- The secret-scanning marker is a fixed-length, all-entropy pattern.
+- The secret-scanning marker is a fixed-length pattern with a checksum, so a scanner can discard look-alikes without asking source.coop.
 
 **Costs / Risks**
 
