@@ -57,16 +57,16 @@ The sealed payload carries:
 | `access_key_id` | The identifier the caller signs with |
 | `secret_access_key` | The signing secret, recovered by unsealing |
 | `expiration` | Enforced at unseal time; an expired token fails closed |
-| `assumed_role_id` | The Role assumed at exchange time (currently always `_default`) |
+| `assumed_role_id` | The Role assumed at exchange time: `_default`, `FullAccess` or `ReadOnly` (ADR-004) |
 | `source_identity` | The original OIDC `sub` — the caller's Ory identity |
-| `allowed_scopes` | Scope ceiling sealed at mint time — currently empty, and not consulted on this path (see below) |
+| `allowed_scopes` | The Role's ceiling, sealed at mint time: empty for `FullAccess` and `_default`, reads of every product for `ReadOnly` (see below) |
 | `session_token` | A discarded random placeholder. The credential set is sealed *before* this field is overwritten with the sealed blob, so the value inside the envelope is not the token itself |
 
 Key properties of this design:
 
 - **Verification is fully stateless.** The proxy decrypts the token on each request and recovers the `SecretAccessKey` directly. No database lookup, no key derivation, and no asymmetric verification on the request hot path — which matters on Workers, where in-memory state does not persist across invocations.
 - **The token is opaque to the caller.** Unlike a JWT, a client cannot read the sealed payload. Scope and identity metadata are not disclosed to whoever holds the credential.
-- **`allowed_scopes` is sealed but not enforced on this path.** Its only consumer, `multistore::auth::authorize`, has no call site in the pinned crate; the gateway delegates authorization to the bucket registry instead (ADR-005). Where scopes *are* evaluated, an empty vec means **deny-all**, not unlimited — which is why the registry overrides `authorize_key` rather than inheriting the default. The effective behaviour is "no ceiling", but by bypass rather than by an empty-means-unlimited rule. ADR-011 is where this field would become load-bearing, and wiring it up is part of that work rather than a given.
+- **`allowed_scopes` is enforced by the bucket registry, not by multistore.** multistore's own consumer, `multistore::auth::authorize`, has no call site in the pinned crate; the gateway delegates authorization to the registry instead (ADR-005), which checks the ceiling before any lookup (ADR-011, #236). The registry reads an empty vec as **no ceiling**, the reverse of `authorize`, where empty means deny-all — which is also why the registry overrides `authorize_key` rather than inheriting the default. The only non-empty ceiling is `ReadOnly`'s: every product (`*`), read actions only.
 - **`source_identity` preserves the original subject**, which is what the proxy presents to the policy store (see ADR-005).
 - **Authenticated encryption.** GCM provides integrity as well as confidentiality: a tampered token fails to decrypt rather than decoding into attacker-chosen values.
 
