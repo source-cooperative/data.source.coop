@@ -171,23 +171,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // writable and signable) and the backend-auth middleware signs them. See
     // `authz` and `backend_auth`.
 
-    // ── Short-circuit: STS disabled (fail closed) ───────────────────
-    // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
-    // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
-    // be exchanged for a user's credentials. When unset, refuse the endpoint
-    // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
-        let resp = ErrorResponse {
-            code: "NotImplemented".to_string(),
-            message: "STS token exchange is not configured".to_string(),
-            resource: String::new(),
-            request_id: request_id.clone(),
-        };
-        return Ok(add_cors(
-            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-        ));
-    }
-
     // ── Short-circuit: write to a keyless path ──────────────────────
     // A keyless PUT/DELETE (e.g. `aws s3 cp f s3://account/product` with no
     // trailing slash) targets the product root, which has no object key.
@@ -251,6 +234,24 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         {
             return Ok(finish(result, &request_id));
         }
+    }
+
+    // ── Short-circuit: STS disabled (fail closed) ───────────────────
+    // The person issuer's route requires an audience restriction
+    // (AUTH_AUDIENCE) to be safe — without it, an ID token minted for any
+    // OAuth client of AUTH_ISSUER could be exchanged for a user's credentials.
+    // When unset, refuse it with a 501 rather than serving it unrestricted.
+    // API keys and platform tokens, answered above, do not depend on it.
+    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+        let resp = ErrorResponse {
+            code: "NotImplemented".to_string(),
+            message: "STS token exchange is not configured".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+        ));
     }
 
     // ── Build gateway with route handlers ──────────────────────────

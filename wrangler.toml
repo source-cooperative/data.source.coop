@@ -45,7 +45,7 @@ STS_MAX_SESSION_DURATION_SECS = "43200"
 # Required vars (to enable /.sts token exchange):
 #   AUTH_AUDIENCE - comma-separated OAuth client_id(s) that /.sts subject tokens
 #                   must be issued to (the `aud` claim). A token is accepted if
-#                   it matches any. Unset = /.sts is disabled (returns 501).
+#                   it matches any. Unset = person-token exchange at /.sts is disabled (returns 501).
 # Optional vars:
 #   PLATFORM_ISSUERS - JSON object from platform issuer URL to the audiences its
 #                      tokens must carry. Unset = no platform issuer is trusted.

@@ -97,8 +97,10 @@ fn build_config(env: &Env) -> AppConfig {
     if auth_audiences.is_empty() {
         // Fail closed: without an audience restriction, an ID token minted for
         // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
-        // credentials, so /.sts is disabled entirely (returns 501) until set.
-        tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
+        // credentials, so its exchange is disabled (returns 501) until set.
+        tracing::warn!(
+            "AUTH_AUDIENCE not set: person-token exchange at /.sts is disabled (returns 501)"
+        );
     }
 
     // Platform identity providers (GitHub Actions, say), each with its own
