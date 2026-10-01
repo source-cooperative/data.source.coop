@@ -248,7 +248,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             if let Some(result) = api_key_exchange(&exchange, &sts, in_url).await {
                 return Ok(finish(result, &request_id));
             }
-            if let Some(result) = platform_exchange(&exchange, &sts).await {
+            if let Some(result) = platform_exchange(&exchange, &sts, in_url).await {
                 return Ok(finish(result, &request_id));
             }
         }
@@ -725,14 +725,26 @@ fn sts_error_xml(code: &str, message: &str) -> String {
 // ── Platform identity providers ─────────────────────────────────────
 
 /// The exchange of a platform issuer's token, if this request carries one:
-/// `None` for any other token, which the STS route takes.
+/// `None` for any other token, which the STS route takes. Like an API key, the
+/// token is accepted from the form body only: Cloudflare logs the URL, and a
+/// logged token could be replayed for credentials until it expires.
 async fn platform_exchange(
     exchange: &Exchange<'_>,
     sts: &multistore_sts::request::StsRequest,
+    in_url: bool,
 ) -> Option<(u16, String)> {
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
     let audiences = exchange.config.platform_issuers.get(issuer)?;
+    if in_url {
+        let request_id = exchange.request_id;
+        tracing::warn!(%request_id, %issuer, reason = "query_string", "platform token exchange refused");
+        let message = "WebIdentityToken must be sent in the request body, not the URL";
+        return Some(sts_refusal(
+            &ProxyError::InvalidRequest(message.into()),
+            request_id,
+        ));
+    }
     let token = PlatformToken {
         sts,
         header: &header,

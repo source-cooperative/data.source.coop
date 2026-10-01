@@ -57,19 +57,19 @@ needs_wrong_aud_token = pytest.mark.skipif(
 )
 
 
-def sts_exchange(token, *, form_body=False):
+def sts_exchange(token, *, in_url=False):
     """POST /.sts with the given web identity token; return the raw response.
 
-    `form_body` sends the parameters the way AWS SDKs do — form-encoded in the
-    request body, with no query string — instead of in the query string."""
+    The parameters are form-encoded in the body, the way AWS SDKs send them;
+    `in_url` sends them in the query string instead."""
     params = {
         "Action": "AssumeRoleWithWebIdentity",
         "RoleArn": f"arn:aws:iam::{TRUST_ACCOUNT}:role/FullAccess",
         "WebIdentityToken": token,
     }
-    if form_body:
-        return requests.post(f"{PROXY_URL}/.sts", data=params)
-    return requests.post(f"{PROXY_URL}/.sts", params=params)
+    if in_url:
+        return requests.post(f"{PROXY_URL}/.sts", params=params)
+    return requests.post(f"{PROXY_URL}/.sts", data=params)
 
 
 @functools.lru_cache(maxsize=1)
@@ -211,15 +211,11 @@ def test_sts_exchange_issues_credentials():
 
 
 @needs_token
-def test_sts_exchange_accepts_a_form_encoded_body():
-    """The same exchange, sent the way an AWS SDK sends it: parameters
-    form-encoded in the POST body rather than in the query string."""
-    resp = sts_exchange(ID_TOKEN, form_body=True)
-    assert resp.status_code == 200, (
-        f"form-encoded /.sts exchange failed ({resp.status_code}): {resp.text[:300]}"
-    )
-    fields = {el.tag.rpartition("}")[2]: el.text for el in ET.fromstring(resp.text).iter()}
-    assert fields["AccessKeyId"].startswith("STSPRXY")
+def test_sts_exchange_refuses_a_platform_token_in_the_url():
+    """Cloudflare logs the URL, and a logged token could be replayed."""
+    resp = sts_exchange(ID_TOKEN, in_url=True)
+    assert resp.status_code == 400, resp.text[:300]
+    assert "must be sent in the request body" in resp.text
 
 
 def test_sts_form_encoded_body_reaches_the_sts_handler():
@@ -228,7 +224,7 @@ def test_sts_form_encoded_body_reaches_the_sts_handler():
     through to the S3 pipeline. Without the body being collected before
     dispatch, the STS handler never sees the `Action` param and never matches,
     so the failure mode is a non-STS error rather than a 200."""
-    resp = sts_exchange("not-a-jwt", form_body=True)
+    resp = sts_exchange("not-a-jwt")
     assert resp.status_code == 400, (
         f"expected an STS rejection ({resp.status_code}): {resp.text[:300]}"
     )

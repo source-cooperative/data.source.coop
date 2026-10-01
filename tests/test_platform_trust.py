@@ -88,6 +88,17 @@ def test_only_a_service_account_can_be_named(account):
     assert trust_lookups(account) == 0
 
 
+def test_a_platform_token_in_the_url_is_refused_before_any_trust_lookup():
+    before = trust_lookups(TRUST_ACCOUNT)
+    params = {"Action": "AssumeRoleWithWebIdentity", "RoleArn": as_account(TRUST_ACCOUNT), "WebIdentityToken": forged()}
+    resp = requests.post(f"{PROXY_URL}/.sts", params=params, headers={"cf-ray": RAY})
+    assert resp.status_code == 400
+    assert sts_fields(resp)["Message"] == (
+        f"WebIdentityToken must be sent in the request body, not the URL (request id {RAY})"
+    )
+    assert trust_lookups(TRUST_ACCOUNT) == before
+
+
 def test_a_forged_token_is_refused_before_any_trust_lookup():
     before = trust_lookups(TRUST_ACCOUNT)
     resp = exchange(forged(), as_account(TRUST_ACCOUNT))
