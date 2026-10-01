@@ -103,10 +103,15 @@ fn build_config(env: &Env) -> AppConfig {
 
     // Platform identity providers (GitHub Actions, say), each with its own
     // audiences. Unset trusts none.
-    let platform_issuers = env
+    let mut platform_issuers = env
         .var("PLATFORM_ISSUERS")
         .map(|v| crate::platform::parse_issuers(&v.to_string()))
         .unwrap_or_default();
+    // The platform path claims its issuers' tokens ahead of the STS route, so
+    // an entry for the person issuer would refuse every person exchange.
+    if platform_issuers.remove(&auth_issuer).is_some() {
+        tracing::error!(issuer = %auth_issuer, "PLATFORM_ISSUERS names AUTH_ISSUER; ignoring that entry");
+    }
 
     // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
     // matching multistore's own default so behavior is unchanged until raised.
