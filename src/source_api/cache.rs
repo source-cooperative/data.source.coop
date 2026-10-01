@@ -57,10 +57,9 @@ const KEY_STANDING_CACHE_SECS: u32 = 60; // 1 minute
 /// reason: a trust that is removed should stop minting quickly (ADR-014).
 const TRUST_CACHE_SECS: u32 = 60; // 1 minute
 
-/// A refusal from the trusts route, cached under its own key: long enough that
-/// replaying one token its account does not trust costs about one lookup per
-/// 10 seconds, however many addresses it comes from, and short enough that a
-/// trust just added works within seconds.
+/// A refusal from the trusts route: long enough that replaying one token its
+/// account does not trust costs about one lookup per 10 seconds per data
+/// center, and short enough that a trust just added works within seconds.
 const REFUSED_TRUST_CACHE_SECS: u32 = 10;
 
 // ── Public cache functions ─────────────────────────────────────────
@@ -220,7 +219,7 @@ pub async fn get_or_fetch_key_standing(
 /// assume-role call. Asked as the account itself. The route says yes with a
 /// 200, cached for `TRUST_CACHE_SECS` like every 200, and no with a 403 (a 401
 /// for an account it cannot resolve), which `cached_fetch` leaves uncached and
-/// this caches for `REFUSED_TRUST_CACHE_SECS` under a key of its own.
+/// this caches as `{"trusted":false}` for `REFUSED_TRUST_CACHE_SECS`.
 pub async fn get_or_fetch_trust(
     api_base_url: &str,
     account: &str,
@@ -241,11 +240,6 @@ pub async fn get_or_fetch_trust(
         utf8_percent_encode(issuer, PATH_SEGMENT),
         utf8_percent_encode(subject, PATH_SEGMENT),
     );
-    let refused_key = format!("{cache_key}&refused");
-    let cache = worker::Cache::default();
-    if matches!(cache.get(&refused_key, false).await, Ok(Some(_))) {
-        return Err(ProxyError::AccessDenied);
-    }
     let body = serde_json::json!({ "issuer": issuer, "subject": subject }).to_string();
     let answer = cached_fetch::<TrustAnswer>(
         &cache_key,
@@ -260,17 +254,21 @@ pub async fn get_or_fetch_trust(
     .await;
     let trusted = match answer {
         Ok(answer) => answer.trusted,
-        Err(ProxyError::AccessDenied) => false,
+        Err(ProxyError::AccessDenied) => {
+            let cache = worker::Cache::default();
+            let refused = r#"{"trusted":false}"#;
+            cache_put(&cache, &cache_key, refused, REFUSED_TRUST_CACHE_SECS).await;
+            false
+        }
         Err(e) => return Err(e),
     };
-    if !trusted {
-        // A 200 saying no was cached like any 200: drop it, so a no is held
-        // for `REFUSED_TRUST_CACHE_SECS` whichever way the route said it.
-        let _ = cache.delete(cache_key.as_str(), false).await;
-        cache_put(&cache, &refused_key, "{}", REFUSED_TRUST_CACHE_SECS).await;
-        return Err(ProxyError::AccessDenied);
+    // ponytail: a 200 saying no (which the route never sends) is held for
+    // TRUST_CACHE_SECS like any 200; still refused, only slower to flip to yes.
+    if trusted {
+        Ok(())
+    } else {
+        Err(ProxyError::AccessDenied)
     }
-    Ok(())
 }
 
 /// The trusts route's answer. Its status already says yes (200) or no (403);

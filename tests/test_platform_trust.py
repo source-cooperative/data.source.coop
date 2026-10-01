@@ -63,6 +63,15 @@ def test_a_platform_token_must_name_the_account_it_acts_as():
     assert "RoleArn must name the account" in sts_fields(resp)["Message"]
 
 
+def test_a_refusal_escapes_what_the_caller_sent():
+    """RoleArn is echoed in the message; markup in it stays text."""
+    role_arn = 'arn:aws:iam::ab--cd:role/<x:script xmlns:x="http://www.w3.org/1999/xhtml">&'
+    resp = exchange(forged(), role_arn)
+    assert resp.status_code == 400
+    assert "<x:script" not in resp.text
+    assert role_arn in sts_fields(resp)["Message"]
+
+
 @pytest.mark.parametrize(
     "account",
     ["alice", "2c5b4f0e-8a3b-4e2d-9a1f-3c4d5e6f7a8b", "000000000000"],
@@ -83,7 +92,9 @@ def test_a_forged_token_is_refused_before_any_trust_lookup():
     before = trust_lookups(TRUST_ACCOUNT)
     resp = exchange(forged(), as_account(TRUST_ACCOUNT))
     assert resp.status_code == 400
-    assert sts_fields(resp)["Code"] == "InvalidIdentityToken"
+    fields = sts_fields(resp)
+    assert fields["Code"] == "InvalidIdentityToken"
+    assert fields["Message"].endswith(f"(request id {RAY})")
     assert trust_lookups(TRUST_ACCOUNT) == before
 
 
@@ -113,6 +124,13 @@ def test_a_trusted_workflow_gets_credentials_that_act_as_the_account():
         client.get_object(Bucket=WRITE_ACCOUNT, Key=f"{product}/x")
     subjects = requests.get(f"{STUB_URL}/_stub/product-lookup-subjects").json()
     assert subjects[f"/api/v1/products/{WRITE_ACCOUNT}/{product}"] == TRUST_ACCOUNT
+
+
+@needs_token
+def test_a_token_read_from_a_file_may_end_in_a_newline():
+    """SDKs send AWS_WEB_IDENTITY_TOKEN_FILE's contents untrimmed."""
+    resp = exchange(ID_TOKEN + "\n", as_account(TRUST_ACCOUNT))
+    assert resp.status_code == 200, resp.text[:300]
 
 
 @needs_token

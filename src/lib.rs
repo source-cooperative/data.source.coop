@@ -40,7 +40,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use multistore_sts::{build_sts_error_response, build_sts_response, try_parse_sts_request};
+use multistore_sts::{build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
@@ -171,23 +171,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // writable and signable) and the backend-auth middleware signs them. See
     // `authz` and `backend_auth`.
 
-    // ── Short-circuit: STS disabled (fail closed) ───────────────────
-    // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
-    // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
-    // be exchanged for a user's credentials. When unset, refuse the endpoint
-    // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
-        let resp = ErrorResponse {
-            code: "NotImplemented".to_string(),
-            message: "STS token exchange is not configured".to_string(),
-            resource: String::new(),
-            request_id: request_id.clone(),
-        };
-        return Ok(add_cors(
-            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-        ));
-    }
-
     // ── Short-circuit: write to a keyless path ──────────────────────
     // A keyless PUT/DELETE (e.g. `aws s3 cp f s3://account/product` with no
     // trailing slash) targets the product root, which has no object key.
@@ -251,6 +234,24 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         {
             return Ok(finish(result, &request_id));
         }
+    }
+
+    // ── Short-circuit: STS disabled (fail closed) ───────────────────
+    // The person issuer's route requires an audience restriction
+    // (AUTH_AUDIENCE) to be safe — without it, an ID token minted for any
+    // OAuth client of AUTH_ISSUER could be exchanged for a user's credentials.
+    // When unset, refuse it with a 501 rather than serving it unrestricted.
+    // API keys and platform tokens, answered above, do not depend on it.
+    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+        let resp = ErrorResponse {
+            code: "NotImplemented".to_string(),
+            message: "STS token exchange is not configured".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(
+            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+        ));
     }
 
     // ── Build gateway with route handlers ──────────────────────────
@@ -551,7 +552,7 @@ async fn api_key_exchange(
             // API being unreachable, which fails closed as a 500 the SDK retries.
             Err(e) => {
                 tracing::warn!(%request_id, error = %e, "API key exchange failed");
-                build_sts_error_response(&e)
+                sts_refusal(&e, request_id)
             }
         },
     )
@@ -559,9 +560,27 @@ async fn api_key_exchange(
 
 /// `InvalidIdentityToken`, with the request id in the message.
 fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
-    build_sts_error_response(&ProxyError::InvalidOidcToken(with_request_id(
-        message, request_id,
-    )))
+    sts_refusal(&ProxyError::InvalidOidcToken(message.into()), request_id)
+}
+
+/// The STS error for `e`, mapped as multistore's `build_sts_error_response`
+/// maps it, with the request id in the message. Built here because that one
+/// writes the message unescaped, and it can carry a caller's `RoleArn` or a
+/// token's `kid`.
+fn sts_refusal(e: &ProxyError, request_id: &str) -> (u16, String) {
+    let (status, code, message) = match e {
+        ProxyError::RoleNotFound(r) => (
+            400,
+            "MalformedPolicyDocument",
+            format!("role not found: {r}"),
+        ),
+        ProxyError::InvalidOidcToken(m) => (400, "InvalidIdentityToken", m.clone()),
+        ProxyError::InvalidRequest(m) => (400, "InvalidParameterValue", m.clone()),
+        ProxyError::AccessDenied => (403, "AccessDenied", "access denied".to_string()),
+        _ => (500, "InternalError", "internal error".to_string()),
+    };
+    let message = with_request_id(&message, request_id);
+    (status, sts_error_xml(code, &message))
 }
 
 /// `message` with the request id, if there is one: SDKs show a user the
@@ -668,9 +687,13 @@ fn throttled() -> (u16, String) {
     )
 }
 
-/// An STS-shaped error body with a code or message `build_sts_error_response`
-/// does not produce.
+/// An STS-shaped error body. The message is escaped: it can carry text the
+/// caller sent, and the body is served as XML.
 fn sts_error_xml(code: &str, message: &str) -> String {
+    let message = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Code>{code}</Code><Message>{message}</Message></Error></ErrorResponse>"
     )
@@ -688,9 +711,12 @@ async fn platform_exchange(
     api_auth: &ApiAuth,
     request_id: &str,
 ) -> Option<(u16, String)> {
-    let sts = try_parse_sts_request(parts.query.as_deref())
+    let mut sts = try_parse_sts_request(parts.query.as_deref())
         .or_else(|| try_parse_sts_request(parts.form_body.as_deref()))?
         .ok()?;
+    // SDKs send a token file's contents as-is, and `jq -r … > file` ends it in
+    // a newline, which the signature segment's base64 decode rejects.
+    sts.web_identity_token = sts.web_identity_token.trim().to_string();
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
     let audiences = config.platform_issuers.get(issuer)?;
@@ -740,7 +766,7 @@ async fn exchange_platform_token(
     } = token;
     let failed = |e: ProxyError| {
         tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
-        build_sts_error_response(&e)
+        sts_refusal(&e, request_id)
     };
     let not_authorized = || {
         let message = "Not authorized to perform sts:AssumeRoleWithWebIdentity";
@@ -757,7 +783,6 @@ async fn exchange_platform_token(
         config.sts_max_session_duration_secs,
     )
     .ok_or_else(|| failed(ProxyError::RoleNotFound(sts.role_arn.clone())))?;
-    // No angle brackets in the message: the STS error body carries it unescaped.
     let account = sts::account(&sts.role_arn).ok_or_else(|| {
         failed(ProxyError::InvalidRequest(
             "RoleArn must name the account to act as: arn:aws:iam::ACCOUNT:role/ROLE".into(),

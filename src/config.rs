@@ -97,16 +97,23 @@ fn build_config(env: &Env) -> AppConfig {
     if auth_audiences.is_empty() {
         // Fail closed: without an audience restriction, an ID token minted for
         // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
-        // credentials, so /.sts is disabled entirely (returns 501) until set.
-        tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
+        // credentials, so its exchange is disabled (returns 501) until set.
+        tracing::warn!(
+            "AUTH_AUDIENCE not set: person-token exchange at /.sts is disabled (returns 501)"
+        );
     }
 
     // Platform identity providers (GitHub Actions, say), each with its own
     // audiences. Unset trusts none.
-    let platform_issuers = env
+    let mut platform_issuers = env
         .var("PLATFORM_ISSUERS")
         .map(|v| crate::platform::parse_issuers(&v.to_string()))
         .unwrap_or_default();
+    // The platform path claims its issuers' tokens ahead of the STS route, so
+    // an entry for the person issuer would refuse every person exchange.
+    if platform_issuers.remove(&auth_issuer).is_some() {
+        tracing::error!(issuer = %auth_issuer, "PLATFORM_ISSUERS names AUTH_ISSUER; ignoring that entry");
+    }
 
     // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
     // matching multistore's own default so behavior is unchanged until raised.
