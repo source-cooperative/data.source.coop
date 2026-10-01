@@ -100,6 +100,37 @@ fn role_name(role_arn: &str) -> Option<&str> {
     role_arn.splitn(6, ':').nth(5)?.strip_prefix("role/")
 }
 
+/// The account segment of an ARN-form `role_arn`
+/// (`arn:aws:iam::<account>:role/<name>`): the account a platform IdP's token
+/// asks to act as (ADR-014). `None` for a bare name or an empty account.
+pub(crate) fn account(role_arn: &str) -> Option<&str> {
+    match role_arn.splitn(6, ':').collect::<Vec<_>>()[..] {
+        ["arn", _, _, _, account, _] if !account.is_empty() => Some(account),
+        _ => None,
+    }
+}
+
+/// Whether `id` is a service account's id, `{owner}--{name}`: source.coop's
+/// `SERVICE_ACCOUNT_ID_REGEX` and its 82-character limit. Each half is at least
+/// two of `a-z`, `0-9` and inner single hyphens, so the one `--` is the
+/// separator, and no person's or organisation's handle, nor an Ory identity
+/// id, can match.
+pub(crate) fn is_service_account_id(id: &str) -> bool {
+    let half = |part: &str| {
+        part.len() >= 2
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && !part.contains("--")
+    };
+    id.len() <= 82
+        && id
+            .split_once("--")
+            .is_some_and(|(owner, name)| half(owner) && half(name))
+}
+
 impl CredentialRegistry for StsCredentialRegistry {
     async fn get_credential(
         &self,

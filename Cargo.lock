@@ -1891,7 +1891,9 @@ dependencies = [
 name = "source-data-proxy"
 version = "2.3.4"
 dependencies = [
+ "base64",
  "console_error_panic_hook",
+ "futures-util",
  "getrandom 0.4.3",
  "hmac",
  "http",

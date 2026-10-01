@@ -12,7 +12,9 @@ pub(crate) const PROXY_SELF_SUBJECT: &str = "urn:source:data-proxy";
 pub(crate) enum ApiCaller<'a> {
     /// No credentials: the API answers as it would any stranger.
     Anonymous,
-    /// On behalf of an account the proxy has authenticated.
+    /// As an account: one the proxy has authenticated, or, for the trusts
+    /// lookup alone, the account a platform token names, before its trust is
+    /// established (ADR-014).
     Account(&'a str),
     /// The proxy itself.
     Proxy,

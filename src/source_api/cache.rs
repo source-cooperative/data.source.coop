@@ -52,6 +52,16 @@ const PERMISSIONS_CACHE_SECS: u32 = 60; // 1 minute
 /// cached too — an unknown key costs one lookup a minute, not one a request.
 const KEY_STANDING_CACHE_SECS: u32 = 60; // 1 minute
 
+/// Whether an account trusts a platform token's issuer and subject
+/// (`/accounts/{id}/trusts/exchanges`). The permissions TTL, for the same
+/// reason: a trust that is removed should stop minting quickly (ADR-014).
+const TRUST_CACHE_SECS: u32 = 60; // 1 minute
+
+/// A refusal from the trusts route: long enough that replaying one token its
+/// account does not trust costs about one lookup per 10 seconds per data
+/// center, and short enough that a trust just added works within seconds.
+const REFUSED_TRUST_CACHE_SECS: u32 = 10;
+
 // ── Public cache functions ─────────────────────────────────────────
 
 /// Fetch a single product's metadata, cached for `PRODUCT_CACHE_SECS`.
@@ -204,6 +214,94 @@ pub async fn get_or_fetch_key_standing(
     .await
 }
 
+/// Whether `account` trusts `issuer`'s `subject` to act as it: `Ok` if so,
+/// `AccessDenied` if not, the way a role's own trust policy decides an
+/// assume-role call. Asked as the account itself. The route says yes with a
+/// 200, cached for `TRUST_CACHE_SECS` like every 200, and no with a 403 (a 401
+/// for an account it cannot resolve), which `cached_fetch` leaves uncached and
+/// this caches as `{"trusted":false}` for `REFUSED_TRUST_CACHE_SECS`.
+pub async fn get_or_fetch_trust(
+    api_base_url: &str,
+    account: &str,
+    issuer: &str,
+    subject: &str,
+    api_auth: &crate::ApiAuth,
+    request_id: &str,
+) -> Result<(), ProxyError> {
+    let (api_url, cache_key) = trust_urls(api_base_url, account, issuer, subject);
+    let body = serde_json::json!({ "issuer": issuer, "subject": subject }).to_string();
+    let answer = cached_fetch::<TrustAnswer>(
+        &cache_key,
+        &api_url,
+        "POST",
+        Some(&body),
+        TRUST_CACHE_SECS,
+        api_auth,
+        request_id,
+        ApiCaller::Account(account),
+    )
+    .await;
+    let trusted = match answer {
+        Ok(answer) => answer.trusted,
+        Err(ProxyError::AccessDenied) => {
+            let refused = r#"{"trusted":false}"#;
+            cache_put(
+                &worker::Cache::default(),
+                &cache_key,
+                refused,
+                REFUSED_TRUST_CACHE_SECS,
+            )
+            .await;
+            false
+        }
+        Err(e) => return Err(e),
+    };
+    // ponytail: a 200 saying no (which the route never sends) is held for
+    // TRUST_CACHE_SECS like any 200; still refused, only slower to flip to yes.
+    trusted.then_some(()).ok_or(ProxyError::AccessDenied)
+}
+
+/// The answer `get_or_fetch_trust` has cached, if any, without asking the
+/// Source API: so a caller can spend its rate limit only on a real lookup.
+pub async fn cached_trust(
+    api_base_url: &str,
+    account: &str,
+    issuer: &str,
+    subject: &str,
+) -> Option<Result<(), ProxyError>> {
+    let (_, cache_key) = trust_urls(api_base_url, account, issuer, subject);
+    let mut cached = worker::Cache::default()
+        .get(&cache_key, false)
+        .await
+        .ok()??;
+    let answer: TrustAnswer = serde_json::from_str(&cached.text().await.ok()?).ok()?;
+    Some(answer.trusted.then_some(()).ok_or(ProxyError::AccessDenied))
+}
+
+/// The trusts route for `account`, and the cache key for its answer about
+/// `issuer`'s `subject`. The Cache API keys on URLs: the account is in the
+/// path, and the issuer and subject vary with it.
+fn trust_urls(api_base_url: &str, account: &str, issuer: &str, subject: &str) -> (String, String) {
+    let api_url = format!(
+        "{}/api/v1/accounts/{}/trusts/exchanges",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+    );
+    let cache_key = format!(
+        "{api_url}?issuer={}&subject={}",
+        utf8_percent_encode(issuer, PATH_SEGMENT),
+        utf8_percent_encode(subject, PATH_SEGMENT),
+    );
+    (api_url, cache_key)
+}
+
+/// The trusts route's answer. Its status already says yes (200) or no (403);
+/// the body is read too, so that a 200 saying no still mints nothing.
+#[derive(serde::Deserialize)]
+struct TrustAnswer {
+    trusted: bool,
+}
+
 // ── Internal helpers ──────────────────────────────────────────────
 
 /// Build a cache key that includes the caller's identity so that
@@ -322,16 +420,20 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     let result: T = serde_json::from_str(&text)
         .map_err(|e| ProxyError::Internal(format!("JSON parse failed: {} for {}", e, api_url)))?;
 
-    // ── Store in cache ─────────────────────────────────────────
+    cache_put(&cache, cache_key, &text, ttl_secs).await;
+    Ok(result)
+}
+
+/// Store `text` under `cache_key` for `ttl_secs`. A failed put costs only a
+/// later lookup, so it is logged rather than returned.
+async fn cache_put(cache: &worker::Cache, cache_key: &str, text: &str, ttl_secs: u32) {
     let headers = worker::Headers::new();
     let _ = headers.set("content-type", "application/json");
     let _ = headers.set("cache-control", &format!("max-age={}", ttl_secs));
-    if let Ok(cache_resp) = worker::Response::ok(&text) {
+    if let Ok(cache_resp) = worker::Response::ok(text) {
         let cache_resp = cache_resp.with_headers(headers);
         if let Err(e) = cache.put(cache_key, cache_resp).await {
             tracing::warn!("cache put failed: {}", e);
         }
     }
-
-    Ok(result)
 }
