@@ -57,14 +57,6 @@ pub fn unverified(token: &str) -> Option<(Value, Value)> {
     Some((segments.next()??, segments.next()??))
 }
 
-/// The id of the key a token's header says signed it.
-pub fn kid(header: &Value) -> Result<&str, ProxyError> {
-    header
-        .get("kid")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ProxyError::InvalidOidcToken("JWT missing kid".into()))
-}
-
 /// Verify a platform issuer's token against `keys`, the issuer's published
 /// keys, as the STS route verifies the person issuer's (signature, issuer, the
 /// audiences `role` requires, `exp` and `nbf`) and return its subject.

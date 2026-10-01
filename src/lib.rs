@@ -806,7 +806,9 @@ async fn platform_exchange(
             tracing::warn!(%request_id, %issuer, %account, "RoleArn names no service account");
             return Err(not_authorized());
         }
-        let kid = platform::kid(&header).map_err(failed)?;
+        let kid = header["kid"]
+            .as_str()
+            .ok_or_else(|| failed(ProxyError::InvalidOidcToken("JWT missing kid".into())))?;
         let keys = platform_keys(issuer, kid).await.map_err(failed)?;
         let subject =
             platform::verify(&sts.web_identity_token, kid, &keys, issuer, &role).map_err(failed)?;
