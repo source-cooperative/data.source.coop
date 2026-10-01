@@ -227,12 +227,30 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // `RoleArn` names only if that account trusts it (ADR-014). Both are
     // handled ahead of the STS route, which serves the person issuer alone.
     if parts.path == "/.sts" {
-        if let Some(result) = api_key_exchange(config, &parts, &env, &api_auth, &request_id).await {
-            return Ok(finish(result, &request_id));
-        }
-        if let Some(result) = platform_exchange(config, &parts, &env, &api_auth, &request_id).await
-        {
-            return Ok(finish(result, &request_id));
+        // Parsed once for both, where the STS route reads them: the query
+        // string if it carries the parameters, else the form body.
+        let parsed = match try_parse_sts_request(parts.query.as_deref()) {
+            Some(parsed) => Some((parsed, true)),
+            None => try_parse_sts_request(parts.form_body.as_deref()).map(|p| (p, false)),
+        };
+        if let Some((Ok(mut sts), in_url)) = parsed {
+            // SDKs send a token file's contents as-is, and `jq -r … > file`
+            // ends it in a newline, which a JWT's base64 decode rejects.
+            sts.web_identity_token = sts.web_identity_token.trim().to_string();
+            let client_ip = header_str(&parts.headers, "cf-connecting-ip");
+            let exchange = Exchange {
+                config,
+                env: &env,
+                client_ip,
+                api_auth: &api_auth,
+                request_id: &request_id,
+            };
+            if let Some(result) = api_key_exchange(&exchange, &sts, in_url).await {
+                return Ok(finish(result, &request_id));
+            }
+            if let Some(result) = platform_exchange(&exchange, &sts).await {
+                return Ok(finish(result, &request_id));
+            }
         }
     }
 
@@ -494,47 +512,52 @@ fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
 /// of API keys and platform tokens alike, keyed by client IP.
 const STS_EXCHANGE_LIMIT: &str = "STS_EXCHANGE_LIMIT";
 
-/// The API-key exchange, if this request is one: `None` when it is not an
-/// `AssumeRoleWithWebIdentity` carrying an `sck_` key, so the STS route takes
-/// it. A key is accepted from the form body only — Cloudflare logs the URL —
-/// and the refusal for one in the query string says so, because that is the
-/// one mistake a user can fix.
+/// What every exchange ahead of the STS route needs from the request.
+struct Exchange<'a> {
+    config: &'a AppConfig,
+    env: &'a Env,
+    client_ip: &'a str,
+    api_auth: &'a ApiAuth,
+    request_id: &'a str,
+}
+
+/// The API-key exchange, if this request is one: `None` when it does not carry
+/// an `sck_` key, so the STS route takes it. A key is accepted from the form
+/// body only — Cloudflare logs the URL — and the refusal for one in the query
+/// string says so, because that is the one mistake a user can fix.
 async fn api_key_exchange(
-    config: &AppConfig,
-    parts: &RequestParts,
-    env: &Env,
-    api_auth: &ApiAuth,
-    request_id: &str,
+    exchange: &Exchange<'_>,
+    sts: &multistore_sts::request::StsRequest,
+    in_url: bool,
 ) -> Option<(u16, String)> {
-    if let Some(parsed) = try_parse_sts_request(parts.query.as_deref()) {
-        let is_key = parsed
-            .as_ref()
-            .is_ok_and(|sts| keys::looks_like_api_key(&sts.web_identity_token));
-        if !is_key {
-            return None; // a token in the query string is the STS route's
-        }
+    let &Exchange {
+        config,
+        env,
+        client_ip,
+        api_auth,
+        request_id,
+    } = exchange;
+    if !keys::looks_like_api_key(&sts.web_identity_token) {
+        return None;
+    }
+    if in_url {
         tracing::warn!(%request_id, reason = "query_string", "API key exchange refused");
         return Some(key_refusal(
             "API key must be sent in the request body, not the URL",
             request_id,
         ));
     }
-    let sts = try_parse_sts_request(parts.form_body.as_deref())?.ok()?;
-    if !keys::looks_like_api_key(&sts.web_identity_token) {
-        return None;
-    }
 
     // Every attempt costs a lookup for a distinct key, so the flood to bound is
     // distinct junk keys from one place. Legitimate exchanges are rare — once
     // per session — so even a cluster behind one NAT stays well under the limit.
-    let client_ip = header_str(&parts.headers, "cf-connecting-ip");
     if !within_rate_limit(env, client_ip).await {
         tracing::warn!(%request_id, reason = "rate_limited", "API key exchange refused");
         return Some(throttled());
     }
 
     Some(
-        match exchange_api_key(config, &sts, api_auth, request_id).await {
+        match exchange_api_key(config, sts, api_auth, request_id).await {
             Ok(creds) => build_sts_response(&creds),
             // A key that fails its shape or checksum was cut short or mistyped,
             // which the user can fix; saying so reveals nothing, since the
@@ -702,37 +725,24 @@ fn sts_error_xml(code: &str, message: &str) -> String {
 // ── Platform identity providers ─────────────────────────────────────
 
 /// The exchange of a platform issuer's token, if this request carries one:
-/// `None` for any other token, which the STS route takes. Parameters come from
-/// the query string or the form body, never both, as at the STS route.
+/// `None` for any other token, which the STS route takes.
 async fn platform_exchange(
-    config: &AppConfig,
-    parts: &RequestParts,
-    env: &Env,
-    api_auth: &ApiAuth,
-    request_id: &str,
+    exchange: &Exchange<'_>,
+    sts: &multistore_sts::request::StsRequest,
 ) -> Option<(u16, String)> {
-    let mut sts = try_parse_sts_request(parts.query.as_deref())
-        .or_else(|| try_parse_sts_request(parts.form_body.as_deref()))?
-        .ok()?;
-    // SDKs send a token file's contents as-is, and `jq -r … > file` ends it in
-    // a newline, which the signature segment's base64 decode rejects.
-    sts.web_identity_token = sts.web_identity_token.trim().to_string();
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
-    let audiences = config.platform_issuers.get(issuer)?;
+    let audiences = exchange.config.platform_issuers.get(issuer)?;
     let token = PlatformToken {
-        sts: &sts,
+        sts,
         header: &header,
         issuer,
         audiences,
     };
-    let client_ip = header_str(&parts.headers, "cf-connecting-ip");
-    Some(
-        match exchange_platform_token(config, env, client_ip, &token, api_auth, request_id).await {
-            Ok(creds) => build_sts_response(&creds),
-            Err(response) => response,
-        },
-    )
+    Some(match exchange_platform_token(exchange, &token).await {
+        Ok(creds) => build_sts_response(&creds),
+        Err(response) => response,
+    })
 }
 
 /// An exchange request whose token names a configured platform issuer, not
@@ -751,13 +761,16 @@ struct PlatformToken<'a> {
 /// Source API nothing; what does cost a call is rate-limited per address.
 /// Every refusal of the account's trust reads the same, whatever the reason.
 async fn exchange_platform_token(
-    config: &AppConfig,
-    env: &Env,
-    client_ip: &str,
+    exchange: &Exchange<'_>,
     token: &PlatformToken<'_>,
-    api_auth: &ApiAuth,
-    request_id: &str,
 ) -> Result<TemporaryCredentials, (u16, String)> {
+    let &Exchange {
+        config,
+        env,
+        client_ip,
+        api_auth,
+        request_id,
+    } = exchange;
     let &PlatformToken {
         sts,
         header,
