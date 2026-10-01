@@ -78,7 +78,11 @@ pub(crate) fn role(
         name: name.to_string(),
         trusted_oidc_issuers: vec![oidc_issuer],
         required_audiences,
-        subject_conditions: vec![],
+        // Any subject: the person issuer's token names the person, and a
+        // platform token acts only as an account that trusts its subject.
+        subject_conditions: vec!["*".to_string()],
+        // Every issuer must set `exp`; a token without one is replayable for good.
+        allow_missing_exp_from: vec![],
         allowed_scopes,
         max_session_duration_secs,
     })

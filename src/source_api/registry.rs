@@ -243,7 +243,7 @@ async fn resolve_product(
 
     let config = BucketConfig {
         name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
-        backend_type,
+        backend_type: backend_type.parse()?,
         backend_prefix,
         // Proxy-client-facing: Source Cooperative authorizes callers via its own
         // JWT (enforced upstream at the subject-scoped fetch), not S3 request
