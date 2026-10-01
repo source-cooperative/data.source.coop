@@ -185,7 +185,9 @@ jobs:
           # A second worker whose person issuer is GitHub, so CI's token
           # exercises the person route (tests/test_person_route.py). Its
           # PLATFORM_ISSUERS still names GitHub, which the proxy drops at load.
-          wrangler dev --port 8788 --inspector-port 9230 --persist-to /tmp/wrangler-person \
+          # --host overrides wrangler.toml's localhost:8787, which SigV4 would
+          # otherwise be verified against.
+          wrangler dev --port 8788 --host localhost:8788 --inspector-port 9230 --persist-to /tmp/wrangler-person \
             --var AUTH_ISSUER:https://token.actions.githubusercontent.com \
             --var AUTH_AUDIENCE:source-data-proxy-ci > /tmp/wrangler-person.log 2>&1 &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
