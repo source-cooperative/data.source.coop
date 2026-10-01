@@ -11,8 +11,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use multistore::error::ProxyError;
 use multistore::types::RoleConfig;
-use multistore_sts::jwks::{find_key, verify_token};
-use multistore_sts::JwksCache;
+use multistore_sts::jwks::{find_key, verify_token, JwksResponse};
 use serde_json::Value;
 
 /// The platform issuers in `PLATFORM_ISSUERS`, a JSON object from each issuer
@@ -58,22 +57,25 @@ pub fn unverified(token: &str) -> Option<(Value, Value)> {
     Some((segments.next()??, segments.next()??))
 }
 
-/// Verify a platform issuer's token as the STS route verifies the person
-/// issuer's (signature against the issuer's published keys, issuer, the
-/// audiences `role` requires, `exp` and `nbf`) and return its subject.
-pub async fn verify(
-    token: &str,
-    header: &Value,
-    issuer: &str,
-    role: &RoleConfig,
-    jwks: &JwksCache,
-) -> Result<String, ProxyError> {
-    let kid = header
+/// The id of the key a token's header says signed it.
+pub fn kid(header: &Value) -> Result<&str, ProxyError> {
+    header
         .get("kid")
         .and_then(Value::as_str)
-        .ok_or_else(|| ProxyError::InvalidOidcToken("JWT missing kid".into()))?;
-    let keys = jwks.get_or_fetch(issuer).await?;
-    let claims = verify_token(token, find_key(&keys, kid)?, issuer, role)?;
+        .ok_or_else(|| ProxyError::InvalidOidcToken("JWT missing kid".into()))
+}
+
+/// Verify a platform issuer's token against `keys`, the issuer's published
+/// keys, as the STS route verifies the person issuer's (signature, issuer, the
+/// audiences `role` requires, `exp` and `nbf`) and return its subject.
+pub fn verify(
+    token: &str,
+    kid: &str,
+    keys: &JwksResponse,
+    issuer: &str,
+    role: &RoleConfig,
+) -> Result<String, ProxyError> {
+    let claims = verify_token(token, find_key(keys, kid)?, issuer, role)?;
     subject(&claims).map(str::to_string)
 }
 

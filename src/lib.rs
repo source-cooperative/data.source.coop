@@ -23,6 +23,7 @@ mod sts;
 use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
 use analytics::log_analytics;
+use futures_util::future::Either;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
 use multistore::error::ProxyError;
@@ -38,7 +39,7 @@ use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
-use multistore_sts::jwks::JwksCache;
+use multistore_sts::jwks::{find_key, JwksCache, JwksResponse};
 use multistore_sts::route_handler::StsRouterExt;
 use multistore_sts::{build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
@@ -68,6 +69,38 @@ fn jwks_cache() -> JwksCache {
     JWKS_CACHE
         .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
         .clone()
+}
+
+/// A platform issuer's keys, looked up again when `JWKS_CACHE`'s copy lacks a
+/// token's key id: an issuer that rotates (GitHub does) publishes a key before
+/// it signs with it. Held a minute, so a forged key id costs the issuer at
+/// most one fetch a minute per isolate.
+static FRESH_JWKS_CACHE: OnceLock<JwksCache> = OnceLock::new();
+
+/// `issuer`'s published keys, including `kid` if the issuer publishes it.
+async fn platform_keys(issuer: &str, kid: &str) -> Result<JwksResponse, ProxyError> {
+    let keys = fetch_keys(&jwks_cache(), issuer).await?;
+    if find_key(&keys, kid).is_ok() {
+        return Ok(keys);
+    }
+    let fresh = FRESH_JWKS_CACHE
+        .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(60)));
+    fetch_keys(fresh, issuer).await
+}
+
+/// `issuer`'s keys from `cache`, bounded by `STS_REQUEST_TIMEOUT`. A failure
+/// is the issuer's, not the token's: an `InternalError` the caller's SDK
+/// retries, where `InvalidIdentityToken` would fail it outright.
+async fn fetch_keys(cache: &JwksCache, issuer: &str) -> Result<JwksResponse, ProxyError> {
+    let fetch = std::pin::pin!(cache.get_or_fetch(issuer));
+    let timeout = std::pin::pin!(worker::Delay::from(STS_REQUEST_TIMEOUT));
+    match futures_util::future::select(fetch, timeout).await {
+        Either::Left((Ok(keys), _)) => Ok(keys),
+        Either::Left((Err(e), _)) => Err(ProxyError::Internal(format!(
+            "keys for {issuer} unavailable: {e}"
+        ))),
+        Either::Right(_) => Err(ProxyError::Internal(format!("keys for {issuer} timed out"))),
+    }
 }
 
 /// Bound the outbound STS `AssumeRoleWithWebIdentity` call. Without it a slow or
@@ -821,15 +854,10 @@ async fn exchange_platform_token(
         tracing::warn!(%request_id, %issuer, %account, "RoleArn names no service account");
         return Err(not_authorized());
     }
-    let subject = platform::verify(
-        &sts.web_identity_token,
-        header,
-        issuer,
-        &role,
-        &jwks_cache(),
-    )
-    .await
-    .map_err(failed)?;
+    let kid = platform::kid(header).map_err(failed)?;
+    let keys = platform_keys(issuer, kid).await.map_err(failed)?;
+    let subject =
+        platform::verify(&sts.web_identity_token, kid, &keys, issuer, &role).map_err(failed)?;
     let api = config.api_base_url.as_str();
     let answer = match source_api::cache::cached_trust(api, account, issuer, &subject).await {
         Some(answer) => answer,

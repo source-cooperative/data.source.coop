@@ -80,6 +80,9 @@ multistore-cf-workers = { version = "0.7.2", features = ["azure", "gcp"] }
 # unnecessary here. The `form` feature gates `.form()`, which the STS
 # `post_form` call in FetchHttpExchange needs.
 reqwest = { version = "0.13", default-features = false, features = ["form"] }
+# Racing an issuer's key fetch against a timeout (`fetch_keys`); already in
+# the tree via worker.
+futures-util = { version = "0.3", default-features = false }
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
