@@ -20,9 +20,14 @@ use serde_json::Value;
 /// that one issuer's audience never admits another's token (ADR-009). An
 /// issuer with no audience is left out, as the person issuer is disabled
 /// without one: a token minted for any other service could be exchanged here.
-/// A value that does not parse trusts no platform issuer.
-pub fn parse_issuers(json: &str) -> HashMap<String, Vec<String>> {
-    let issuers: HashMap<String, Vec<String>> = match serde_json::from_str(json) {
+/// A value that does not parse trusts no platform issuer. The variable may be
+/// a string of JSON or, written as a TOML table, the object itself.
+pub fn parse_issuers(value: Value) -> HashMap<String, Vec<String>> {
+    let value = match value {
+        Value::String(json) => serde_json::from_str(&json).unwrap_or(Value::String(json)),
+        value => value,
+    };
+    let issuers: HashMap<String, Vec<String>> = match serde_json::from_value(value) {
         Ok(issuers) => issuers,
         Err(e) => {
             tracing::error!(

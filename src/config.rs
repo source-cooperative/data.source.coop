@@ -104,11 +104,15 @@ fn build_config(env: &Env) -> AppConfig {
     }
 
     // Platform identity providers (GitHub Actions, say), each with its own
-    // audiences. Unset trusts none.
-    let mut platform_issuers = env
-        .var("PLATFORM_ISSUERS")
-        .map(|v| crate::platform::parse_issuers(&v.to_string()))
-        .unwrap_or_default();
+    // audiences. Unset trusts none. `var` takes only a string and
+    // `object_var` only an object, which is how a TOML table arrives.
+    let mut platform_issuers = match env.var("PLATFORM_ISSUERS") {
+        Ok(json) => crate::platform::parse_issuers(serde_json::Value::String(json.to_string())),
+        Err(_) => env
+            .object_var::<serde_json::Value>("PLATFORM_ISSUERS")
+            .map(crate::platform::parse_issuers)
+            .unwrap_or_default(),
+    };
     // The platform path claims its issuers' tokens ahead of the STS route, so
     // an entry for the person issuer would refuse every person exchange.
     if platform_issuers.remove(&auth_issuer).is_some() {

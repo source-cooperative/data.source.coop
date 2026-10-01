@@ -16,17 +16,23 @@ const GITHUB: &str = "https://token.actions.githubusercontent.com";
 
 #[test]
 fn each_issuer_keeps_its_own_audiences() {
-    let issuers = platform::parse_issuers(
+    let issuers = platform::parse_issuers(json!(
         r#"{"https://token.actions.githubusercontent.com": ["https://data.source.coop"],
-            "https://gitlab.com": ["a", "b"]}"#,
-    );
+            "https://gitlab.com": ["a", "b"]}"#
+    ));
     assert_eq!(issuers[GITHUB], ["https://data.source.coop"]);
     assert_eq!(issuers["https://gitlab.com"], ["a", "b"]);
 }
 
 #[test]
+fn a_toml_table_reads_as_the_string_does() {
+    let issuers = platform::parse_issuers(json!({GITHUB: ["https://data.source.coop"]}));
+    assert_eq!(issuers[GITHUB], ["https://data.source.coop"]);
+}
+
+#[test]
 fn an_issuer_without_an_audience_is_not_trusted() {
-    let issuers = platform::parse_issuers(r#"{"https://token.actions.githubusercontent.com": []}"#);
+    let issuers = platform::parse_issuers(json!({GITHUB: []}));
     assert!(issuers.is_empty());
 }
 
@@ -37,7 +43,7 @@ fn a_value_that_does_not_parse_trusts_no_issuer() {
         GITHUB,
         r#"["https://token.actions.githubusercontent.com"]"#,
     ] {
-        assert!(platform::parse_issuers(value).is_empty(), "{value}");
+        assert!(platform::parse_issuers(json!(value)).is_empty(), "{value}");
     }
 }
 
