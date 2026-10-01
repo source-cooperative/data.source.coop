@@ -244,16 +244,21 @@ pub async fn get_or_fetch_trust(
     let trusted = match answer {
         Ok(answer) => answer.trusted,
         Err(ProxyError::AccessDenied) => {
-            let cache = worker::Cache::default();
             let refused = r#"{"trusted":false}"#;
-            cache_put(&cache, &cache_key, refused, REFUSED_TRUST_CACHE_SECS).await;
+            cache_put(
+                &worker::Cache::default(),
+                &cache_key,
+                refused,
+                REFUSED_TRUST_CACHE_SECS,
+            )
+            .await;
             false
         }
         Err(e) => return Err(e),
     };
     // ponytail: a 200 saying no (which the route never sends) is held for
     // TRUST_CACHE_SECS like any 200; still refused, only slower to flip to yes.
-    trust_result(trusted)
+    trusted.then_some(()).ok_or(ProxyError::AccessDenied)
 }
 
 /// The answer `get_or_fetch_trust` has cached, if any, without asking the
@@ -270,7 +275,7 @@ pub async fn cached_trust(
         .await
         .ok()??;
     let answer: TrustAnswer = serde_json::from_str(&cached.text().await.ok()?).ok()?;
-    Some(trust_result(answer.trusted))
+    Some(answer.trusted.then_some(()).ok_or(ProxyError::AccessDenied))
 }
 
 /// The trusts route for `account`, and the cache key for its answer about
@@ -288,14 +293,6 @@ fn trust_urls(api_base_url: &str, account: &str, issuer: &str, subject: &str) ->
         utf8_percent_encode(subject, PATH_SEGMENT),
     );
     (api_url, cache_key)
-}
-
-fn trust_result(trusted: bool) -> Result<(), ProxyError> {
-    if trusted {
-        Ok(())
-    } else {
-        Err(ProxyError::AccessDenied)
-    }
 }
 
 /// The trusts route's answer. Its status already says yes (200) or no (403);
