@@ -109,16 +109,19 @@ jobs:
         # Inbound callers authenticate with GitHub Actions OIDC tokens. GitHub
         # is a platform issuer, as in production: PLATFORM_ISSUERS names the
         # audience requested in "Mint caller identity token" below, and a
-        # token acts as an account the stub says trusts this repository. No
-        # person-issuer token exists in CI; AUTH_ISSUER names an issuer that
-        # mints nothing, and AUTH_AUDIENCE keeps /.sts from answering 501.
+        # token acts as an account the stub says trusts this repository.
+        # AUTH_ISSUER names an issuer that mints nothing. AUTH_AUDIENCE is the
+        # wrong-audience token's audience: if the platform path ever checked
+        # the person audiences instead of GitHub's own, test_writes.py's
+        # audience tests would fail. The person route runs on a second worker;
+        # see "Start wrangler dev".
         run: |
           {
             openssl genpkey -algorithm RSA -out /tmp/oidc.pem -pkeyopt rsa_keygen_bits:2048
             printf 'OIDC_PROVIDER_KEY="%s"\n' "$(cat /tmp/oidc.pem)"
             echo "SESSION_TOKEN_KEY=$(openssl rand -base64 32)"
             echo "AUTH_ISSUER=https://auth.example.invalid"
-            echo "AUTH_AUDIENCE=source-data-proxy-ci"
+            echo "AUTH_AUDIENCE=not-the-data-proxy"
             echo 'PLATFORM_ISSUERS={"https://token.actions.githubusercontent.com": ["source-data-proxy-ci"]}'
             echo "SOURCE_API_URL=http://localhost:9000"
           } > .dev.vars
@@ -148,6 +151,10 @@ jobs:
           fi
           echo "::add-mask::$token"
           echo "CI_WRITE_ID_TOKEN=$token" >> "$GITHUB_ENV"
+          # The stub trusts exactly this token's subject, as source.coop
+          # matches a trust (see tests/stub_api.py).
+          sub=$(python3 -c 'import base64,json,sys; p=sys.argv[1].split(".")[1]; print(json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["sub"])' "$token")
+          echo "CI_TRUSTED_SUBJECT=$sub" >> "$GITHUB_ENV"
           # A second, validly-signed token whose audience is not GitHub's in
           # PLATFORM_ISSUERS: test_writes.py asserts the /.sts aud gate
           # rejects it (signature checks alone would let it through).
@@ -175,8 +182,15 @@ jobs:
           # may appear later in the config are untouched.
           sed -i '/^\[build\]/,/^\[/ s/^command = .*/command = "echo skip"/' wrangler.toml
           wrangler dev --port 8787 > /tmp/wrangler.log 2>&1 &
+          # A second worker whose person issuer is GitHub, so CI's token
+          # exercises the person route (tests/test_person_route.py). Its
+          # PLATFORM_ISSUERS still names GitHub, which the proxy drops at load.
+          wrangler dev --port 8788 --inspector-port 9230 --persist-to /tmp/wrangler-person \
+            --var AUTH_ISSUER:https://token.actions.githubusercontent.com \
+            --var AUTH_AUDIENCE:source-data-proxy-ci > /tmp/wrangler-person.log 2>&1 &
           curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8787/ > /dev/null
-          echo "Server ready"
+          curl --retry 120 --retry-delay 1 --retry-connrefused --silent --fail http://localhost:8788/ > /dev/null
+          echo "Servers ready"
       - name: Run integration tests
         # Contract tests are excluded: they hit the live prod API, so they run
         # on a schedule instead (.github/workflows/contract.yml) — a prod
@@ -186,6 +200,8 @@ jobs:
           # var went missing (renamed, mint plumbing broken), the tests fail
           # loudly instead of skipping green (see tests/test_writes.py).
           CI_EXPECT_OIDC: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+          # Unset on fork PRs, which have no token to exchange there.
+          PERSON_PROXY_URL: ${{ env.CI_WRITE_ID_TOKEN && 'http://localhost:8788' || '' }}
         run: uvx --with requests --with boto3 pytest tests/ -v --ignore=tests/test_contract.py
       - name: Dump server logs
         # Both servers run in the background, so their output isn't captured
@@ -200,6 +216,9 @@ jobs:
           echo "::endgroup::"
           echo "::group::wrangler dev"
           cat /tmp/wrangler.log || true
+          echo "::endgroup::"
+          echo "::group::wrangler dev (person issuer)"
+          cat /tmp/wrangler-person.log || true
           echo "::endgroup::"
 
   audit:

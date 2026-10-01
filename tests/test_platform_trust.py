@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 import pytest
 import requests
 
-from stub_api import TRUST_ACCOUNT, TRUSTED_ISSUER, WRITE_ACCOUNT
+from stub_api import SAYS_NO_ACCOUNT, TRUST_ACCOUNT, TRUSTED_ISSUER, WRITE_ACCOUNT
 from test_writes import ID_TOKEN, PROXY_URL, needs_token
 
 STUB_URL = "http://localhost:9000"
@@ -142,6 +142,13 @@ def test_a_token_read_from_a_file_may_end_in_a_newline():
     """SDKs send AWS_WEB_IDENTITY_TOKEN_FILE's contents untrimmed."""
     resp = exchange(ID_TOKEN + "\n", as_account(TRUST_ACCOUNT))
     assert resp.status_code == 200, resp.text[:300]
+
+
+@needs_token
+def test_a_200_that_says_no_is_still_a_refusal():
+    resp = exchange(ID_TOKEN, as_account(SAYS_NO_ACCOUNT))
+    assert resp.status_code == 403, resp.text[:300]
+    assert sts_fields(resp)["Code"] == "AccessDenied"
 
 
 @needs_token

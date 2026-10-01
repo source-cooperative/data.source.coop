@@ -158,12 +158,15 @@ KEY_EXCHANGE_COUNTS = {}
 # ── Account trusts ─────────────────────────────────────────────────
 # Whether an account trusts a platform token's issuer and subject, at POST
 # /api/v1/accounts/{account}/trusts/exchanges (ADR-014). The proxy asks as the
-# account itself. Only TRUST_ACCOUNT trusts anyone: GitHub Actions workflows
-# in this repository, whatever event minted the token. A counter per account
-# lets test_platform_trust.py prove the proxy caches a yes.
+# account itself. Only TRUST_ACCOUNT trusts anyone, and only the exact subject
+# of the token CI minted for this run (CI_TRUSTED_SUBJECT, set by ci.yml), as
+# source.coop matches a trust exactly. SAYS_NO_ACCOUNT answers no with a 200,
+# which the real route never does, so the proxy's read of the body is pinned.
+# A counter per account lets test_platform_trust.py prove the proxy caches.
 TRUST_ACCOUNT = "ci-tests--github-ci"
+SAYS_NO_ACCOUNT = "ci-tests--says-no-with-200"
 TRUSTED_ISSUER = "https://token.actions.githubusercontent.com"
-TRUSTED_SUBJECT_PREFIX = "repo:source-cooperative/data.source.coop:"
+TRUSTED_SUBJECT = os.environ.get("CI_TRUSTED_SUBJECT")
 TRUST_EXCHANGE_COUNTS = {}
 
 # Who the proxy said it was asking as, per product path, so a test can check
@@ -212,10 +215,12 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             return self._send(400, b"{}")
         TRUST_EXCHANGE_COUNTS[account] = TRUST_EXCHANGE_COUNTS.get(account, 0) + 1
+        if account == SAYS_NO_ACCOUNT:
+            return self._send(200, b'{"trusted": false}')
         trusted = (
             account == TRUST_ACCOUNT
             and issuer == TRUSTED_ISSUER
-            and subject.startswith(TRUSTED_SUBJECT_PREFIX)
+            and subject == TRUSTED_SUBJECT
         )
         self._send(200 if trusted else 403, json.dumps({"trusted": trusted}).encode())
 
