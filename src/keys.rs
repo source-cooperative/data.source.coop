@@ -101,7 +101,7 @@ pub fn credentials_for(
         duration,
         "STSPRXY",
         &serde_json::json!({}),
-    );
+    )?;
     creds.session_token = token_key.seal(&creds)?;
     Ok(creds)
 }
