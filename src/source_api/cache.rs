@@ -258,19 +258,23 @@ pub async fn get_or_fetch_trust(
         ApiCaller::Account(account),
     )
     .await;
-    if matches!(answer, Err(ProxyError::AccessDenied)) {
+    let trusted = match answer {
+        Ok(answer) => answer.trusted,
+        Err(ProxyError::AccessDenied) => false,
+        Err(e) => return Err(e),
+    };
+    if !trusted {
+        // A 200 saying no was cached like any 200: drop it, so a no is held
+        // for `REFUSED_TRUST_CACHE_SECS` whichever way the route said it.
+        let _ = cache.delete(cache_key.as_str(), false).await;
         cache_put(&cache, &refused_key, "{}", REFUSED_TRUST_CACHE_SECS).await;
+        return Err(ProxyError::AccessDenied);
     }
-    if answer?.trusted {
-        Ok(())
-    } else {
-        Err(ProxyError::AccessDenied)
-    }
+    Ok(())
 }
 
 /// The trusts route's answer. Its status already says yes (200) or no (403);
-/// the body is read too, so that a 200 saying no, cached like any 200, still
-/// mints nothing.
+/// the body is read too, so that a 200 saying no still mints nothing.
 #[derive(serde::Deserialize)]
 struct TrustAnswer {
     trusted: bool,

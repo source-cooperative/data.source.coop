@@ -694,17 +694,28 @@ async fn platform_exchange(
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
     let audiences = config.platform_issuers.get(issuer)?;
+    let token = PlatformToken {
+        sts: &sts,
+        header: &header,
+        issuer,
+        audiences,
+    };
     let client_ip = header_str(&parts.headers, "cf-connecting-ip");
     Some(
-        match exchange_platform_token(
-            config, env, client_ip, &sts, &header, issuer, audiences, api_auth, request_id,
-        )
-        .await
-        {
+        match exchange_platform_token(config, env, client_ip, &token, api_auth, request_id).await {
             Ok(creds) => build_sts_response(&creds),
             Err(response) => response,
         },
     )
+}
+
+/// An exchange request whose token names a configured platform issuer, not
+/// yet verified.
+struct PlatformToken<'a> {
+    sts: &'a multistore_sts::request::StsRequest,
+    header: &'a serde_json::Value,
+    issuer: &'a str,
+    audiences: &'a [String],
 }
 
 /// Verify a platform issuer's token, then mint for the service account
@@ -713,18 +724,20 @@ async fn platform_exchange(
 /// subject. Everything local comes first, so a token that fails it costs the
 /// Source API nothing; what does cost a call is rate-limited per address.
 /// Every refusal of the account's trust reads the same, whatever the reason.
-#[allow(clippy::too_many_arguments)]
 async fn exchange_platform_token(
     config: &AppConfig,
     env: &Env,
     client_ip: &str,
-    sts: &multistore_sts::request::StsRequest,
-    header: &serde_json::Value,
-    issuer: &str,
-    audiences: &[String],
+    token: &PlatformToken<'_>,
     api_auth: &ApiAuth,
     request_id: &str,
 ) -> Result<TemporaryCredentials, (u16, String)> {
+    let &PlatformToken {
+        sts,
+        header,
+        issuer,
+        audiences,
+    } = token;
     let failed = |e: ProxyError| {
         tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
         build_sts_error_response(&e)
