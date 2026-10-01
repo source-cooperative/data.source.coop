@@ -83,7 +83,9 @@ def test_a_forged_token_is_refused_before_any_trust_lookup():
     before = trust_lookups(TRUST_ACCOUNT)
     resp = exchange(forged(), as_account(TRUST_ACCOUNT))
     assert resp.status_code == 400
-    assert sts_fields(resp)["Code"] == "InvalidIdentityToken"
+    fields = sts_fields(resp)
+    assert fields["Code"] == "InvalidIdentityToken"
+    assert fields["Message"].endswith(f"(request id {RAY})")
     assert trust_lookups(TRUST_ACCOUNT) == before
 
 

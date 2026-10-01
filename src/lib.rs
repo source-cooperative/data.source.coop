@@ -551,7 +551,7 @@ async fn api_key_exchange(
             // API being unreachable, which fails closed as a 500 the SDK retries.
             Err(e) => {
                 tracing::warn!(%request_id, error = %e, "API key exchange failed");
-                build_sts_error_response(&e)
+                sts_refusal(&e, request_id)
             }
         },
     )
@@ -559,9 +559,14 @@ async fn api_key_exchange(
 
 /// `InvalidIdentityToken`, with the request id in the message.
 fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
-    build_sts_error_response(&ProxyError::InvalidOidcToken(with_request_id(
-        message, request_id,
-    )))
+    sts_refusal(&ProxyError::InvalidOidcToken(message.into()), request_id)
+}
+
+/// `build_sts_error_response`, with the request id in the message.
+fn sts_refusal(e: &ProxyError, request_id: &str) -> (u16, String) {
+    let (status, xml) = build_sts_error_response(e);
+    let message_end = format!("{}</Message>", with_request_id("", request_id));
+    (status, xml.replacen("</Message>", &message_end, 1))
 }
 
 /// `message` with the request id, if there is one: SDKs show a user the
@@ -743,7 +748,7 @@ async fn exchange_platform_token(
     } = token;
     let failed = |e: ProxyError| {
         tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
-        build_sts_error_response(&e)
+        sts_refusal(&e, request_id)
     };
     let not_authorized = || {
         let message = "Not authorized to perform sts:AssumeRoleWithWebIdentity";
