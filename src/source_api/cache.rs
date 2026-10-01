@@ -228,18 +228,7 @@ pub async fn get_or_fetch_trust(
     api_auth: &crate::ApiAuth,
     request_id: &str,
 ) -> Result<(), ProxyError> {
-    let api_url = format!(
-        "{}/api/v1/accounts/{}/trusts/exchanges",
-        api_base_url,
-        utf8_percent_encode(account, PATH_SEGMENT),
-    );
-    // The Cache API keys on URLs: the account is in the path, and the issuer
-    // and subject vary with it.
-    let cache_key = format!(
-        "{api_url}?issuer={}&subject={}",
-        utf8_percent_encode(issuer, PATH_SEGMENT),
-        utf8_percent_encode(subject, PATH_SEGMENT),
-    );
+    let (api_url, cache_key) = trust_urls(api_base_url, account, issuer, subject);
     let body = serde_json::json!({ "issuer": issuer, "subject": subject }).to_string();
     let answer = cached_fetch::<TrustAnswer>(
         &cache_key,
@@ -264,6 +253,44 @@ pub async fn get_or_fetch_trust(
     };
     // ponytail: a 200 saying no (which the route never sends) is held for
     // TRUST_CACHE_SECS like any 200; still refused, only slower to flip to yes.
+    trust_result(trusted)
+}
+
+/// The answer `get_or_fetch_trust` has cached, if any, without asking the
+/// Source API: so a caller can spend its rate limit only on a real lookup.
+pub async fn cached_trust(
+    api_base_url: &str,
+    account: &str,
+    issuer: &str,
+    subject: &str,
+) -> Option<Result<(), ProxyError>> {
+    let (_, cache_key) = trust_urls(api_base_url, account, issuer, subject);
+    let mut cached = worker::Cache::default()
+        .get(&cache_key, false)
+        .await
+        .ok()??;
+    let answer: TrustAnswer = serde_json::from_str(&cached.text().await.ok()?).ok()?;
+    Some(trust_result(answer.trusted))
+}
+
+/// The trusts route for `account`, and the cache key for its answer about
+/// `issuer`'s `subject`. The Cache API keys on URLs: the account is in the
+/// path, and the issuer and subject vary with it.
+fn trust_urls(api_base_url: &str, account: &str, issuer: &str, subject: &str) -> (String, String) {
+    let api_url = format!(
+        "{}/api/v1/accounts/{}/trusts/exchanges",
+        api_base_url,
+        utf8_percent_encode(account, PATH_SEGMENT),
+    );
+    let cache_key = format!(
+        "{api_url}?issuer={}&subject={}",
+        utf8_percent_encode(issuer, PATH_SEGMENT),
+        utf8_percent_encode(subject, PATH_SEGMENT),
+    );
+    (api_url, cache_key)
+}
+
+fn trust_result(trusted: bool) -> Result<(), ProxyError> {
     if trusted {
         Ok(())
     } else {

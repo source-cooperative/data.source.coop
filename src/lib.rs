@@ -830,22 +830,24 @@ async fn exchange_platform_token(
     )
     .await
     .map_err(failed)?;
-    // Anyone can mint a token for this audience in their own workflow, and
-    // every exchange from here on may cost the Source API a call.
-    if !within_rate_limit(env, client_ip).await {
-        tracing::warn!(%request_id, %issuer, reason = "rate_limited", "platform token exchange refused");
-        return Err(throttled());
-    }
-    match source_api::cache::get_or_fetch_trust(
-        &config.api_base_url,
-        account,
-        issuer,
-        &subject,
-        api_auth,
-        request_id,
-    )
-    .await
-    {
+    let api = config.api_base_url.as_str();
+    let answer = match source_api::cache::cached_trust(api, account, issuer, &subject).await {
+        Some(answer) => answer,
+        None => {
+            // Anyone can mint a token for this audience in their own workflow,
+            // so a lookup the cache cannot answer is rate-limited; a cached
+            // answer costs the Source API nothing and is not.
+            if !within_rate_limit(env, client_ip).await {
+                tracing::warn!(%request_id, %issuer, reason = "rate_limited", "platform token exchange refused");
+                return Err(throttled());
+            }
+            source_api::cache::get_or_fetch_trust(
+                api, account, issuer, &subject, api_auth, request_id,
+            )
+            .await
+        }
+    };
+    match answer {
         Ok(()) => {}
         Err(ProxyError::AccessDenied) => {
             tracing::warn!(%request_id, %issuer, %subject, %account, "account does not trust the token");
