@@ -541,8 +541,9 @@ fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
     response
 }
 
-/// The rate-limiter binding for `/.sts` exchanges that cost a Source API call,
-/// of API keys and platform tokens alike, keyed by client IP.
+/// The rate-limiter binding for `/.sts` exchanges that may cost a Source API
+/// call, keyed by client IP: every API-key exchange, and each platform-token
+/// exchange the trust cache cannot answer.
 const STS_EXCHANGE_LIMIT: &str = "STS_EXCHANGE_LIMIT";
 
 /// What every exchange ahead of the STS route needs from the request.
@@ -581,9 +582,10 @@ async fn api_key_exchange(
         ));
     }
 
-    // Every attempt costs a lookup for a distinct key, so the flood to bound is
-    // distinct junk keys from one place. Legitimate exchanges are rare — once
-    // per session — so even a cluster behind one NAT stays well under the limit.
+    // A repeated key is answered from the standing cache, but each distinct key
+    // costs a lookup, so the flood to bound is distinct junk keys from one
+    // place. Legitimate key exchanges are rare, once per session; the limit is
+    // shared with platform-token lookups from the same address.
     if !within_rate_limit(env, client_ip).await {
         tracing::warn!(%request_id, reason = "rate_limited", "API key exchange refused");
         return Some(throttled());

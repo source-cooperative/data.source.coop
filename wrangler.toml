@@ -75,11 +75,12 @@ dataset = "source_data_proxy_production"
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream"
 
-# Exchanges at /.sts that cost a Source API call (API keys and platform
-# tokens), per client IP. It bounds a flood of junk keys, or of one replayed
-# platform token, from one place; a legitimate client exchanges about once a
-# session or job, so even a cluster behind one NAT stays far under it. See
-# src/lib.rs `within_rate_limit`.
+# Exchanges at /.sts that may cost a Source API call, per client IP: every API
+# key exchange, and each platform-token exchange the trust cache cannot answer.
+# It bounds a flood of junk keys, or of platform tokens naming one account after
+# another, from one place. A cached trust answer is not charged, so a job
+# matrix behind one NAT sharing a subject stays far under it. See src/lib.rs
+# `within_rate_limit`.
 [[ratelimits]]
 name = "STS_EXCHANGE_LIMIT"
 namespace_id = "1001"

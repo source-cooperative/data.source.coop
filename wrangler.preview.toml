@@ -52,7 +52,7 @@ dataset = "source_data_proxy_staging"
 binding = "PUBLIC_LOG_STREAM"
 service = "public-log-stream-staging"
 
-# Limit on /.sts exchanges that cost a Source API call, per client IP; see
+# Limit on /.sts exchanges that may cost a Source API call, per client IP; see
 # wrangler.toml.
 [[ratelimits]]
 name = "STS_EXCHANGE_LIMIT"
