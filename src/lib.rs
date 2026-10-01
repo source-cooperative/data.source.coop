@@ -688,9 +688,12 @@ async fn platform_exchange(
     api_auth: &ApiAuth,
     request_id: &str,
 ) -> Option<(u16, String)> {
-    let sts = try_parse_sts_request(parts.query.as_deref())
+    let mut sts = try_parse_sts_request(parts.query.as_deref())
         .or_else(|| try_parse_sts_request(parts.form_body.as_deref()))?
         .ok()?;
+    // SDKs send a token file's contents as-is, and `jq -r … > file` ends it in
+    // a newline, which the signature segment's base64 decode rejects.
+    sts.web_identity_token = sts.web_identity_token.trim().to_string();
     let (header, claims) = platform::unverified(&sts.web_identity_token)?;
     let issuer = claims.get("iss")?.as_str()?;
     let audiences = config.platform_issuers.get(issuer)?;

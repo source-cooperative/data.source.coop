@@ -116,6 +116,13 @@ def test_a_trusted_workflow_gets_credentials_that_act_as_the_account():
 
 
 @needs_token
+def test_a_token_read_from_a_file_may_end_in_a_newline():
+    """SDKs send AWS_WEB_IDENTITY_TOKEN_FILE's contents untrimmed."""
+    resp = exchange(ID_TOKEN + "\n", as_account(TRUST_ACCOUNT))
+    assert resp.status_code == 200, resp.text[:300]
+
+
+@needs_token
 def test_an_account_that_does_not_trust_the_workflow_refuses_it():
     untrusting = as_account("ci-tests--someone-else")
     resp = exchange(ID_TOKEN, untrusting)
