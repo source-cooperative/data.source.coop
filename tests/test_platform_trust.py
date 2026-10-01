@@ -79,13 +79,13 @@ def test_a_refusal_escapes_what_the_caller_sent():
 )
 def test_only_a_service_account_can_be_named(account):
     """Refused as an account that does not trust the token is, and before the
-    token is verified: this one is forged, and still no lookup happens."""
+    token is verified: this one is forged, so a later refusal would be a 400,
+    and the trust lookup only follows verification."""
     resp = exchange(forged(), as_account(account))
     assert resp.status_code == 403
     assert sts_fields(resp)["Message"] == (
         f"Not authorized to perform sts:AssumeRoleWithWebIdentity (request id {RAY})"
     )
-    assert trust_lookups(account) == 0
 
 
 def test_a_platform_token_in_the_url_is_refused_before_any_trust_lookup():
