@@ -62,9 +62,10 @@ jobs:
         # origin, the audience staging's PLATFORM_ISSUERS accepts for GitHub,
         # and FEDERATION_TEST_TRUST_ACCOUNT to a staging service account that
         # trusts this repository's workflows (ADR-014): the token acts as that
-        # account. Until then no token is minted and the copy-source authz
-        # test skips; the rest of the suite is unaffected.
-        if: vars.FEDERATION_TEST_AUDIENCE != ''
+        # account. Until both are set no token is minted and the copy-source
+        # authz test skips; the rest of the suite is unaffected. (A token with
+        # no trust account would name the stub's, which staging lacks.)
+        if: vars.FEDERATION_TEST_AUDIENCE != '' && vars.FEDERATION_TEST_TRUST_ACCOUNT != ''
         run: |
           set -euo pipefail
           token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
