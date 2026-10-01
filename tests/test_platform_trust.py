@@ -63,6 +63,15 @@ def test_a_platform_token_must_name_the_account_it_acts_as():
     assert "RoleArn must name the account" in sts_fields(resp)["Message"]
 
 
+def test_a_refusal_escapes_what_the_caller_sent():
+    """RoleArn is echoed in the message; markup in it stays text."""
+    role_arn = 'arn:aws:iam::ab--cd:role/<x:script xmlns:x="http://www.w3.org/1999/xhtml">&'
+    resp = exchange(forged(), role_arn)
+    assert resp.status_code == 400
+    assert "<x:script" not in resp.text
+    assert role_arn in sts_fields(resp)["Message"]
+
+
 @pytest.mark.parametrize(
     "account",
     ["alice", "2c5b4f0e-8a3b-4e2d-9a1f-3c4d5e6f7a8b", "000000000000"],

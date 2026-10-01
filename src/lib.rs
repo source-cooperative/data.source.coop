@@ -40,7 +40,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use multistore_sts::{build_sts_error_response, build_sts_response, try_parse_sts_request};
+use multistore_sts::{build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
@@ -563,11 +563,24 @@ fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
     sts_refusal(&ProxyError::InvalidOidcToken(message.into()), request_id)
 }
 
-/// `build_sts_error_response`, with the request id in the message.
+/// The STS error for `e`, mapped as multistore's `build_sts_error_response`
+/// maps it, with the request id in the message. Built here because that one
+/// writes the message unescaped, and it can carry a caller's `RoleArn` or a
+/// token's `kid`.
 fn sts_refusal(e: &ProxyError, request_id: &str) -> (u16, String) {
-    let (status, xml) = build_sts_error_response(e);
-    let message_end = format!("{}</Message>", with_request_id("", request_id));
-    (status, xml.replacen("</Message>", &message_end, 1))
+    let (status, code, message) = match e {
+        ProxyError::RoleNotFound(r) => (
+            400,
+            "MalformedPolicyDocument",
+            format!("role not found: {r}"),
+        ),
+        ProxyError::InvalidOidcToken(m) => (400, "InvalidIdentityToken", m.clone()),
+        ProxyError::InvalidRequest(m) => (400, "InvalidParameterValue", m.clone()),
+        ProxyError::AccessDenied => (403, "AccessDenied", "access denied".to_string()),
+        _ => (500, "InternalError", "internal error".to_string()),
+    };
+    let message = with_request_id(&message, request_id);
+    (status, sts_error_xml(code, &message))
 }
 
 /// `message` with the request id, if there is one: SDKs show a user the
@@ -674,9 +687,13 @@ fn throttled() -> (u16, String) {
     )
 }
 
-/// An STS-shaped error body with a code or message `build_sts_error_response`
-/// does not produce.
+/// An STS-shaped error body. The message is escaped: it can carry text the
+/// caller sent, and the body is served as XML.
 fn sts_error_xml(code: &str, message: &str) -> String {
+    let message = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Code>{code}</Code><Message>{message}</Message></Error></ErrorResponse>"
     )
@@ -766,7 +783,6 @@ async fn exchange_platform_token(
         config.sts_max_session_duration_secs,
     )
     .ok_or_else(|| failed(ProxyError::RoleNotFound(sts.role_arn.clone())))?;
-    // No angle brackets in the message: the STS error body carries it unescaped.
     let account = sts::account(&sts.role_arn).ok_or_else(|| {
         failed(ProxyError::InvalidRequest(
             "RoleArn must name the account to act as: arn:aws:iam::ACCOUNT:role/ROLE".into(),
