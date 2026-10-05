@@ -3,30 +3,10 @@
 //! Kept wasm-free so the policy can be unit-tested natively (see
 //! `tests/cache_control.rs`), despite the crate's `[lib] test = false`.
 //!
-//! # Why a default is needed
-//!
-//! Backends here generally do not set `Cache-Control` on their objects, and the
-//! proxy relays response headers through a denylist
-//! (`multistore::route_handler::RESPONSE_HEADER_DENYLIST`) that does not include
-//! `cache-control` — so an object that *does* carry one already passes through
-//! untouched, and an object that does not leaves the response with no freshness
-//! information at all.
-//!
-//! [RFC 9111 §4.2.2] then lets a cache invent its own freshness lifetime, and the
-//! common heuristic is 10% of the time since `Last-Modified` — which the proxy
-//! does send. A file untouched for ten days is treated as fresh for a day, so a
-//! browser can serve a pre-publish body, with a stale `ETag`, as a plain 200. The
-//! caller cannot tell. See #225 for the STAC catalog this broke.
-//!
-//! [RFC 9111 §4.2.2]: https://www.rfc-editor.org/rfc/rfc9111#section-4.2.2
-//!
-//! # Scope
-//!
-//! This governs what the proxy tells *downstream* caches. It is unrelated to
-//! whether the worker's own Cache API stores object bytes (#188): a `Range`
-//! response is a 206, which `cache.put` refuses and which multistore explicitly
-//! keeps out of the subrequest cache, so no value of this header makes ranged
-//! reads edge-cacheable.
+//! Without a freshness policy, RFC 9111 §4.2.2 lets caches invent one from
+//! `Last-Modified`, which served pre-publish STAC metadata to browsers (#225).
+//! This sets what downstream caches see; it does not make ranged reads
+//! edge-cacheable (#188).
 
 /// `Cache-Control` for `/.sts`. Its 200 body is temporary AWS credentials, and a
 /// `GET` with the parameters in the query string is a valid STS call, so the
@@ -52,13 +32,6 @@ pub(crate) fn is_credentialed(headers: &http::HeaderMap, query: Option<&str>) ->
         })
 }
 
-/// The response headers that say whether the backend set its own freshness
-/// policy.
-pub(crate) struct BackendHeaders<'a> {
-    pub cache_control: Option<&'a str>,
-    pub has_expires: bool,
-}
-
 /// Decide the `Cache-Control` value to add to a response, or `None` to leave the
 /// response untouched.
 ///
@@ -82,7 +55,9 @@ pub(crate) struct BackendHeaders<'a> {
 ///
 /// A credentialed request gets [`CREDENTIALED_CACHE_CONTROL`] in place of the
 /// configured value, so an operator's `public, max-age=…` can never make a
-/// restricted product's bytes storable by a shared cache.
+/// restricted product's bytes storable by a shared cache. A publisher's own
+/// header still wins on credentialed reads too: if they mark a restricted
+/// object `public`, a shared cache may store it.
 ///
 /// Applied to every read status, not just 200: RFC 9111 §4.2.2 heuristic
 /// freshness also covers 206, 404 and 410. Also applied to `/.well-known/*`:
@@ -95,7 +70,8 @@ pub(crate) fn default_cache_control<'a>(
     method: &http::Method,
     path: &str,
     status: u16,
-    backend: BackendHeaders<'_>,
+    backend_cache_control: Option<&str>,
+    backend_expires: bool,
     credentialed: bool,
     configured: Option<&'a str>,
 ) -> Option<&'a str> {
@@ -106,7 +82,7 @@ pub(crate) fn default_cache_control<'a>(
     if !matches!(*method, http::Method::GET | http::Method::HEAD) || status == 304 {
         return None;
     }
-    if backend.has_expires || backend.cache_control.is_some_and(|v| !v.trim().is_empty()) {
+    if backend_expires || backend_cache_control.is_some_and(|v| !v.trim().is_empty()) {
         return None;
     }
     Some(if credentialed {

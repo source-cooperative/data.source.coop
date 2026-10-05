@@ -5,37 +5,23 @@
 #[path = "../src/cache_control.rs"]
 mod cache_control;
 
-use cache_control::{default_cache_control, is_credentialed, BackendHeaders};
+use cache_control::{default_cache_control, is_credentialed};
 use http::{HeaderMap, HeaderValue, Method};
 
 const DEFAULT: Option<&str> = Some("no-cache");
 const PATH: &str = "/acct/prod/key.json";
 
-fn none() -> BackendHeaders<'static> {
-    BackendHeaders {
-        cache_control: None,
-        has_expires: false,
-    }
-}
-
-fn with_cc(v: &str) -> BackendHeaders<'_> {
-    BackendHeaders {
-        cache_control: Some(v),
-        has_expires: false,
-    }
-}
-
 /// Anonymous read through the common path.
-fn anon(method: &Method, status: u16, backend: BackendHeaders<'_>) -> Option<&'static str> {
-    default_cache_control(method, PATH, status, backend, false, DEFAULT)
+fn anon(method: &Method, status: u16, backend: Option<&str>) -> Option<&'static str> {
+    default_cache_control(method, PATH, status, backend, false, false, DEFAULT)
 }
 
 /// The bug from #225: an object read with no `Cache-Control` of its own gets the
 /// default, so a cache cannot invent a freshness lifetime from `Last-Modified`.
 #[test]
 fn read_without_a_backend_header_gets_the_default() {
-    assert_eq!(anon(&Method::GET, 200, none()), DEFAULT);
-    assert_eq!(anon(&Method::HEAD, 200, none()), DEFAULT);
+    assert_eq!(anon(&Method::GET, 200, None), DEFAULT);
+    assert_eq!(anon(&Method::HEAD, 200, None), DEFAULT);
 }
 
 /// The publisher's own header always wins — that is the whole point of option 1
@@ -50,7 +36,7 @@ fn a_backend_header_is_never_overridden() {
         "no-cache",
     ] {
         assert_eq!(
-            anon(&Method::GET, 200, with_cc(existing)),
+            anon(&Method::GET, 200, Some(existing)),
             None,
             "should not override backend value {existing:?}"
         );
@@ -60,11 +46,10 @@ fn a_backend_header_is_never_overridden() {
 /// `Expires` is a backend freshness policy too; `no-cache` would override it.
 #[test]
 fn a_backend_expires_is_never_overridden() {
-    let backend = BackendHeaders {
-        cache_control: None,
-        has_expires: true,
-    };
-    assert_eq!(anon(&Method::GET, 200, backend), None);
+    assert_eq!(
+        default_cache_control(&Method::GET, PATH, 200, None, true, false, DEFAULT),
+        None
+    );
 }
 
 /// A present-but-blank header carries no directive, so heuristic freshness
@@ -73,7 +58,7 @@ fn a_backend_expires_is_never_overridden() {
 fn a_blank_backend_header_is_treated_as_absent() {
     for existing in ["", "   ", "\t"] {
         assert_eq!(
-            anon(&Method::GET, 200, with_cc(existing)),
+            anon(&Method::GET, 200, Some(existing)),
             DEFAULT,
             "blank value {existing:?} should not suppress the default"
         );
@@ -85,7 +70,7 @@ fn a_blank_backend_header_is_treated_as_absent() {
 fn writes_are_left_alone() {
     for method in [Method::PUT, Method::POST, Method::DELETE, Method::PATCH] {
         assert_eq!(
-            anon(&method, 200, none()),
+            anon(&method, 200, None),
             None,
             "{method} should not get a default"
         );
@@ -96,8 +81,8 @@ fn writes_are_left_alone() {
 /// so injecting there would overwrite a publisher's stored directive.
 #[test]
 fn not_modified_is_left_alone() {
-    assert_eq!(anon(&Method::GET, 304, none()), None);
-    assert_eq!(anon(&Method::HEAD, 304, none()), None);
+    assert_eq!(anon(&Method::GET, 304, None), None);
+    assert_eq!(anon(&Method::HEAD, 304, None), None);
 }
 
 /// Every other read status still gets it: heuristic freshness covers 206, 404
@@ -106,7 +91,7 @@ fn not_modified_is_left_alone() {
 fn other_read_statuses_get_the_default() {
     for status in [200, 206, 301, 404, 410, 500] {
         assert_eq!(
-            anon(&Method::GET, status, none()),
+            anon(&Method::GET, status, None),
             DEFAULT,
             "{status} should get a default"
         );
@@ -117,7 +102,7 @@ fn other_read_statuses_get_the_default() {
 #[test]
 fn unconfigured_disables_the_default() {
     assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, none(), false, None),
+        default_cache_control(&Method::GET, PATH, 200, None, false, false, None),
         None
     );
 }
@@ -128,7 +113,7 @@ fn unconfigured_disables_the_default() {
 fn the_configured_value_is_used_verbatim() {
     let configured = Some("public, max-age=300");
     assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, none(), false, configured),
+        default_cache_control(&Method::GET, PATH, 200, None, false, false, configured),
         configured
     );
 }
@@ -139,12 +124,12 @@ fn the_configured_value_is_used_verbatim() {
 fn credentialed_reads_are_private() {
     let configured = Some("public, max-age=300");
     assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, none(), true, configured),
+        default_cache_control(&Method::GET, PATH, 200, None, false, true, configured),
         Some("private, no-cache")
     );
     // Still disabled when unconfigured, and still never overrides the backend.
     assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, none(), true, None),
+        default_cache_control(&Method::GET, PATH, 200, None, false, true, None),
         None
     );
     assert_eq!(
@@ -152,7 +137,8 @@ fn credentialed_reads_are_private() {
             &Method::GET,
             PATH,
             200,
-            with_cc("no-store"),
+            Some("no-store"),
+            false,
             true,
             configured
         ),
@@ -166,13 +152,13 @@ fn credentialed_reads_are_private() {
 fn sts_is_never_stored() {
     for (method, status) in [(Method::GET, 200), (Method::POST, 200), (Method::GET, 501)] {
         assert_eq!(
-            default_cache_control(&method, "/.sts", status, none(), false, None),
+            default_cache_control(&method, "/.sts", status, None, false, false, None),
             Some("no-store"),
             "{method} {status}"
         );
     }
     assert_eq!(
-        default_cache_control(&Method::GET, "/.stsx", 200, none(), false, DEFAULT),
+        default_cache_control(&Method::GET, "/.stsx", 200, None, false, false, DEFAULT),
         DEFAULT
     );
 }

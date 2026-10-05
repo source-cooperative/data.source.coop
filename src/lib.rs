@@ -274,11 +274,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             let ip = header_str(&parts.headers, "cf-connecting-ip");
             let (auth, id) = (&api_auth, request_id.as_str());
             if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
-                return Ok(finish(result, &request_id));
+                return Ok(finish_sts(result, &request_id));
             }
             if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
             {
-                return Ok(finish(result, &request_id));
+                return Ok(finish_sts(result, &request_id));
             }
         }
     }
@@ -539,15 +539,12 @@ fn add_cache_control(
 ) -> web_sys::Response {
     let h = resp.headers();
     let existing = h.get("cache-control").ok().flatten();
-    let backend = cache_control::BackendHeaders {
-        cache_control: existing.as_deref(),
-        has_expires: h.get("expires").ok().flatten().is_some(),
-    };
     if let Some(value) = cache_control::default_cache_control(
         &parts.method,
         &parts.path,
         resp.status(),
-        backend,
+        existing.as_deref(),
+        h.get("expires").ok().flatten().is_some(),
         cache_control::is_credentialed(&parts.headers, parts.query.as_deref()),
         config.default_cache_control.as_deref(),
     ) {
@@ -560,13 +557,13 @@ fn add_cache_control(
 
 // ── API keys ────────────────────────────────────────────────────────
 
-/// A response answered before the gateway, with the CORS headers and the
+/// A `/.sts` exchange answered before the gateway — `no-store`, since it
+/// carries credentials — with the CORS headers and the
 /// request id every gateway response carries — as `x-request-id`, and as
 /// `x-amzn-requestid`, the header AWS SDKs read it from.
-fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
+fn finish_sts((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
     let response =
         add_cors(GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys());
-    // Only `/.sts` exchanges are finished here, and they carry credentials.
     let _ = response
         .headers()
         .set("cache-control", cache_control::STS_CACHE_CONTROL);
