@@ -14,7 +14,7 @@ The proxy supports `GET`, `HEAD`, and S3-compatible `LIST` operations with anony
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install worker-build@0.7.5
-npm install -g wrangler@3
+npm install -g wrangler@4
 ```
 
 ### Run Locally
@@ -110,12 +110,41 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | ---------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `SOURCE_API_URL`             | `https://source.coop`       | Source Cooperative API base URL                                                                                                    |
 | `LOG_LEVEL`                  | `WARN`                      | Tracing level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                                                          |
-| `AUTH_ISSUER`                | `https://auth.source.coop`  | OIDC issuer trusted for `/.sts` token exchange                                                                                     |
-| `AUTH_AUDIENCE`              | —                           | Comma-separated OAuth client ID(s) that `/.sts` subject tokens must be issued to (`aud` claim); a token is accepted if it matches any. Unset = `/.sts` token exchange is disabled (returns 501) |
+| `AUTH_ISSUER`                | `https://auth.source.coop`  | The person issuer trusted for `/.sts` token exchange; its tokens act as their own subject                                          |
+| `AUTH_AUDIENCE`              | —                           | Comma-separated OAuth client ID(s) that `/.sts` subject tokens must be issued to (`aud` claim); a token is accepted if it matches any. Unset = person-token exchange at `/.sts` is disabled (returns 501); API keys and platform tokens still exchange |
+| `PLATFORM_ISSUERS`           | —                           | JSON object from each platform issuer URL to the audiences its tokens must carry, such as `{"https://token.actions.githubusercontent.com": ["https://data.source.coop"]}`, written as a string or as a TOML table. An issuer with no audience is refused. Unset = no platform issuer is trusted |
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
 | `DEFAULT_CACHE_CONTROL`      | `no-cache`                  | `Cache-Control` added to anonymous read responses whose backend sets neither `Cache-Control` nor `Expires`. Credentialed reads get `private, no-cache` instead; `/.sts` is always `no-store`. Empty (or all-whitespace) string = send no default |
+
+### Bindings
+
+| Binding              | Kind        | Description                                                                                                                                  |
+| -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STS_EXCHANGE_LIMIT` | `ratelimit` | Per-client-IP limit on `/.sts` exchanges that may cost a Source API call: every API-key exchange (ADR-013), and each platform-token exchange whose trust answer is not cached (ADR-014). Declared under `[[ratelimits]]` in every `wrangler*.toml`; a deployment without it logs an error and exchanges without a limit |
+
+### API keys
+
+A service account's API key (ADR-013) is an opaque `sck_` secret that source.coop stores as a hash. It is presented at `/.sts` as `WebIdentityToken`, from a POST form body only — a key in the URL is refused, because the URL is logged. The proxy trims it and checks its shape and checksum (the last six characters are a CRC-32 of the thirty random ones before them, in base62), hashes it, and asks `POST {SOURCE_API_URL}/api/v1/service-account-keys/exchanges` for its standing as itself (subject `urn:source:data-proxy`), caching the answer for 60 seconds; then it mints credentials for the account the API names, exactly as it would for an ID token. A key that fails its shape or checksum was cut short or mistyped, and is refused as such without a lookup; every other refusal of the key reads `API key was not accepted (request id …)`, and the reason is in the log under that id.
+
+### Roles
+
+Every exchange at `/.sts`, of an ID token or an API key, names a Role in `RoleArn`, either bare or as the resource of an ARN of any partition and account (`arn:aws:iam::000000000000:role/ReadOnly`), since AWS SDKs insist on an ARN. The account matters only to a platform token (below). The Roles are hardcoded (ADR-014):
+
+| Role         | Credentials may                                          |
+| ------------ | -------------------------------------------------------- |
+| `FullAccess` | do everything the account's memberships allow            |
+| `ReadOnly`   | do the same, except write                                |
+| `_default`   | do what `FullAccess` does; the name existing clients use |
+
+Any other name is refused with `MalformedPolicyDocument`, never mapped to a default. A Role only subtracts: its ceiling is sealed into the session token and checked locally before the account's own permissions are looked up (ADR-011), and a request it refuses gets the same `AccessDenied` as any other refusal.
+
+### Platform identity providers
+
+A token from a platform issuer in `PLATFORM_ISSUERS`, such as GitHub Actions, says which workload is calling but not which account it may act as. It is presented at `/.sts` from a POST form body only, as an API key is: a token in the URL is refused, because the URL is logged. It acts as the service account in `RoleArn`, `arn:aws:iam::<owner>--<name>:role/FullAccess`, and only if that account trusts the token's issuer and subject (ADR-014); an account that is not a service account is refused before anything else. The proxy verifies the token against the issuer's JWKS (looked up again for a key id it has not seen; a failure to fetch it is a retryable `InternalError`), with that issuer's own audiences and a required `exp`, then, unless a cached answer settles it and within `STS_EXCHANGE_LIMIT`, asks `POST {SOURCE_API_URL}/api/v1/accounts/{account}/trusts/exchanges` with `{"issuer", "subject"}`, as the account. Per account, issuer and subject, a yes is cached for 60 seconds and a no for 10, and the credentials' principal is the account, never the token's subject. Every refusal reads `AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity (request id …)`. A token from `AUTH_ISSUER` still acts as its own subject and ignores the account in `RoleArn`.
+
+`aws-actions/configure-aws-credentials` works: after the exchange it checks the credentials it exports with `GetCallerIdentity`, which the proxy answers at `/.sts` (and `/.sts/`, where its SDK sends it). The response's `Arn` and `UserId` name the Role and the account; `Account` is multistore's fixed synthetic id. A workflow can instead save its token to a file and let an AWS SDK exchange it, with `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ENDPOINT_URL_STS=<proxy>/.sts`, `AWS_ENDPOINT_URL_S3=<proxy>` and `AWS_REGION`.
 
 ### Secrets
 

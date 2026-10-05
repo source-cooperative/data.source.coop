@@ -1,5 +1,6 @@
 //! Process-wide configuration parsed once from Worker env vars + secrets.
 
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use multistore_oidc_provider::jwt::JwtSigner;
@@ -101,8 +102,26 @@ fn build_config(env: &Env) -> AppConfig {
     if auth_audiences.is_empty() {
         // Fail closed: without an audience restriction, an ID token minted for
         // ANY OAuth client of AUTH_ISSUER could be exchanged for a user's
-        // credentials, so /.sts is disabled entirely (returns 501) until set.
-        tracing::warn!("AUTH_AUDIENCE not set: /.sts token exchange is disabled (returns 501)");
+        // credentials, so its exchange is disabled (returns 501) until set.
+        tracing::warn!(
+            "AUTH_AUDIENCE not set: person-token exchange at /.sts is disabled (returns 501)"
+        );
+    }
+
+    // Platform identity providers (GitHub Actions, say), each with its own
+    // audiences. Unset trusts none. `var` takes only a string and
+    // `object_var` only an object, which is how a TOML table arrives.
+    let mut platform_issuers = match env.var("PLATFORM_ISSUERS") {
+        Ok(json) => crate::platform::parse_issuers(serde_json::Value::String(json.to_string())),
+        Err(_) => env
+            .object_var::<serde_json::Value>("PLATFORM_ISSUERS")
+            .map(crate::platform::parse_issuers)
+            .unwrap_or_default(),
+    };
+    // The platform path claims its issuers' tokens ahead of the STS route, so
+    // an entry for the person issuer would refuse every person exchange.
+    if platform_issuers.remove(&auth_issuer).is_some() {
+        tracing::error!(issuer = %auth_issuer, "PLATFORM_ISSUERS names AUTH_ISSUER; ignoring that entry");
     }
 
     // Ceiling for client-requested DurationSeconds on /.sts. Unset → 3600 (1h),
@@ -157,6 +176,7 @@ fn build_config(env: &Env) -> AppConfig {
         session_token_key,
         auth_issuer,
         auth_audiences,
+        platform_issuers,
         sts_max_session_duration_secs,
         ip_hash_salt,
         default_cache_control,
@@ -168,13 +188,19 @@ pub struct AppConfig {
     pub oidc: OidcConfig,
     /// AES key for sealing/unsealing STS session tokens.
     pub session_token_key: TokenKey,
-    /// OIDC issuer URL for the Source Cooperative auth provider (e.g. `https://auth.source.coop`).
+    /// OIDC issuer URL for the Source Cooperative auth provider (e.g.
+    /// `https://auth.source.coop`): the person issuer, whose tokens say who the
+    /// caller is.
     pub auth_issuer: String,
     /// OAuth client IDs that subject tokens presented to `/.sts` may be issued
     /// to (the `aud` claim); a token is accepted if it matches any. Parsed from
     /// the comma-separated `AUTH_AUDIENCE`. Empty disables `/.sts` entirely
     /// (returns 501) rather than accepting any audience.
     pub auth_audiences: Vec<String>,
+    /// Platform issuers and the audiences each one's tokens must carry, from
+    /// the JSON object in `PLATFORM_ISSUERS`. A platform token acts as the
+    /// account `RoleArn` names, if that account trusts it (ADR-014).
+    pub platform_issuers: HashMap<String, Vec<String>>,
     /// Ceiling for client-requested STS session length (`DurationSeconds`),
     /// in seconds. From `STS_MAX_SESSION_DURATION_SECS`; defaults to 3600 (1h).
     pub sts_max_session_duration_secs: u64,

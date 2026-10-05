@@ -6,6 +6,9 @@
 **Depends on:** ADR-004, ADR-009
 **Blocks:** ADR-011
 
+> [!NOTE]
+> **Amended by ADR-014 (Service Accounts).** Account-owned Roles are deferred; two hardcoded Roles, `FullAccess` and `ReadOnly` (`_default` as an alias), ship in their place (source-cooperative/data.source.coop#221). The Organisation Subject Problem below is resolved by ADR-014 rather than by making organisations authenticate: the subject of a workload's credential is a service account.
+
 ---
 
 ## Context
