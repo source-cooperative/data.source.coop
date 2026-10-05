@@ -178,9 +178,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             resource: String::new(),
             request_id: request_id.clone(),
         };
-        return Ok(add_cors(
+        return Ok(add_cors(add_cache_control(
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-        ));
+            &parts,
+            config,
+        )));
     }
 
     // ── Short-circuit: write to a keyless path ──────────────────────
@@ -418,30 +420,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    // ── Default Cache-Control ────────────────────────────────────
-    // Only when the backend sent none: a publisher's own header always wins.
-    // Without this the response carries `Last-Modified` but no freshness
-    // directive, and RFC 9111 §4.2.2 lets caches invent one — which silently
-    // served pre-publish STAC metadata to browsers (#225). 304s are skipped:
-    // their headers are merged into the *stored* response, so injecting there
-    // would clobber the publisher's value a revalidation later.
-    if let Some(value) = cache_control::default_cache_control(
-        &parts.method,
-        response.status(),
-        response
-            .headers()
-            .get("cache-control")
-            .ok()
-            .flatten()
-            .as_deref(),
-        &config.default_cache_control,
-    ) {
-        if let Err(e) = response.headers().set("cache-control", value) {
-            tracing::warn!("failed to set cache-control header: {:?}", e);
-        }
-    }
-
-    let response = add_cors(response);
+    let response = add_cors(add_cache_control(response, &parts, config));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -474,6 +453,40 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .get(name)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
+}
+
+// ── Cache-Control ───────────────────────────────────────────────────
+
+/// Add the default `Cache-Control` where the backend set no freshness policy of
+/// its own. Without it a read carries `Last-Modified` but no directive, and
+/// RFC 9111 §4.2.2 lets caches invent a lifetime — which served pre-publish STAC
+/// metadata to browsers (#225). The policy lives in [`cache_control`]. Not
+/// called on the OPTIONS and keyless-write short-circuits, which it would skip
+/// anyway (non-reads).
+fn add_cache_control(
+    resp: web_sys::Response,
+    parts: &RequestParts,
+    config: &config::AppConfig,
+) -> web_sys::Response {
+    let h = resp.headers();
+    let existing = h.get("cache-control").ok().flatten();
+    let backend = cache_control::BackendHeaders {
+        cache_control: existing.as_deref(),
+        has_expires: h.get("expires").ok().flatten().is_some(),
+    };
+    if let Some(value) = cache_control::default_cache_control(
+        &parts.method,
+        &parts.path,
+        resp.status(),
+        backend,
+        cache_control::is_credentialed(&parts.headers, parts.query.as_deref()),
+        config.default_cache_control.as_deref(),
+    ) {
+        if let Err(e) = h.set("cache-control", value) {
+            tracing::warn!("failed to set cache-control header: {:?}", e);
+        }
+    }
+    resp
 }
 
 // ── CORS ────────────────────────────────────────────────────────────

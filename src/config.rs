@@ -144,10 +144,11 @@ fn build_config(env: &Env) -> AppConfig {
     // Unset → `no-cache`, which permits storing but requires revalidation; the
     // proxy already answers `If-None-Match` with a 304, so the cost is one
     // conditional request rather than a full transfer. Set to the empty string
-    // to disable and send no header at all. See `crate::cache_control`.
+    // to disable and send no header at all — an all-whitespace value too, since
+    // `cache-control: ` would carry no directive. See `crate::cache_control`.
     let default_cache_control = match env.var("DEFAULT_CACHE_CONTROL") {
-        Err(_) => DEFAULT_CACHE_CONTROL_FALLBACK.to_string(),
-        Ok(v) => v.to_string(),
+        Err(_) => Some(DEFAULT_CACHE_CONTROL_FALLBACK.to_string()),
+        Ok(v) => Some(v.to_string().trim().to_string()).filter(|v| !v.is_empty()),
     };
 
     AppConfig {
@@ -181,9 +182,10 @@ pub struct AppConfig {
     /// when `IP_HASH_SALT` is unset (hashes still happen, just unsalted).
     pub ip_hash_salt: String,
     /// `Cache-Control` added to read responses that carry none of their own,
-    /// from `DEFAULT_CACHE_CONTROL`. Defaults to `no-cache`; empty disables the
-    /// behaviour. Never overrides a value the backend already sent.
-    pub default_cache_control: String,
+    /// from `DEFAULT_CACHE_CONTROL`, trimmed. Defaults to `no-cache`; `None`
+    /// (set blank) disables the behaviour. Never overrides a value the backend
+    /// already sent, and credentialed reads get `private, no-cache` instead.
+    pub default_cache_control: Option<String>,
 }
 
 pub struct OidcConfig {

@@ -249,7 +249,22 @@ def test_revalidation_response_keeps_backend_cache_control():
         headers={"If-None-Match": etag},
     )
     assert revalidated.status_code == 304
-    assert revalidated.headers.get("cache-control") is None
+    sent = resp.headers.get("cache-control")
+    if sent == "no-cache":
+        # The 200 carried our default, so the backend sets none: the 304 must
+        # not gain one either.
+        assert revalidated.headers.get("cache-control") is None
+    else:
+        # The backend sets its own; the 304 relays exactly that.
+        assert revalidated.headers.get("cache-control") == sent
+
+
+def test_sts_is_never_stored():
+    """/.sts answers with temporary credentials, and a GET with the parameters
+    in the query string is a valid call, so it is no-store on every path --
+    including the 501 when STS is not configured."""
+    resp = requests.get(f"{PROXY_URL}/.sts")
+    assert resp.headers.get("cache-control") == "no-store"
 
 
 def test_revalidation_still_returns_304():
