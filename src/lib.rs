@@ -939,6 +939,10 @@ fn add_cors(resp: web_sys::Response) -> web_sys::Response {
         ),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
+        // Browsers cache a preflight per URL; Chrome caps this at 7200s.
+        // Every batch DeleteObjects for a product posts to the same URL,
+        // so a long cache lets the second batch onward skip its OPTIONS.
+        ("access-control-max-age", "7200"),
     ] {
         if let Err(e) = h.set(name, value) {
             tracing::warn!("failed to set CORS header {}: {:?}", name, e);
