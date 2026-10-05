@@ -35,6 +35,10 @@ name = "fixtures"
 path = "tests/fixtures.rs"
 
 [[test]]
+name = "cache_control"
+path = "tests/cache_control.rs"
+
+[[test]]
 name = "keys"
 path = "tests/keys.rs"
 

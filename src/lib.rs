@@ -10,6 +10,7 @@
 mod analytics;
 mod authz;
 mod backend_auth;
+mod cache_control;
 mod config;
 mod handlers;
 mod keys;
@@ -273,11 +274,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             let ip = header_str(&parts.headers, "cf-connecting-ip");
             let (auth, id) = (&api_auth, request_id.as_str());
             if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
-                return Ok(finish(result, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id));
             }
             if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
             {
-                return Ok(finish(result, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id));
             }
         }
     }
@@ -295,9 +296,12 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             resource: String::new(),
             request_id: request_id.clone(),
         };
-        return Ok(add_cors(
+        return Ok(add_cors(add_cache_control(
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-        ));
+            &parts,
+            config,
+            false,
+        )));
     }
 
     // ── Build gateway with route handlers ──────────────────────────
@@ -486,7 +490,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(response);
+    // Non-public products are cached `private` whoever reads them. Fails
+    // closed: a product the lookup can't resolve is treated as private.
+    let private = match (account, product) {
+        (Some(acct), Some(prod))
+            if !parts.path.starts_with("/.")
+                && matches!(parts.method, http::Method::GET | http::Method::HEAD)
+                && response.status() != 304 =>
+        {
+            !source_api::cache::get_or_fetch_product(
+                &config.api_base_url,
+                acct,
+                prod,
+                &api_auth,
+                &request_id,
+                None,
+            )
+            .await
+            .is_ok_and(|p| p.is_public())
+        }
+        _ => false,
+    };
+    let response = add_cors(add_cache_control(response, &parts, config, private));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -521,14 +546,55 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .unwrap_or("")
 }
 
+// ── Cache-Control ───────────────────────────────────────────────────
+
+/// Add the default `Cache-Control` where the backend set no freshness policy of
+/// its own. Without it a read carries `Last-Modified` but no directive, and
+/// RFC 9111 §4.2.2 lets caches invent a lifetime — which served pre-publish STAC
+/// metadata to browsers (#225). The policy lives in [`cache_control`]. Not
+/// called on the OPTIONS and keyless-write short-circuits, which it would skip
+/// anyway (non-reads).
+fn add_cache_control(
+    resp: web_sys::Response,
+    parts: &RequestParts,
+    config: &config::AppConfig,
+    private: bool,
+) -> web_sys::Response {
+    let h = resp.headers();
+    let existing = h.get("cache-control").ok().flatten();
+    if let Some(value) = cache_control::default_cache_control(
+        &parts.method,
+        &parts.path,
+        resp.status(),
+        existing.as_deref(),
+        h.get("expires").ok().flatten().is_some(),
+        private,
+        config.default_cache_control.as_deref(),
+    ) {
+        if let Err(e) = h.set("cache-control", &value) {
+            tracing::warn!("failed to set cache-control header: {:?}", e);
+        }
+    }
+    resp
+}
+
 // ── API keys ────────────────────────────────────────────────────────
 
-/// A response answered before the gateway, with the CORS headers and the
-/// request id every gateway response carries — as `x-request-id`, and as
+/// A `/.sts` exchange answered before the gateway, with the cache policy, the
+/// CORS headers and the request id every gateway response carries — as `x-request-id`, and as
 /// `x-amzn-requestid`, the header AWS SDKs read it from.
-fn finish((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
-    let response =
-        add_cors(GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys());
+fn finish_sts(
+    (status, xml): (u16, String),
+    parts: &RequestParts,
+    config: &config::AppConfig,
+    request_id: &str,
+) -> web_sys::Response {
+    let response = add_cors(add_cache_control(
+        GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys(),
+        parts,
+        config,
+        false,
+    ));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", request_id);
         let _ = response.headers().set("x-amzn-requestid", request_id);
