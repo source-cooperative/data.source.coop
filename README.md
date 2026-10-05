@@ -116,7 +116,7 @@ Set in `wrangler.toml` or via the Cloudflare dashboard:
 | `OIDC_PROVIDER_ISSUER`       | `https://data.source.coop`  | Issuer URL for minted JWTs and OIDC discovery                                                                                      |
 | `OIDC_PROVIDER_KID`          | `data-proxy-1`              | Key ID for the active signing key                                                                                                  |
 | `OIDC_PROVIDER_KID_PREVIOUS` | —                           | Key ID for the previous key (during rotation)                                                                                      |
-| `DEFAULT_CACHE_CONTROL`      | `no-cache`                  | `Cache-Control` added to anonymous read responses whose backend sets neither `Cache-Control` nor `Expires`. Credentialed reads get `private, no-cache` instead; `/.sts` is always `no-store`. Empty (or all-whitespace) string = send no default |
+| `DEFAULT_CACHE_CONTROL`      | `no-cache`                  | `Cache-Control` added to read responses of public products whose backend sets neither `Cache-Control` nor `Expires`. Non-public products are always `private` (backend `public`/`s-maxage` dropped; `private, no-cache` when the backend sets nothing), and `/.sts` is always `no-store`, whatever this is set to. Empty (or all-whitespace) string = send no default; an invalid header value falls back to `no-cache` |
 
 ### Bindings
 

@@ -5,38 +5,61 @@
 #[path = "../src/cache_control.rs"]
 mod cache_control;
 
-use cache_control::{default_cache_control, is_credentialed};
-use http::{HeaderMap, HeaderValue, Method};
+use cache_control::default_cache_control;
+use http::Method;
 
 const DEFAULT: Option<&str> = Some("no-cache");
 const PATH: &str = "/acct/prod/key.json";
 
-/// Anonymous read through the common path.
-fn anon(method: &Method, status: u16, backend: Option<&str>) -> Option<&'static str> {
+/// A read of a public product.
+fn public(method: &Method, status: u16, backend: Option<&str>) -> Option<String> {
     default_cache_control(method, PATH, status, backend, false, false, DEFAULT)
+}
+
+/// A read of a non-public product.
+fn private(backend: Option<&str>, expires: bool, configured: Option<&str>) -> Option<String> {
+    default_cache_control(&Method::GET, PATH, 200, backend, expires, true, configured)
+}
+
+fn s(v: &str) -> Option<String> {
+    Some(v.to_string())
 }
 
 /// The bug from #225: an object read with no `Cache-Control` of its own gets the
 /// default, so a cache cannot invent a freshness lifetime from `Last-Modified`.
 #[test]
 fn read_without_a_backend_header_gets_the_default() {
-    assert_eq!(anon(&Method::GET, 200, None), DEFAULT);
-    assert_eq!(anon(&Method::HEAD, 200, None), DEFAULT);
+    assert_eq!(public(&Method::GET, 200, None), s("no-cache"));
+    assert_eq!(public(&Method::HEAD, 200, None), s("no-cache"));
 }
 
-/// The publisher's own header always wins — that is the whole point of option 1
-/// in #225. Overriding it would take immutable assets *out* of cache.
+/// multistore-cf-workers appends `no-transform` to every forwarded response. It
+/// is not a freshness policy, so the default still applies, and it is kept.
+#[test]
+fn no_transform_alone_is_not_a_policy_and_is_kept() {
+    assert_eq!(
+        public(&Method::GET, 200, Some("no-transform")),
+        s("no-cache, no-transform")
+    );
+    assert_eq!(
+        private(Some("no-transform"), false, None),
+        s("private, no-cache, no-transform")
+    );
+}
+
+/// The publisher's own header always wins on public products — overriding it
+/// would take immutable assets *out* of cache.
 #[test]
 fn a_backend_header_is_never_overridden() {
     for existing in [
         "max-age=31536000, immutable",
+        "max-age=60, no-transform",
         "no-store",
         "public, max-age=60",
-        // Even a value identical to the default is left alone rather than reset.
         "no-cache",
     ] {
         assert_eq!(
-            anon(&Method::GET, 200, Some(existing)),
+            public(&Method::GET, 200, Some(existing)),
             None,
             "should not override backend value {existing:?}"
         );
@@ -52,53 +75,44 @@ fn a_backend_expires_is_never_overridden() {
     );
 }
 
-/// A present-but-blank header carries no directive, so heuristic freshness
-/// applies exactly as if it were absent. Treat it as absent.
+/// A blank header carries no directive, so it counts as absent.
 #[test]
 fn a_blank_backend_header_is_treated_as_absent() {
     for existing in ["", "   ", "\t"] {
         assert_eq!(
-            anon(&Method::GET, 200, Some(existing)),
-            DEFAULT,
+            public(&Method::GET, 200, Some(existing)),
+            s("no-cache"),
             "blank value {existing:?} should not suppress the default"
         );
     }
 }
 
-/// Writes are not heuristically cacheable; adding the header would be noise.
 #[test]
 fn writes_are_left_alone() {
     for method in [Method::PUT, Method::POST, Method::DELETE, Method::PATCH] {
-        assert_eq!(
-            anon(&method, 200, None),
-            None,
-            "{method} should not get a default"
-        );
+        assert_eq!(public(&method, 200, None), None, "{method}");
     }
 }
 
-/// RFC 9111 §4.3.4: a cache updates the *stored* response's headers from a 304,
-/// so injecting there would overwrite a publisher's stored directive.
+/// RFC 9111 §4.3.4: a cache updates the *stored* response's headers from a 304.
 #[test]
 fn not_modified_is_left_alone() {
-    assert_eq!(anon(&Method::GET, 304, None), None);
-    assert_eq!(anon(&Method::HEAD, 304, None), None);
+    assert_eq!(public(&Method::GET, 304, None), None);
+    assert_eq!(public(&Method::HEAD, 304, None), None);
 }
 
-/// Every other read status still gets it: heuristic freshness covers 206, 404
-/// and 410 too, so a missing object must not be cached as missing for a day.
+/// Heuristic freshness covers 206, 404 and 410 too.
 #[test]
 fn other_read_statuses_get_the_default() {
     for status in [200, 206, 301, 404, 410, 500] {
         assert_eq!(
-            anon(&Method::GET, status, None),
-            DEFAULT,
-            "{status} should get a default"
+            public(&Method::GET, status, None),
+            s("no-cache"),
+            "{status}"
         );
     }
 }
 
-/// `None` (a blank `DEFAULT_CACHE_CONTROL`) disables the default.
 #[test]
 fn unconfigured_disables_the_default() {
     assert_eq!(
@@ -107,43 +121,52 @@ fn unconfigured_disables_the_default() {
     );
 }
 
-/// The value is passed through verbatim for anonymous reads, so an operator can
-/// set a real `max-age` policy without touching the code.
 #[test]
 fn the_configured_value_is_used_verbatim() {
-    let configured = Some("public, max-age=300");
-    assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, None, false, false, configured),
-        configured
-    );
-}
-
-/// A credentialed read never gets the configured value: `public, max-age=300`
-/// would let a shared cache keep a restricted product's bytes.
-#[test]
-fn credentialed_reads_are_private() {
-    let configured = Some("public, max-age=300");
-    assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, None, false, true, configured),
-        Some("private, no-cache")
-    );
-    // Still disabled when unconfigured, and still never overrides the backend.
-    assert_eq!(
-        default_cache_control(&Method::GET, PATH, 200, None, false, true, None),
-        None
-    );
     assert_eq!(
         default_cache_control(
             &Method::GET,
             PATH,
             200,
-            Some("no-store"),
+            None,
             false,
-            true,
-            configured
+            false,
+            Some("public, max-age=300")
         ),
-        None
+        s("public, max-age=300")
     );
+}
+
+/// A non-public product is `private` whatever the operator configured —
+/// including a disabled default — so a shared cache never keeps its bytes.
+#[test]
+fn non_public_products_are_always_private() {
+    assert_eq!(
+        private(None, false, Some("public, max-age=300")),
+        s("private, no-cache")
+    );
+    assert_eq!(private(None, false, None), s("private, no-cache"));
+}
+
+/// A publisher's `public`/`s-maxage` on a non-public product is dropped; the
+/// rest of their policy is kept, now `private`.
+#[test]
+fn non_public_backend_headers_are_made_private() {
+    assert_eq!(
+        private(Some("public, max-age=86400, s-maxage=600"), false, DEFAULT),
+        s("private, max-age=86400")
+    );
+    assert_eq!(
+        private(Some("Private, no-store"), false, DEFAULT),
+        s("private, no-store")
+    );
+    assert_eq!(
+        private(Some("max-age=60, no-transform"), false, DEFAULT),
+        s("private, max-age=60, no-transform")
+    );
+    // `Expires` alone stays in charge of freshness; `private` keeps it out of
+    // shared caches.
+    assert_eq!(private(None, true, DEFAULT), s("private"));
 }
 
 /// `/.sts` returns credentials, so it is `no-store` for every method and status,
@@ -153,29 +176,12 @@ fn sts_is_never_stored() {
     for (method, status) in [(Method::GET, 200), (Method::POST, 200), (Method::GET, 501)] {
         assert_eq!(
             default_cache_control(&method, "/.sts", status, None, false, false, None),
-            Some("no-store"),
+            s("no-store"),
             "{method} {status}"
         );
     }
     assert_eq!(
         default_cache_control(&Method::GET, "/.stsx", 200, None, false, false, DEFAULT),
-        DEFAULT
+        s("no-cache")
     );
-}
-
-#[test]
-fn credentials_are_detected() {
-    let mut headers = HeaderMap::new();
-    assert!(!is_credentialed(&headers, None));
-    assert!(!is_credentialed(&headers, Some("list-type=2&prefix=a/")));
-    assert!(is_credentialed(
-        &headers,
-        Some("X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=abc")
-    ));
-    assert!(is_credentialed(&headers, Some("x-amz-signature=abc")));
-    headers.insert(
-        "authorization",
-        HeaderValue::from_static("AWS4-HMAC-SHA256 ..."),
-    );
-    assert!(is_credentialed(&headers, None));
 }

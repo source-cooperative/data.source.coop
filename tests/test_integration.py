@@ -177,6 +177,14 @@ def test_object_access_via_path():
 # ── Cache-Control (issue #225) ──────────────────────────────────────
 
 
+def cache_directives(resp):
+    """The response's Cache-Control directives, lowercased. multistore appends
+    `no-transform` to forwarded responses, so tests check membership rather
+    than the exact string."""
+    value = resp.headers.get("cache-control") or ""
+    return {d.strip().lower() for d in value.split(",") if d.strip()}
+
+
 def test_object_read_sends_cache_control():
     """A read of an object whose backend sets no Cache-Control gets the default.
 
@@ -186,13 +194,14 @@ def test_object_read_sends_cache_control():
     """
     resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in cache_directives(resp)
+    assert "private" not in cache_directives(resp)
 
 
 def test_head_sends_cache_control():
     resp = requests.head(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in cache_directives(resp)
 
 
 def test_ranged_read_sends_cache_control():
@@ -207,7 +216,7 @@ def test_ranged_read_sends_cache_control():
         headers={"Range": "bytes=0-99"},
     )
     assert resp.status_code in (200, 206)
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in cache_directives(resp)
 
 
 def test_not_found_sends_cache_control():
@@ -215,13 +224,13 @@ def test_not_found_sends_cache_control():
     cached as missing for a day after it is created."""
     resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/does-not-exist-{os.getpid()}")
     assert resp.status_code == 404
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in cache_directives(resp)
 
 
 def test_listing_sends_cache_control():
     resp = requests.get(f"{PROXY_URL}/{ACCOUNT}?list-type=2&delimiter=/")
     assert resp.status_code == 200
-    assert resp.headers.get("cache-control") == "no-cache"
+    assert "no-cache" in cache_directives(resp)
 
 
 def test_control_plane_sends_cache_control():
@@ -233,30 +242,7 @@ def test_control_plane_sends_cache_control():
     for path in ("/.well-known/openid-configuration", "/.well-known/jwks.json"):
         resp = requests.get(f"{PROXY_URL}{path}")
         assert resp.status_code == 200, path
-        assert resp.headers.get("cache-control") == "no-cache", path
-
-
-def test_revalidation_response_keeps_backend_cache_control():
-    """RFC 9111 4.3.4 merges a 304's headers into the stored response, so the
-    proxy must not inject on a 304 -- doing so would overwrite a publisher's own
-    directive in client caches one revalidation after it was honoured."""
-    resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
-    etag = resp.headers.get("etag")
-    assert etag, "no ETag to revalidate against"
-
-    revalidated = requests.get(
-        f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}",
-        headers={"If-None-Match": etag},
-    )
-    assert revalidated.status_code == 304
-    sent = resp.headers.get("cache-control")
-    if sent == "no-cache":
-        # The 200 carried our default, so the backend sets none: the 304 must
-        # not gain one either.
-        assert revalidated.headers.get("cache-control") is None
-    else:
-        # The backend sets its own; the 304 relays exactly that.
-        assert revalidated.headers.get("cache-control") == sent
+        assert "no-cache" in cache_directives(resp), path
 
 
 def test_sts_is_never_stored():
@@ -269,7 +255,10 @@ def test_sts_is_never_stored():
 
 def test_revalidation_still_returns_304():
     """no-cache costs a conditional request, not a full transfer -- which only
-    holds if revalidation works. Guard that assumption."""
+    holds if revalidation works. And RFC 9111 4.3.4 merges a 304's headers into
+    the stored response, so the proxy must not inject its default there: it
+    would overwrite a publisher's own directive one revalidation after it was
+    honoured."""
     resp = requests.get(f"{PROXY_URL}/{ACCOUNT}/{PRODUCT}/{OBJECT_KEY}")
     assert resp.status_code == 200
     etag = resp.headers.get("etag")
@@ -281,3 +270,6 @@ def test_revalidation_still_returns_304():
     )
     assert revalidated.status_code == 304
     assert not revalidated.content
+    # The fixture object sets no Cache-Control, so the 200's no-cache is ours;
+    # the 304 must not carry it.
+    assert "no-cache" not in cache_directives(revalidated)

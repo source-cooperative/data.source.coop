@@ -274,11 +274,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             let ip = header_str(&parts.headers, "cf-connecting-ip");
             let (auth, id) = (&api_auth, request_id.as_str());
             if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
-                return Ok(finish_sts(result, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id));
             }
             if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
             {
-                return Ok(finish_sts(result, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id));
             }
         }
     }
@@ -300,6 +300,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
             &parts,
             config,
+            false,
         )));
     }
 
@@ -489,7 +490,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(add_cache_control(response, &parts, config));
+    // Non-public products are cached `private` whoever reads them. Fails
+    // closed: a product the lookup can't resolve is treated as private.
+    let private = match (account, product) {
+        (Some(acct), Some(prod))
+            if !parts.path.starts_with("/.")
+                && matches!(parts.method, http::Method::GET | http::Method::HEAD)
+                && response.status() != 304 =>
+        {
+            !source_api::cache::get_or_fetch_product(
+                &config.api_base_url,
+                acct,
+                prod,
+                &api_auth,
+                &request_id,
+                None,
+            )
+            .await
+            .is_ok_and(|p| p.is_public())
+        }
+        _ => false,
+    };
+    let response = add_cors(add_cache_control(response, &parts, config, private));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -536,6 +558,7 @@ fn add_cache_control(
     resp: web_sys::Response,
     parts: &RequestParts,
     config: &config::AppConfig,
+    private: bool,
 ) -> web_sys::Response {
     let h = resp.headers();
     let existing = h.get("cache-control").ok().flatten();
@@ -545,10 +568,10 @@ fn add_cache_control(
         resp.status(),
         existing.as_deref(),
         h.get("expires").ok().flatten().is_some(),
-        cache_control::is_credentialed(&parts.headers, parts.query.as_deref()),
+        private,
         config.default_cache_control.as_deref(),
     ) {
-        if let Err(e) = h.set("cache-control", value) {
+        if let Err(e) = h.set("cache-control", &value) {
             tracing::warn!("failed to set cache-control header: {:?}", e);
         }
     }
@@ -557,16 +580,21 @@ fn add_cache_control(
 
 // ── API keys ────────────────────────────────────────────────────────
 
-/// A `/.sts` exchange answered before the gateway — `no-store`, since it
-/// carries credentials — with the CORS headers and the
-/// request id every gateway response carries — as `x-request-id`, and as
+/// A `/.sts` exchange answered before the gateway, with the cache policy, the
+/// CORS headers and the request id every gateway response carries — as `x-request-id`, and as
 /// `x-amzn-requestid`, the header AWS SDKs read it from.
-fn finish_sts((status, xml): (u16, String), request_id: &str) -> web_sys::Response {
-    let response =
-        add_cors(GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys());
-    let _ = response
-        .headers()
-        .set("cache-control", cache_control::STS_CACHE_CONTROL);
+fn finish_sts(
+    (status, xml): (u16, String),
+    parts: &RequestParts,
+    config: &config::AppConfig,
+    request_id: &str,
+) -> web_sys::Response {
+    let response = add_cors(add_cache_control(
+        GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys(),
+        parts,
+        config,
+        false,
+    ));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", request_id);
         let _ = response.headers().set("x-amzn-requestid", request_id);
