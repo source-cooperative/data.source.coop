@@ -36,6 +36,7 @@ def test_options_cors():
     assert resp.headers["access-control-allow-origin"] == "*"
     assert "GET" in resp.headers["access-control-allow-methods"]
     assert "HEAD" in resp.headers["access-control-allow-methods"]
+    assert resp.headers["access-control-max-age"] == "7200"
 
 
 def test_product_listing():
