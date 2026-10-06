@@ -1,6 +1,6 @@
 # ADR-009: Multi-Issuer Platform Identity Providers
 
-**Status:** Proposed — not implemented
+**Status:** Proposed — implemented in part (#237: platform issuers with per-issuer audiences, whose tokens act as an account that trusts them, per ADR-014)
 **Date:** 2026-08-09
 **RFC:** RFC-001 §7
 **Depends on:** ADR-004
@@ -55,26 +55,20 @@ Each platform IdP record:
 
 This is the one substantive design decision in this ADR; the rest is plumbing.
 
-### Empty Means Deny
-
-Two of the three trust fields on a Role currently fail open: an empty `required_audiences` accepts any audience, and an empty `subject_conditions` skips the subject check. Both carry `#[serde(default)]`. (`trusted_oidc_issuers` is also defaulted but fails closed — an empty list matches no issuer.)
-
-Today `data.source.coop` compensates by refusing to mount `/.sts` at all when `AUTH_AUDIENCE` is empty, which is sufficient for exactly one hardcoded Role. Once Roles are account-authored (ADR-010), a Role that omits a field would silently trust everything from its issuer. Fix upstream before Roles ship: empty must mean deny.
-
 ### Fail-Closed Behaviour Is Preserved
 
 ADR-004's rule — an issuer with no audience restriction disables exchange rather than serving it unrestricted — must hold per issuer. An operator adding an issuer without an audience requirement should find that issuer refused, not silently trusted.
 
 ### Migration
 
+> [!NOTE]
+> Superseded in part by ADR-014, as implemented in #237. Platform issuers are not added to `_default`: `AUTH_ISSUER` stays the one person issuer, and `PLATFORM_ISSUERS` maps each platform issuer to its own audiences (step 2). A platform token acts only as the account `RoleArn` names, and only if that account trusts the token's issuer and subject, so the note below no longer applies: a CI token reaches the memberships of one account that trusts it, not those of whoever its subject might map to.
+
 1. Parse `AUTH_ISSUER` as a comma-separated list, mirroring `AUTH_AUDIENCE`; a single value remains valid, so existing deployments are unaffected.
 2. Move the issuer→audience mapping into a structured variable, since a flat pair of lists cannot express per-issuer requirements.
 3. Populate `trusted_oidc_issuers` on the `_default` Role from the parsed list.
 
-Step 1 alone makes CI/CD workflows functional against the `_default` Role. Steps 2 and 3 are required before it is safe to enable in production, and so is ADR-014 — see below.
-
-> [!WARNING]
-> **Issuer-namespaced subjects (ADR-014) are a precondition, not a follow-up.** The credential the proxy mints records the subject but not the issuer, so every issuer's subjects share one namespace. A second issuer that can choose its own subject strings can therefore name a subject belonging to someone else, and the API cannot tell. The subject is also part of the proxy's cache key. GitHub is a second issuer, so this applies to the first issuer added here, not only to user-registered ones.
+Step 1 alone makes CI/CD workflows functional against the `_default` Role. Steps 2 and 3 are required before it is safe to enable in production.
 
 > [!IMPORTANT]
 > Until ADR-010 lands, every issuer added here can assume `_default`, whose ceiling is unlimited. A GitHub Actions workflow would receive the full permissions of whichever account the token's subject maps to. **Multi-issuer support without Roles widens the blast radius of any CI token to the user's entire account.** These two ADRs should ship together, or the issuer list should stay restricted to `auth.source.coop` until ADR-010 is ready.

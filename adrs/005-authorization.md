@@ -7,6 +7,9 @@
 **Implementation:** `src/authz.rs`, `src/backend_auth.rs`, `src/source_api/registry.rs`, `src/source_api/auth.rs`; `source.coop:src/lib/api/oidc.ts`
 **Implemented by:** #116 (registry + API resolution), #149 (product visibility model), #162 (authorize and enable writes), #170 (extract `decide_backend_auth` + CI ordering test), #183 (hermetic API stub, contract and failure-mode tests) · source.coop#283 (OIDC auth), source.coop#284 (require auth for restricted products)
 
+> [!NOTE]
+> **Amended by ADR-013 (revised 2026-09-25).** One route, `POST /api/v1/service-account-keys/exchanges`, is called before the proxy knows which account is calling, so the proxy authenticates it as itself: a proxy-signed assertion whose subject is the sentinel `urn:source:data-proxy`, accepted only on that route and resolving to no account anywhere else. Every other lookup stays on behalf of the caller, as below.
+
 ---
 
 ## Context
@@ -74,6 +77,9 @@ The API trusts the proxy to assert any `sub`. That trust rests on the JWT signat
 
 > [!NOTE]
 > **The subject is an individual identity, not an account.** The proxy signs with the caller's Ory identity id, and the API resolves it through the identity index. Organisation accounts are never the subject of a proxy-issued token. The RFC anticipated `sub` = `account_id`, which "may be a user or an organisation", to support a CI workflow assuming an org-owned Role. That path arrives with ADR-010; until then there is no Role for an organisation to own.
+
+> [!NOTE]
+> **Amended by ADR-014 (Service Accounts).** The workload path the note above expects from ADR-010 arrives through ADR-014 instead: a subject may also be a service account's id, which the API resolves as that account. Organisations still never authenticate. For a platform issuer's token, the proxy signs as the account `RoleArn` names to ask whether that account trusts the token, which is the one lookup made as an account before the caller is established.
 
 ### Batch Delete
 

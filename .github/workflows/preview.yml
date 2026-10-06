@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Installed separately so the package resolution is uncredentialed too.
-      - run: npm install -g wrangler@3
+      - run: npm install -g wrangler@4
       - name: Delete preview worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

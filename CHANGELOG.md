@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.4.0](https://github.com/source-cooperative/data.source.coop/compare/v2.3.4...v2.4.0) (2026-10-05)
+
+
+### Features
+
+* **sts:** answer GetCallerIdentity with multistore 0.8.0 ([#248](https://github.com/source-cooperative/data.source.coop/issues/248)) ([0659a7b](https://github.com/source-cooperative/data.source.coop/commit/0659a7b4a88938a63f9acbb1d1c4a1f66d679e4e))
+* **sts:** exchange opaque API keys at /.sts by hash lookup ([#235](https://github.com/source-cooperative/data.source.coop/issues/235)) ([e9d2485](https://github.com/source-cooperative/data.source.coop/commit/e9d248519fec1c5a304d894e0a984d6589e91ee9))
+* **sts:** let platform IdP tokens act as accounts that trust them ([#237](https://github.com/source-cooperative/data.source.coop/issues/237)) ([14efd33](https://github.com/source-cooperative/data.source.coop/commit/14efd3385b0a190e191ff050932034c3bc1383f0))
+* **sts:** serve the FullAccess and ReadOnly roles ([#236](https://github.com/source-cooperative/data.source.coop/issues/236)) ([aa0abb3](https://github.com/source-cooperative/data.source.coop/commit/aa0abb3c4d0455cf012f5d4f368e55b8788fb55f))
+
+
+### Bug Fixes
+
+* **cache-control:** review fixes for [#227](https://github.com/source-cooperative/data.source.coop/issues/227) ([#250](https://github.com/source-cooperative/data.source.coop/issues/250)) ([7bce43f](https://github.com/source-cooperative/data.source.coop/commit/7bce43f002b33537780c5a6ab8927ca550d01673))
+* **cors:** let browsers cache preflights for two hours ([#251](https://github.com/source-cooperative/data.source.coop/issues/251)) ([cd9218e](https://github.com/source-cooperative/data.source.coop/commit/cd9218efc9831b90c755d5f8973b9b500dc7f959))
+* **deps:** bump h2 to 0.4.18 for RUSTSEC-2026-0258 ([#214](https://github.com/source-cooperative/data.source.coop/issues/214)) ([52d9eb2](https://github.com/source-cooperative/data.source.coop/commit/52d9eb2e23f93433aef40eb534933ea1a440520c))
+* **deps:** bump rustls to 0.23.45 for RUSTSEC-2026-0285 ([#238](https://github.com/source-cooperative/data.source.coop/issues/238)) ([188842b](https://github.com/source-cooperative/data.source.coop/commit/188842b66006672e22009166fce93f0454aa1e10))
+* keep Cloudflare credentials out of build and install environments ([#211](https://github.com/source-cooperative/data.source.coop/issues/211)) ([e4ebade](https://github.com/source-cooperative/data.source.coop/commit/e4ebadeec7bda5e2142a46aade342f5eb4d2ed2d))
+
 ## [2.3.4](https://github.com/source-cooperative/data.source.coop/compare/v2.3.3...v2.3.4) (2026-07-28)
 
 

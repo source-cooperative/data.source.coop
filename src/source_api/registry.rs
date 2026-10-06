@@ -5,7 +5,7 @@ use multistore::error::ProxyError;
 use multistore::registry::{BucketRegistry, ResolvedBucket};
 use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 
-use crate::authz::{decide_backend_auth, is_write_action};
+use crate::authz::{ceiling_permits, decide_backend_auth, is_write_action};
 
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
@@ -56,7 +56,22 @@ impl BucketRegistry for SourceCoopRegistry {
             .ok_or_else(|| ProxyError::BucketNotFound(name.to_string()))?;
 
         let subject = match identity {
-            ResolvedIdentity::Authenticated(auth) => Some(auth.principal_name.as_str()),
+            ResolvedIdentity::Authenticated(auth) => {
+                // The Role ceiling goes first and is local (ADR-011): a session
+                // whose Role does not allow the action is refused before
+                // anything is fetched, with the AccessDenied every other
+                // refusal gets, so the answer says nothing about the product.
+                // Only this log line records why.
+                if !ceiling_permits(&auth.allowed_scopes, operation.action()) {
+                    tracing::info!(
+                        principal = %auth.principal_name,
+                        action = ?operation.action(),
+                        "refused by the Role ceiling"
+                    );
+                    return Err(ProxyError::AccessDenied);
+                }
+                Some(auth.principal_name.as_str())
+            }
             ResolvedIdentity::Anonymous => None,
         };
 
@@ -228,7 +243,7 @@ async fn resolve_product(
 
     let config = BucketConfig {
         name: format!("{}{}{}", account, crate::BUCKET_SEPARATOR, product),
-        backend_type,
+        backend_type: backend_type.parse()?,
         backend_prefix,
         // Proxy-client-facing: Source Cooperative authorizes callers via its own
         // JWT (enforced upstream at the subject-scoped fetch), not S3 request
