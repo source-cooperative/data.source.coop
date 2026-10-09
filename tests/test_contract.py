@@ -72,12 +72,15 @@ def test_product_shape():
 
 
 def test_product_list_shape():
-    real = fetch(f"/api/v1/products/{ACCOUNT}")
+    # The proxy asks for pages of 100, as here. Until source.coop#590 deploys
+    # the API answers unpaged, as {"products": [...]}, which the proxy also reads.
+    real = fetch(f"/api/v1/products/{ACCOUNT}?limit=100")
     stub = ROUTES[f"/api/v1/products/{ACCOUNT}"]
-    assert json_type(real.get("products")) == "array", "products list missing"
-    matches = [p for p in real["products"] if p.get("product_id") == PRODUCT]
+    items = real.get("items", real.get("products"))
+    assert json_type(items) == "array", "items list missing"
+    matches = [p for p in items if p.get("product_id") == PRODUCT]
     assert matches, f"product {PRODUCT} missing from real list response"
-    assert_shape_subset(stub["products"][0], matches[0], "products[]")
+    assert_shape_subset(stub["items"][0], matches[0], "items[]")
 
 
 def test_data_connection_shape():

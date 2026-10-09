@@ -71,14 +71,20 @@ fn restricted_product_fixture_is_not_public() {
 
 #[test]
 fn product_list_wrapper_parses() {
-    // The stub wraps the product fixture as {"products": [...]} for the
-    // account listing route; pin that wrapper shape too.
-    let json = format!(
-        r#"{{"products":[{}]}}"#,
-        include_str!("fixtures/product.json")
-    );
-    let l: SourceProductList = serde_json::from_str(&json).unwrap();
-    assert_eq!(l.products.len(), 1);
+    // The stub wraps the product fixture as a page, {"items": [...],
+    // "next_cursor": ...}, for the account listing route; pin that shape, and
+    // the unpaged {"products": [...]} the API answered with before it.
+    let product = include_str!("fixtures/product.json");
+    let page: SourceProductList =
+        serde_json::from_str(&format!(r#"{{"items":[{product}],"next_cursor":"abc"}}"#)).unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.next_cursor.as_deref(), Some("abc"));
+    let last: SourceProductList =
+        serde_json::from_str(&format!(r#"{{"items":[{product}],"next_cursor":null}}"#)).unwrap();
+    assert_eq!(last.next_cursor, None);
+    let unpaged: SourceProductList =
+        serde_json::from_str(&format!(r#"{{"products":[{product}]}}"#)).unwrap();
+    assert_eq!((unpaged.items.len(), unpaged.next_cursor), (1, None));
 }
 
 // ── backend_options: provider → (backend_type, multistore options) ──────────
