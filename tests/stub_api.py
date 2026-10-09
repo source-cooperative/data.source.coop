@@ -90,12 +90,12 @@ RESTRICTED_PRODUCT = "restricted-probe"
 RESTRICTED_PRODUCT_JSON = _fixture("product_restricted")
 
 ROUTES = {
-    f"/api/v1/products/{ACCOUNT}": {"products": [PRODUCT_JSON]},
+    f"/api/v1/products/{ACCOUNT}": {"items": [PRODUCT_JSON], "next_cursor": None},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
     # No `authentication` field -> BackendAuth::Unsigned -> unsigned reads.
     f"/api/v1/data-connections/{CONNECTION}": _fixture("data_connection"),
     # Write probe (see above).
-    f"/api/v1/products/{WRITE_ACCOUNT}": {"products": [WRITE_PRODUCT_JSON]},
+    f"/api/v1/products/{WRITE_ACCOUNT}": {"items": [WRITE_PRODUCT_JSON], "next_cursor": None},
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
     f"/api/v1/data-connections/{WRITE_CONNECTION}": WRITE_CONNECTION_JSON,

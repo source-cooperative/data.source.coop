@@ -157,19 +157,25 @@ pub async fn get_or_fetch_data_connection(
     .await
 }
 
-/// Fetch an account's product list, cached for `PRODUCT_LIST_CACHE_SECS`.
+/// Fetch one page of an account's product list, cached for
+/// `PRODUCT_LIST_CACHE_SECS`: the first page, or the one `cursor` names.
 pub async fn get_or_fetch_product_list(
     api_base_url: &str,
     account: &str,
     api_auth: &crate::ApiAuth,
     request_id: &str,
     subject: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<SourceProductList, ProxyError> {
-    let api_url = format!(
-        "{}/api/v1/products/{}",
+    let mut api_url = format!(
+        "{}/api/v1/products/{}?limit=100",
         api_base_url,
         utf8_percent_encode(account, PATH_SEGMENT),
     );
+    if let Some(cursor) = cursor {
+        api_url.push_str("&cursor=");
+        api_url.extend(utf8_percent_encode(cursor, NON_ALPHANUMERIC));
+    }
     let cache_key = cache_key_with_subject(&api_url, subject);
     cached_fetch(
         &cache_key,

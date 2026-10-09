@@ -137,5 +137,11 @@ impl DataConnectionDetails {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceProductList {
-    pub products: Vec<SourceProduct>,
+    /// One page of the account's products. `products`, unpaged, is the shape
+    /// the API had before source.coop#590.
+    #[serde(alias = "products")]
+    pub items: Vec<SourceProduct>,
+    /// The next page's `cursor`; absent on the last page.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
 }

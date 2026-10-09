@@ -25,21 +25,26 @@ impl SourceCoopRegistry {
         }
     }
 
-    /// List products for an account via the Source API.
+    /// List products for an account via the Source API, every page of it.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
-        let product_list = super::cache::get_or_fetch_product_list(
-            &self.api_base_url,
-            account,
-            &self.api_auth,
-            &self.request_id,
-            None,
-        )
-        .await?;
-        Ok(product_list
-            .products
-            .into_iter()
-            .map(|p| p.product_id)
-            .collect())
+        let mut ids = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = super::cache::get_or_fetch_product_list(
+                &self.api_base_url,
+                account,
+                &self.api_auth,
+                &self.request_id,
+                None,
+                cursor.as_deref(),
+            )
+            .await?;
+            ids.extend(page.items.into_iter().map(|p| p.product_id));
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return Ok(ids),
+            }
+        }
     }
 }
 
