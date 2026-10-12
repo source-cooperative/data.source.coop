@@ -46,6 +46,14 @@ def test_product_listing():
     assert f"{PRODUCT}/" in resp.text
 
 
+def test_product_listing_follows_every_page():
+    # The stub serves ci-tests' products over two pages (stub_api.py).
+    resp = requests.get(f"{PROXY_URL}/ci-tests?list-type=2&delimiter=/")
+    assert resp.status_code == 200
+    assert "write-probe/" in resp.text
+    assert "second-page/" in resp.text
+
+
 def test_file_listing():
     resp = requests.get(
         f"{PROXY_URL}/{ACCOUNT}?list-type=2&prefix={PRODUCT}/&max-keys=5"

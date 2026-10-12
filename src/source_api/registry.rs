@@ -7,6 +7,9 @@ use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 
 use crate::authz::{ceiling_permits, decide_backend_auth, is_write_action};
 
+/// Pages of 100 an account's product list may span: 10,000 products.
+const MAX_PRODUCT_PAGES: usize = 100;
+
 /// Registry that resolves Source Cooperative products to multistore `BucketConfig`s
 /// by calling the Source Cooperative API.
 #[derive(Clone)]
@@ -26,10 +29,13 @@ impl SourceCoopRegistry {
     }
 
     /// List products for an account via the Source API, every page of it.
+    ///
+    /// At most `MAX_PRODUCT_PAGES` pages, so an API whose cursors never run
+    /// out fails the request instead of hanging it on endless calls.
     pub async fn list_products(&self, account: &str) -> Result<Vec<String>, ProxyError> {
         let mut ids = Vec::new();
         let mut cursor = None;
-        loop {
+        for _ in 0..MAX_PRODUCT_PAGES {
             let page = super::cache::get_or_fetch_product_list(
                 &self.api_base_url,
                 account,
@@ -40,11 +46,14 @@ impl SourceCoopRegistry {
             )
             .await?;
             ids.extend(page.items.into_iter().map(|p| p.product_id));
-            match page.next_cursor {
-                Some(next) => cursor = Some(next),
-                None => return Ok(ids),
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                return Ok(ids);
             }
         }
+        Err(ProxyError::Internal(format!(
+            "product list for {account} ran past {MAX_PRODUCT_PAGES} pages"
+        )))
     }
 }
 

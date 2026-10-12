@@ -29,7 +29,7 @@ import re
 import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PORT = 9000
 
@@ -95,10 +95,23 @@ ROUTES = {
     # No `authentication` field -> BackendAuth::Unsigned -> unsigned reads.
     f"/api/v1/data-connections/{CONNECTION}": _fixture("data_connection"),
     # Write probe (see above).
-    f"/api/v1/products/{WRITE_ACCOUNT}": {"items": [WRITE_PRODUCT_JSON], "next_cursor": None},
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
     f"/api/v1/data-connections/{WRITE_CONNECTION}": WRITE_CONNECTION_JSON,
+}
+
+# The write account's listing spans two pages, so the proxy has to follow
+# next_cursor to list both products. The cursor holds the characters a real
+# (base64) one does, which reach here intact only if the proxy encodes them:
+# an unencoded "+" arrives as a space.
+SECOND_PAGE_PRODUCT = "second-page"
+SECOND_PAGE_CURSOR = "eyJw+/Ig=="
+PRODUCT_LIST_PAGES = {
+    None: {"items": [WRITE_PRODUCT_JSON], "next_cursor": SECOND_PAGE_CURSOR},
+    SECOND_PAGE_CURSOR: {
+        "items": [{**WRITE_PRODUCT_JSON, "product_id": SECOND_PAGE_PRODUCT}],
+        "next_cursor": None,
+    },
 }
 
 # Import-time drift guards: routes are keyed on the constants above, bodies
@@ -245,7 +258,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get("Authorization"):
                 return self._send(200, json.dumps(RESTRICTED_PRODUCT_JSON).encode())
             return self._send(404, b"{}")
-        body = ROUTES.get(path)
+        if path == f"/api/v1/products/{WRITE_ACCOUNT}":
+            cursor = parse_qs(urlsplit(self.path).query).get("cursor", [None])[0]
+            body = PRODUCT_LIST_PAGES.get(cursor)
+        else:
+            body = ROUTES.get(path)
         if body is None:
             return self._send(404, b"{}")
         self._send(200, json.dumps(body).encode())
