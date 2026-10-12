@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/source-cooperative/data.source.coop/compare/v2.4.0...v2.5.0) (2026-10-12)
+
+
+### Features
+
+* **source-api:** follow the paged product list ([#253](https://github.com/source-cooperative/data.source.coop/issues/253)) ([8d02d47](https://github.com/source-cooperative/data.source.coop/commit/8d02d47e7a82474b242fa983dc6ed3d28b8d039c))
+
 ## [2.4.0](https://github.com/source-cooperative/data.source.coop/compare/v2.3.4...v2.4.0) (2026-10-05)
 
 
