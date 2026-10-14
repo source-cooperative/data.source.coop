@@ -10,6 +10,9 @@
 > [!NOTE]
 > **Amended by ADR-013 (revised 2026-09-25).** One route, `POST /api/v1/service-account-keys/exchanges`, is called before the proxy knows which account is calling, so the proxy authenticates it as itself: a proxy-signed assertion whose subject is the sentinel `urn:source:data-proxy`, accepted only on that route and resolving to no account anywhere else. Every other lookup stays on behalf of the caller, as below.
 
+> [!NOTE]
+> **Amended (2026-10-09): the API also accepts Ory access tokens.** The proxy is no longer the only signer the API trusts. `source-coop login` asks Ory for an access token whose audience is the API's origin, and the API accepts it as a bearer, verified against Ory's published JWKS with the same pins as the proxy's tokens: RS256, issuer, audience, 30-second tolerance, and no fallback to the cookie. A bearer is routed by its `iss`, so neither verifier sees the other's tokens. The subject is an Ory identity, resolved only as a person. This adds a caller of the API that does not go through the proxy; nothing the proxy signs or decides changes (source.coop#TBD).
+
 ---
 
 ## Context
