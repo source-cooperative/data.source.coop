@@ -35,7 +35,7 @@ use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProvide
 use multistore_path_mapping::{MappedRegistry, PathMapping};
 use multistore_sts::jwks::JwksCache;
 use multistore_sts::route_handler::StsRouterExt;
-use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
+use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source, wants_attachment};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
 use worker::{event, Context, Env, Result};
@@ -418,6 +418,23 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     }
 
     let response = add_cors(response);
+
+    // ── Forced download ─────────────────────────────────────────
+    // `?download=1` turns a read into a save-to-disk response. Restricted to
+    // successful object reads: a listing or an error document has no file to
+    // save, and marking those as attachments would hide the XML a caller needs
+    // to read.
+    let response = if !is_special_path
+        && key.is_some()
+        && status < 400
+        && (parts.method == http::Method::GET || parts.method == http::Method::HEAD)
+        && wants_attachment(parts.query.as_deref())
+    {
+        add_download_headers(response)
+    } else {
+        response
+    };
+
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -467,6 +484,39 @@ fn add_cors(resp: web_sys::Response) -> web_sys::Response {
     ] {
         if let Err(e) = h.set(name, value) {
             tracing::warn!("failed to set CORS header {}: {:?}", name, e);
+        }
+    }
+    resp
+}
+
+// ── Forced download ─────────────────────────────────────────────────
+
+/// Make a response save to disk instead of rendering.
+///
+/// Object bytes are served from one origin shared by every product, and
+/// `Content-Type` is whatever the uploader stored — so an uploaded `.html`
+/// otherwise renders as a live page on `data.source.coop`, running its script
+/// against that shared origin. `attachment` makes the browser save the file
+/// rather than run it, and `nosniff` stops it from second-guessing the declared
+/// type and rendering the file anyway.
+///
+/// No `filename` is set: the browser falls back to the last path segment of the
+/// URL, which is already the object's own name, and that avoids quoting a
+/// user-controlled key into a header.
+///
+/// Scoped to the `?download=1` flag rather than applied to every read, because
+/// products legitimately serve browsable sites through this proxy — `nosniff`
+/// on every response would break any whose assets are stored under the wrong
+/// `Content-Type`. Note this hardens the download link, not the origin: a direct
+/// link to an uploaded `.html` still renders.
+fn add_download_headers(resp: web_sys::Response) -> web_sys::Response {
+    let h = resp.headers();
+    for (name, value) in [
+        ("content-disposition", "attachment"),
+        ("x-content-type-options", "nosniff"),
+    ] {
+        if let Err(e) = h.set(name, value) {
+            tracing::warn!("failed to set download header {}: {:?}", name, e);
         }
     }
     resp

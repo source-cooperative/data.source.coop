@@ -6,7 +6,7 @@
 mod object_path;
 
 use http::Method;
-use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
+use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source, wants_attachment};
 
 /// The deployment's real mapping: `/{account}/{product}/{key}` folds the first
 /// two segments into the internal bucket `account:product`.
@@ -134,4 +134,35 @@ fn reads_and_multi_delete_are_not_flagged() {
     // Keyless POST is left to the gateway: `POST /{account}/{product}?delete`
     // (multi-object delete) is a valid bucket-level operation.
     assert!(!is_keyless_write(&Method::POST, "/acct/prod"));
+}
+
+#[test]
+fn download_flag_is_recognised() {
+    assert!(wants_attachment(Some("download=1")));
+    assert!(wants_attachment(Some("download=true")));
+    assert!(wants_attachment(Some("download=TRUE")));
+    // A bare flag, one carried alongside another parameter, and one still
+    // wearing the `?` in case the caller hands over an unsplit query.
+    assert!(wants_attachment(Some("download")));
+    assert!(wants_attachment(Some("versionId=abc&download=1")));
+    assert!(wants_attachment(Some("?download=1")));
+}
+
+#[test]
+fn absent_or_falsy_download_flag_is_not_a_download() {
+    assert!(!wants_attachment(None));
+    assert!(!wants_attachment(Some("")));
+    assert!(!wants_attachment(Some("download=0")));
+    assert!(!wants_attachment(Some("download=no")));
+    assert!(!wants_attachment(Some("list-type=2")));
+}
+
+/// The flag has to be its own parameter: a name that merely ends in `download`,
+/// or some other parameter whose *value* says `download`, is a different
+/// request and must not be served as an attachment.
+#[test]
+fn download_flag_is_not_matched_by_substring() {
+    assert!(!wants_attachment(Some("nodownload=1")));
+    assert!(!wants_attachment(Some("prefix=download")));
+    assert!(!wants_attachment(Some("x-download=true")));
 }

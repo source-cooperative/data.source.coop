@@ -66,3 +66,26 @@ pub(crate) fn is_keyless_write(method: &http::Method, path: &str) -> bool {
     (*method == http::Method::PUT || *method == http::Method::DELETE)
         && extract_path_segments(path).2.is_none()
 }
+
+/// Whether a request asks for its object to be delivered as a download.
+///
+/// The browser chooses between rendering a response and saving it from
+/// `Content-Disposition`, so a link that means "save this file" has to say so
+/// on the response itself. The `download` attribute on an `<a>` cannot: browsers
+/// ignore it cross-origin, and every download link into this proxy is
+/// cross-origin, since the app is served from `source.coop`. The intent travels
+/// in the query string instead, and `lib.rs` turns it into `attachment`.
+///
+/// Accepts `?download`, `?download=1` and `?download=true`. Any other value is
+/// not a download, so `?download=0` reads as "no" rather than as a bare flag.
+pub(crate) fn wants_attachment(query: Option<&str>) -> bool {
+    let Some(query) = query else {
+        return false;
+    };
+    let query = query.strip_prefix('?').unwrap_or(query);
+    query.split('&').any(|pair| match pair.split_once('=') {
+        Some(("download", value)) => value == "1" || value.eq_ignore_ascii_case("true"),
+        None => pair == "download",
+        _ => false,
+    })
+}
