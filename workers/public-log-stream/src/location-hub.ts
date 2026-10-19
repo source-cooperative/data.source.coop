@@ -26,7 +26,6 @@ interface ColoStats {
 export class LocationHub extends DurableObject<Env> {
   private colos = new Map<string, ColoStats>();
   private requestCount = 0;
-  private alarmScheduled = false;
   private sentIdle = false;
   private emitInterval: number;
   private maxProducts: number;
@@ -86,18 +85,16 @@ export class LocationHub extends DurableObject<Env> {
     return new Response("ok");
   }
 
+  // Storage is the only record of whether an alarm is pending: the instance
+  // stays warm under steady traffic, so an in-memory copy that drifts from it
+  // would never be corrected. getAlarm() is served from the DO's local cache.
   private async ensureAlarm(): Promise<void> {
-    if (!this.alarmScheduled) {
-      const currentAlarm = await this.ctx.storage.getAlarm();
-      if (currentAlarm == null) {
-        await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
-      }
-      this.alarmScheduled = true;
+    if ((await this.ctx.storage.getAlarm()) == null) {
+      await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
     }
   }
 
   async alarm(): Promise<void> {
-    this.alarmScheduled = false;
     const clients = this.ctx.getWebSockets();
 
     // Nobody watching → let the alarm stop (re-armed on next connect/POST).
@@ -134,7 +131,6 @@ export class LocationHub extends DurableObject<Env> {
     this.colos.clear();
     this.requestCount = 0;
     await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
-    this.alarmScheduled = true;
   }
 
   async webSocketMessage(
