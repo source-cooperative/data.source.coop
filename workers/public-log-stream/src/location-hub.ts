@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { buildLocs } from "./aggregate.mjs";
+import { buildLocs, freshLocs } from "./aggregate.mjs";
 
 export interface Env {
   LOCATION_HUB: DurableObjectNamespace<LocationHub>;
@@ -23,8 +23,17 @@ interface ColoStats {
   products: Map<string, number>;
 }
 
+type Loc = ReturnType<typeof buildLocs>[number];
+
+// Mirrors DOT_TTL_MS in source.coop's LiveGlobe: how long a dot stays on the
+// globe, and so how far back a new viewer's first tick reaches.
+const SNAPSHOT_TTL_MS = 10_000;
+
 export class LocationHub extends DurableObject<Env> {
   private colos = new Map<string, ColoStats>();
+  // Each datacenter's latest window, so a new viewer starts with the dots
+  // everyone else is already seeing instead of an empty globe.
+  private recent = new Map<string, { loc: Loc; at: number }>();
   private requestCount = 0;
   private alarmScheduled = false;
   private sentIdle = false;
@@ -63,6 +72,11 @@ export class LocationHub extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     this.ensureAlarm();
 
+    const locations = freshLocs(this.recent, Date.now(), SNAPSHOT_TTL_MS);
+    if (locations.length > 0) {
+      server.send(JSON.stringify({ type: "tick", locations }));
+    }
+
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -99,6 +113,9 @@ export class LocationHub extends DurableObject<Env> {
   async alarm(): Promise<void> {
     this.alarmScheduled = false;
     const clients = this.ctx.getWebSockets();
+    const locs = buildLocs(this.colos, this.maxProducts);
+    const now = Date.now();
+    for (const loc of locs) this.recent.set(loc.colo, { loc, at: now });
 
     // Nobody watching → let the alarm stop (re-armed on next connect/POST).
     if (clients.length === 0) {
@@ -116,7 +133,7 @@ export class LocationHub extends DurableObject<Env> {
         type: "tick",
         requestsPerWindow: this.requestCount,
         viewers: clients.length,
-        locations: buildLocs(this.colos, this.maxProducts),
+        locations: locs,
       });
 
       for (const ws of clients) {

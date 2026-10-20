@@ -25,3 +25,20 @@ export function buildLocs(colos, maxProducts) {
     p: topProducts(e.products, maxProducts),
   }));
 }
+
+/**
+ * The latest window of each datacenter seen within `ttl` of `now`, pruning
+ * older ones from `recent` as it goes.
+ * @param {Map<string, {loc: {colo: string, n: number, p: [string, number][]}, at: number}>} recent
+ * @param {number} now
+ * @param {number} ttl
+ * @returns {{colo: string, n: number, p: [string, number][]}[]}
+ */
+export function freshLocs(recent, now, ttl) {
+  const out = [];
+  for (const [colo, { loc, at }] of recent) {
+    if (now - at < ttl) out.push(loc);
+    else recent.delete(colo);
+  }
+  return out;
+}
