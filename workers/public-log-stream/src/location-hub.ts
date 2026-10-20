@@ -50,7 +50,7 @@ export class LocationHub extends DurableObject<Env> {
     return new Response("Not found", { status: 404 });
   }
 
-  private handleWebSocket(request: Request): Response {
+  private async handleWebSocket(request: Request): Promise<Response> {
     const upgradeHeader = request.headers.get("Upgrade");
     if (upgradeHeader !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
@@ -60,7 +60,7 @@ export class LocationHub extends DurableObject<Env> {
     const [client, server] = Object.values(pair);
 
     this.ctx.acceptWebSocket(server);
-    this.ensureAlarm();
+    await this.ensureAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -81,13 +81,11 @@ export class LocationHub extends DurableObject<Env> {
 
     this.requestCount++;
     this.sentIdle = false;
-    this.ensureAlarm();
+    await this.ensureAlarm();
     return new Response("ok");
   }
 
-  // Storage is the only record of whether an alarm is pending: the instance
-  // stays warm under steady traffic, so an in-memory copy that drifts from it
-  // would never be corrected. getAlarm() is served from the DO's local cache.
+  // Storage is the source of truth for a pending alarm; a cached flag can drift.
   private async ensureAlarm(): Promise<void> {
     if ((await this.ctx.storage.getAlarm()) == null) {
       await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
