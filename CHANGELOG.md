@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/source-cooperative/data.source.coop/compare/v2.5.0...v2.5.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **log-stream:** replace an overdue alarm instead of trusting it ([#260](https://github.com/source-cooperative/data.source.coop/issues/260)) ([a12589a](https://github.com/source-cooperative/data.source.coop/commit/a12589abb1e642b3941cc6895adcb41943a50e4f))
+
 ## [2.5.0](https://github.com/source-cooperative/data.source.coop/compare/v2.4.0...v2.5.0) (2026-10-20)
 
 
