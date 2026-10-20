@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.0](https://github.com/source-cooperative/data.source.coop/compare/v2.4.0...v2.5.0) (2026-10-20)
+
+
+### Features
+
+* **source-api:** follow the paged product list ([#253](https://github.com/source-cooperative/data.source.coop/issues/253)) ([8d02d47](https://github.com/source-cooperative/data.source.coop/commit/8d02d47e7a82474b242fa983dc6ed3d28b8d039c))
+
+
+### Bug Fixes
+
+* **deps:** bump rustls and quinn-proto past new RustSec advisories ([#259](https://github.com/source-cooperative/data.source.coop/issues/259)) ([9a5b650](https://github.com/source-cooperative/data.source.coop/commit/9a5b65064c38f66f3e0284fa1183bad7ee944bf9))
+* **log-stream:** re-arm the tick alarm from storage, not a cached flag ([#257](https://github.com/source-cooperative/data.source.coop/issues/257)) ([3e04c46](https://github.com/source-cooperative/data.source.coop/commit/3e04c46f8659d1b90921264edfd2b55580c6acf5))
+
 ## [2.4.0](https://github.com/source-cooperative/data.source.coop/compare/v2.3.4...v2.4.0) (2026-10-05)
 
 
