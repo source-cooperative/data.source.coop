@@ -86,8 +86,10 @@ export class LocationHub extends DurableObject<Env> {
   }
 
   // Storage is the source of truth for a pending alarm; a cached flag can drift.
+  // An alarm long past due is not going to fire, so it is replaced, not trusted.
   private async ensureAlarm(): Promise<void> {
-    if ((await this.ctx.storage.getAlarm()) == null) {
+    const at = await this.ctx.storage.getAlarm();
+    if (at == null || at < Date.now() - 10 * this.emitInterval) {
       await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
     }
   }
