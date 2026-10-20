@@ -26,7 +26,6 @@ interface ColoStats {
 export class LocationHub extends DurableObject<Env> {
   private colos = new Map<string, ColoStats>();
   private requestCount = 0;
-  private alarmScheduled = false;
   private sentIdle = false;
   private emitInterval: number;
   private maxProducts: number;
@@ -51,7 +50,7 @@ export class LocationHub extends DurableObject<Env> {
     return new Response("Not found", { status: 404 });
   }
 
-  private handleWebSocket(request: Request): Response {
+  private async handleWebSocket(request: Request): Promise<Response> {
     const upgradeHeader = request.headers.get("Upgrade");
     if (upgradeHeader !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
@@ -61,7 +60,7 @@ export class LocationHub extends DurableObject<Env> {
     const [client, server] = Object.values(pair);
 
     this.ctx.acceptWebSocket(server);
-    this.ensureAlarm();
+    await this.ensureAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -82,22 +81,18 @@ export class LocationHub extends DurableObject<Env> {
 
     this.requestCount++;
     this.sentIdle = false;
-    this.ensureAlarm();
+    await this.ensureAlarm();
     return new Response("ok");
   }
 
+  // Storage is the source of truth for a pending alarm; a cached flag can drift.
   private async ensureAlarm(): Promise<void> {
-    if (!this.alarmScheduled) {
-      const currentAlarm = await this.ctx.storage.getAlarm();
-      if (currentAlarm == null) {
-        await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
-      }
-      this.alarmScheduled = true;
+    if ((await this.ctx.storage.getAlarm()) == null) {
+      await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
     }
   }
 
   async alarm(): Promise<void> {
-    this.alarmScheduled = false;
     const clients = this.ctx.getWebSockets();
 
     // Nobody watching → let the alarm stop (re-armed on next connect/POST).
@@ -134,7 +129,6 @@ export class LocationHub extends DurableObject<Env> {
     this.colos.clear();
     this.requestCount = 0;
     await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
-    this.alarmScheduled = true;
   }
 
   async webSocketMessage(
