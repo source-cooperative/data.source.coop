@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { topProducts, buildLocs } from "./aggregate.mjs";
+import { topProducts, buildLocs, freshLocs } from "./aggregate.mjs";
 
 test("topProducts: highest counts first, capped at k", () => {
   const m = new Map([
@@ -29,4 +29,14 @@ test("buildLocs: one entry per colo with top products", () => {
   assert.deepEqual(buildLocs(colos, 5), [
     { colo: "EWR", n: 5, p: [["nasa/landsat", 4], ["esa/s2", 1]] },
   ]);
+});
+
+test("freshLocs: keeps colos seen within ttl and prunes the rest", () => {
+  const ewr = { colo: "EWR", n: 2, p: [] };
+  const recent = new Map([
+    ["EWR", { loc: ewr, at: 9_000 }],
+    ["SJC", { loc: { colo: "SJC", n: 1, p: [] }, at: 0 }],
+  ]);
+  assert.deepEqual(freshLocs(recent, 10_000, 10_000), [ewr]);
+  assert.deepEqual([...recent.keys()], ["EWR"]);
 });
