@@ -196,6 +196,17 @@ def _bearer_subject(authorization):
         return None
 
 
+# source.coop answers every error as an RFC 9457 problem; the proxy reads only
+# the status, so the stub's problems carry no more than the shape.
+PROBLEMS = {
+    "invalid": (400, "Invalid request"),
+    "unauthenticated": (401, "Authentication required"),
+    "forbidden": (403, "Forbidden"),
+    "not_found": (404, "Not found"),
+    "internal": (500, "Internal server error"),
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
@@ -203,30 +214,32 @@ class Handler(BaseHTTPRequestHandler):
         if trust:
             return self._trust_exchange(unquote(trust.group(1)))
         if path != "/api/v1/service-account-keys/exchanges":
-            return self._send(404, b"{}")
+            return self._problem("not_found", f"No API route at {path}")
         # The proxy authenticates as itself; the stub cannot verify the
         # signature, but a missing header would mean the proxy sent nothing.
         if not self.headers.get("Authorization", "").startswith("Bearer "):
-            return self._send(401, b"{}")
+            return self._problem("unauthenticated", "Authentication required")
         length = int(self.headers.get("content-length") or 0)
         try:
             key_hash = json.loads(self.rfile.read(length))["key_hash"]
         except (ValueError, KeyError, TypeError):
-            return self._send(400, b"{}")
+            return self._problem("invalid", "key_hash is required")
         KEY_EXCHANGE_COUNTS[key_hash] = KEY_EXCHANGE_COUNTS.get(key_hash, 0) + 1
         status, body = KEY_STANDINGS.get(key_hash, (200, {"active": False}))
+        if status == 500:
+            return self._problem("internal", "Internal server error")
         self._send(status, json.dumps(body).encode())
 
     def _trust_exchange(self, account):
         # Anyone but the account itself is refused, as the real route does.
         if _bearer_subject(self.headers.get("Authorization", "")) != account:
-            return self._send(401, b'{"error": "Unauthorized"}')
+            return self._problem("unauthenticated", "Authentication required")
         length = int(self.headers.get("content-length") or 0)
         try:
             body = json.loads(self.rfile.read(length))
             issuer, subject = body["issuer"], body["subject"]
         except (ValueError, KeyError, TypeError):
-            return self._send(400, b"{}")
+            return self._problem("invalid", "issuer and subject are required")
         TRUST_EXCHANGE_COUNTS[account] = TRUST_EXCHANGE_COUNTS.get(account, 0) + 1
         if account == SAYS_NO_ACCOUNT:
             return self._send(200, b'{"trusted": false}')
@@ -235,7 +248,12 @@ class Handler(BaseHTTPRequestHandler):
             and issuer == TRUSTED_ISSUER
             and subject == TRUSTED_SUBJECT
         )
-        self._send(200 if trusted else 403, json.dumps({"trusted": trusted}).encode())
+        if not trusted:
+            # A `forbidden` problem that also says no, as the real route answers.
+            return self._problem(
+                "forbidden", f"{account} does not trust this subject", trusted=False
+            )
+        self._send(200, json.dumps({"trusted": True}).encode())
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -251,27 +269,41 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/v1/products/") and self.headers.get("Authorization"):
             PRODUCT_LOOKUP_SUBJECTS[path] = _bearer_subject(self.headers["Authorization"])
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
-            return self._send(500, b"{}")
+            return self._problem("internal", "Internal server error")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_BAD_JSON_PRODUCT}":
             return self._send(200, b"{this is not json")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{RESTRICTED_PRODUCT}":
             if self.headers.get("Authorization"):
                 return self._send(200, json.dumps(RESTRICTED_PRODUCT_JSON).encode())
-            return self._send(404, b"{}")
+            return self._problem("not_found", "Product not found")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}":
             cursor = parse_qs(urlsplit(self.path).query).get("cursor", [None])[0]
             body = PRODUCT_LIST_PAGES.get(cursor)
         else:
             body = ROUTES.get(path)
         if body is None:
-            return self._send(404, b"{}")
+            return self._problem("not_found", f"Nothing at {path}")
         self._send(200, json.dumps(body).encode())
 
-    def _send(self, status, body):
+    def _send(self, status, body, content_type="application/json"):
         self.send_response(status)
-        self.send_header("content-type", "application/json")
+        self.send_header("content-type", content_type)
         self.end_headers()
         self.wfile.write(body)
+
+    def _problem(self, code, detail, **extensions):
+        """An error as source.coop answers every one: an RFC 9457 problem."""
+        status, title = PROBLEMS[code]
+        body = {
+            "type": f"https://source.coop/api/problems/{code}",
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "instance": self.path.split("?")[0],
+            "code": code,
+            **extensions,
+        }
+        self._send(status, json.dumps(body).encode(), "application/problem+json")
 
 
 if __name__ == "__main__":
