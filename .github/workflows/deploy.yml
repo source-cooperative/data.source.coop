@@ -223,3 +223,15 @@ jobs:
             done
             [ -n "$ok" ] || { echo "::error::smoke test failed for $URL$path (last status $code)"; exit 1; }
           done
+
+      - name: Stored Content-Encoding passes through
+        # Only Cloudflare's network decodes encoded backend bodies (wrangler dev
+        # doesn't), so the integration suite can't catch a regression here.
+        # catalog.jsonl is stored brotli-compressed; a br-accepting client must
+        # get it as stored. Production only: the product exists there alone.
+        if: inputs.environment == 'production'
+        run: |
+          enc=$(curl -sS -o /dev/null -w '%header{content-encoding}' --max-time 30 \
+            -H 'Accept-Encoding: br' "${{ steps.url.outputs.deploy_url }}/source/metadata-catalog/catalog.jsonl")
+          echo "content-encoding: ${enc:-<none>}"
+          [ "$enc" = "br" ] || { echo "::error::stored Content-Encoding: br was not passed through"; exit 1; }
