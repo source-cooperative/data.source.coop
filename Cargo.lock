@@ -1035,7 +1035,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.8.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e9b304f52f1011d4c5dfa702b744f04c8170aa34"
 dependencies = [
  "async-trait",
  "base64",
@@ -1063,7 +1063,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.8.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e9b304f52f1011d4c5dfa702b744f04c8170aa34"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1089,7 +1089,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.8.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e9b304f52f1011d4c5dfa702b744f04c8170aa34"
 dependencies = [
  "base64",
  "chrono",
@@ -1107,7 +1107,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.8.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e9b304f52f1011d4c5dfa702b744f04c8170aa34"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -1117,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.8.0"
-source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e9b304f52f1011d4c5dfa702b744f04c8170aa34"
 dependencies = [
  "aes-gcm",
  "base64",
