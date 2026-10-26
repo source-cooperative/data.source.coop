@@ -301,8 +301,9 @@ fn trust_urls(api_base_url: &str, account: &str, issuer: &str, subject: &str) ->
     (api_url, cache_key)
 }
 
-/// The trusts route's answer. Its status already says yes (200) or no (403);
-/// the body is read too, so that a 200 saying no still mints nothing.
+/// The trusts route's answer. Its status already says yes (200) or no (403,
+/// an RFC 9457 `forbidden` problem that also says `trusted: false`); the
+/// body of a 200 is read too, so that a 200 saying no still mints nothing.
 #[derive(serde::Deserialize)]
 struct TrustAnswer {
     trusted: bool,
