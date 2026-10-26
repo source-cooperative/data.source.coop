@@ -101,6 +101,25 @@ def test_get_object_range_middle():
     assert len(resp.content) == 1000
 
 
+def test_stored_content_encoding_passes_through():
+    """An object stored brotli-compressed (`Content-Encoding: br`) reaches a
+    client that accepts br as stored. On Cloudflare this relies on multistore
+    sending `Accept-Encoding` to the backend; `wrangler dev` passes encoded
+    bodies through either way, so deploy.yml re-checks it against production.
+    """
+    key = "source/metadata-catalog/catalog.jsonl"
+    stored = requests.get(
+        f"https://s3.us-west-2.amazonaws.com/us-west-2.opendata.source.coop/{key}",
+        stream=True,
+    ).raw.read(decode_content=False)
+    resp = requests.get(
+        f"{PROXY_URL}/{key}", headers={"Accept-Encoding": "br"}, stream=True
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-encoding"] == "br"
+    assert resp.raw.read(decode_content=False) == stored
+
+
 def test_cors_on_get():
     resp = requests.get(f"{PROXY_URL}/")
     assert resp.headers["access-control-allow-origin"] == "*"

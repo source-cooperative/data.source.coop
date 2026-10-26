@@ -1035,8 +1035,7 @@ dependencies = [
 [[package]]
 name = "multistore"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea9464aadbed4ff2dfc054011ef2b29f56073d60201d040611a1729d583ad9d9"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
 dependencies = [
  "async-trait",
  "base64",
@@ -1064,8 +1063,7 @@ dependencies = [
 [[package]]
 name = "multistore-cf-workers"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e3740111f8d8f10d6150c24fb2317fb4524e46964b7726eaf5e22b65514e7ee"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1091,8 +1089,7 @@ dependencies = [
 [[package]]
 name = "multistore-oidc-provider"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7f5e58d0113ff4abfc6134005198ad8c9d433b0e961b473502711ae943fa628"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
 dependencies = [
  "base64",
  "chrono",
@@ -1110,8 +1107,7 @@ dependencies = [
 [[package]]
 name = "multistore-path-mapping"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3430654120a6f5a7d0bea2972b13b9153dba0a21d52db02c5c62bc4f1922602d"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
 dependencies = [
  "multistore",
  "percent-encoding",
@@ -1121,8 +1117,7 @@ dependencies = [
 [[package]]
 name = "multistore-sts"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f7df919318bb3e59f3169d4fce3dc91387a9dc939e850ca91a5cd5877a16049"
+source = "git+https://github.com/developmentseed/multistore?branch=fix%2Fforward-content-encoding#e8851a2538ea93b87e90b17e6035beaf6f078b10"
 dependencies = [
  "aes-gcm",
  "base64",

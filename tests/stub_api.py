@@ -89,11 +89,30 @@ ERR_BAD_JSON_PRODUCT = "err-bad-json"
 RESTRICTED_PRODUCT = "restricted-probe"
 RESTRICTED_PRODUCT_JSON = _fixture("product_restricted")
 
+# A real public product whose catalog.jsonl is stored brotli-compressed
+# (`Content-Encoding: br`), for test_integration.py's stored-encoding read.
+ENCODED_ACCOUNT = "source"
+ENCODED_PRODUCT = "metadata-catalog"
+ENCODED_PRODUCT_JSON = {
+    **PRODUCT_JSON,
+    "product_id": ENCODED_PRODUCT,
+    "metadata": {
+        **PRODUCT_JSON["metadata"],
+        "mirrors": {
+            CONNECTION: {
+                "connection_id": CONNECTION,
+                "prefix": f"{ENCODED_ACCOUNT}/{ENCODED_PRODUCT}/",
+            }
+        },
+    },
+}
+
 ROUTES = {
     f"/api/v1/products/{ACCOUNT}": {"items": [PRODUCT_JSON], "next_cursor": None},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
     # No `authentication` field -> BackendAuth::Unsigned -> unsigned reads.
     f"/api/v1/data-connections/{CONNECTION}": _fixture("data_connection"),
+    f"/api/v1/products/{ENCODED_ACCOUNT}/{ENCODED_PRODUCT}": ENCODED_PRODUCT_JSON,
     # Write probe (see above).
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
