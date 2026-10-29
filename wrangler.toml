@@ -54,22 +54,31 @@ STS_MAX_SESSION_DURATION_SECS = "43200"
 # Optional vars:
 #   PLATFORM_ISSUERS - JSON object from platform issuer URL to the audiences its
 #                      tokens must carry. Unset = no platform issuer is trusted.
-# TODO: Set different sampling rates for prod vs staging
+# Telemetry is billed by GB ingested and stored from 2026-12-01 (#265). The
+# ANALYTICS dataset already records every request (status, duration, bytes,
+# path), so logs and traces only carry what it can't.
 [observability]
 enabled = true
 head_sampling_rate = 1
+# Presigned URLs carry X-Amz-Signature in the query string; traces would
+# otherwise store it for their 7-day retention.
+redact_query_string = true
 
-[observability.logs]
-destinations = ["axiom-logs"]
+[observability.issues]
 enabled = true
-head_sampling_rate = 0.25
-invocation_logs = true
+
+# Our own WARN/ERROR lines (one per 5xx, see src/lib.rs) are ~30k/day, so keep
+# all of them. Invocation logs were ~99.9% of log bytes and duplicate ANALYTICS.
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = false
 persist = true
 
+# ~6 automatic spans per request; at 1% that is still ~330k traced requests/day.
 [observability.traces]
-destinations = ["axiom-traces"]
 enabled = true
-head_sampling_rate = 0.25
+head_sampling_rate = 0.01
 persist = true
 
 [[analytics_engine_datasets]]
@@ -120,19 +129,22 @@ name = "STS_EXCHANGE_LIMIT"
 namespace_id = "1002"
 simple = { limit = 100, period = 60 }
 
+# Staging is ~2M requests/month, so capturing everything costs ~5 GB/month.
 [env.staging.observability]
 enabled = true
 head_sampling_rate = 1
+redact_query_string = true
+
+[env.staging.observability.issues]
+enabled = true
 
 [env.staging.observability.logs]
-destinations = []
 enabled = true
-head_sampling_rate = 0.25
+head_sampling_rate = 1
 invocation_logs = true
 persist = true
 
 [env.staging.observability.traces]
-destinations = []
 enabled = true
-head_sampling_rate = 0.25
+head_sampling_rate = 1
 persist = true
