@@ -25,7 +25,7 @@ Measured in production from 2026-09-29 to 2026-10-28, with logs and traces both 
 | Staging | ~2M requests, ~1.3 GB of telemetry per 30 days |
 | 5xx responses | ~4.7k/day (33,100 over 7 days, from Analytics Engine) |
 
-Request counts come from the GraphQL `workersInvocationsAdaptive` dataset. Bytes per service come from `/workers/observability/usage`, which records sizes only from 2026-10-06, so byte figures average 2026-10-07 to 2026-10-28. The split between log types comes from `/workers/observability/telemetry/query`, grouped by `$metadata.type`.
+All figures are from Cloudflare's own reporting for the account: request counts from the Worker metrics, telemetry bytes from Workers Observability usage, and the 5xx count from the Analytics Engine dataset. Observability usage records sizes only from 2026-10-06, so byte figures average 2026-10-07 to 2026-10-28. #266 lists the exact queries.
 
 Kept unchanged, that configuration would cost about **$990 a month**: ~$900 for ingestion and ~$85 for storage. Nearly all of it pays for two things we don't rely on:
 
