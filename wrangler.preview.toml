@@ -32,6 +32,11 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 [observability]
 enabled = true
 head_sampling_rate = 1
+# Presigned URLs carry X-Amz-Signature in the query string (ADR-015).
+redact_query_string = true
+
+[observability.issues]
+enabled = true
 
 [observability.logs]
 enabled = true
