@@ -67,8 +67,9 @@ redact_query_string = true
 [observability.issues]
 enabled = true
 
-# Our own WARN/ERROR lines (one per 5xx, see src/lib.rs) are ~30k/day, so keep
-# all of them. Invocation logs were ~99.9% of log bytes and duplicate ANALYTICS.
+# Our own WARN/ERROR lines (one per 5xx, see src/lib.rs, plus refused /.sts
+# exchanges) are ~30k/day, so keep all of them. Invocation logs were ~99.9% of
+# log bytes and duplicate ANALYTICS.
 [observability.logs]
 enabled = true
 head_sampling_rate = 1

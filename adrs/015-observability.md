@@ -58,7 +58,7 @@ To trace a particular request, the intended mechanism is a zone **Trace Rule** t
 
 ### Query strings are redacted
 
-`redact_query_string = true` in every environment. Traces capture full URLs, and presigned requests carry `X-Amz-Signature` and `X-Amz-Credential` in the query string; without redaction both would sit in telemetry for its retention period. We lose the list parameters (`list-type`, `prefix`, `continuation-token`) in traces. Analytics Engine never recorded them either.
+`redact_query_string = true` in every environment, including PR previews (`wrangler.preview.toml`). Traces capture full URLs, and presigned requests carry `X-Amz-Signature` and `X-Amz-Credential` in the query string; without redaction both would sit in telemetry for its retention period. We lose the list parameters (`list-type`, `prefix`, `continuation-token`) in traces. Analytics Engine never recorded them either.
 
 ### Workers Issues is enabled
 
@@ -109,6 +109,7 @@ Monitors are therefore defined as policy JSON checked into the repository and ap
 - **Retention is 7 days and still set by the vendor.** ADR-008's position that retention isn't owned here still holds, now for a single sink.
 - **Analytics Engine is unbilled today, and this design leans on it harder.** If billing starts at the published rates, ~986M writes a month cost ~$244 a month. At that point, revisit sampling at the binding or by product.
 - **Traffic growth scales trace volume linearly.** At about 2× today's traffic, traces alone exceed the included 50 GB by enough to matter. Lower the trace rate before raising the budget.
+- **Log volume is unbounded.** At 100% sampling, log bytes follow the number of `WARN` lines, not traffic. An incident that fails every request, or a flood of refused `/.sts` exchanges (each refusal, including `rate_limited`, logs a `WARN`), would be billed line for line. Alert on log ingestion, and drop the log rate during such an incident.
 - **Monitors and Issues are both beta.** Their API shape and pricing can change under us.
 
 ---
