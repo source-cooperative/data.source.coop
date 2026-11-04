@@ -1,0 +1,10 @@
+name = "streamed-put-io-context"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-03-17"
+
+[build]
+command = "worker-build --release"
+
+[vars]
+ORIGIN_URL = "http://127.0.0.1:9101/sink"
+SLOW_URL = "http://127.0.0.1:9101/slow"
