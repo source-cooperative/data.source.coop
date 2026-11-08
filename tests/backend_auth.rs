@@ -25,7 +25,8 @@ fn deserializes_web_identity_role() {
     assert_eq!(
         a,
         BackendAuth::S3WebIdentityRole {
-            role_arn: "arn:aws:iam::1:role/r".into()
+            role_arn: "arn:aws:iam::1:role/r".into(),
+            audience: None,
         }
     );
 }
@@ -59,7 +60,8 @@ fn lenient_valid_role_parses() {
     assert_eq!(
         w.auth,
         BackendAuth::S3WebIdentityRole {
-            role_arn: "arn:aws:iam::1:role/r".into()
+            role_arn: "arn:aws:iam::1:role/r".into(),
+            audience: None,
         }
     );
 }
@@ -94,6 +96,7 @@ fn web_identity_role_sets_oidc_options_and_keeps_signing() {
     apply_backend_auth(
         &BackendAuth::S3WebIdentityRole {
             role_arn: "arn:aws:iam::1:role/r".into(),
+            audience: None,
         },
         "conn-1",
         "s3",
@@ -128,6 +131,7 @@ fn web_identity_role_on_non_s3_fails_closed() {
     let result = apply_backend_auth(
         &BackendAuth::S3WebIdentityRole {
             role_arn: "arn:aws:iam::1:role/r".into(),
+            audience: None,
         },
         "conn-1",
         "az",
@@ -136,4 +140,59 @@ fn web_identity_role_on_non_s3_fails_closed() {
     assert!(result.is_err());
     // No AWS/OIDC options must leak into the non-S3 backend's option map.
     assert!(o.is_empty());
+}
+
+// ── per-connection audience ────────────────────────────────────────
+
+fn role_with_audience(audience: Option<&str>) -> BackendAuth {
+    BackendAuth::S3WebIdentityRole {
+        role_arn: "arn:aws:iam::1:role/r".into(),
+        audience: audience.map(Into::into),
+    }
+}
+
+#[test]
+fn deserializes_audience() {
+    let a: BackendAuth = serde_json::from_str(
+        r#"{"type":"s3_web_identity_role","role_arn":"arn:aws:iam::1:role/r","audience":"scv1:conn:conn-1"}"#,
+    )
+    .unwrap();
+    assert_eq!(a, role_with_audience(Some("scv1:conn:conn-1")));
+}
+
+#[test]
+fn default_audience_sets_no_audience_option() {
+    for audience in [None, Some("sts.amazonaws.com")] {
+        let mut o = HashMap::new();
+        apply_backend_auth(&role_with_audience(audience), "conn-1", "s3", &mut o).unwrap();
+        assert!(!o.contains_key("oidc_audience"), "audience: {audience:?}");
+        assert_eq!(o.get("auth_type").map(String::as_str), Some("oidc"));
+    }
+}
+
+#[test]
+fn own_audience_is_passed_to_the_provider() {
+    let mut o = HashMap::new();
+    apply_backend_auth(
+        &role_with_audience(Some("scv1:conn:conn-1")),
+        "conn-1",
+        "s3",
+        &mut o,
+    )
+    .unwrap();
+    assert_eq!(
+        o.get("oidc_audience").map(String::as_str),
+        Some("scv1:conn:conn-1")
+    );
+}
+
+#[test]
+fn another_connections_audience_fails_closed() {
+    for audience in ["scv1:conn:conn-2", "scv1:conn:conn-1:extra", "anything"] {
+        let mut o = HashMap::new();
+        let result =
+            apply_backend_auth(&role_with_audience(Some(audience)), "conn-1", "s3", &mut o);
+        assert!(result.is_err(), "audience: {audience}");
+        assert!(o.is_empty(), "audience: {audience}");
+    }
 }

@@ -100,3 +100,12 @@ web-sys = { version = "0.3", features = [
 ] }
 worker = { version = "=0.7.5", features = ["http"] }
 worker-macros = { version = "=0.7.5", features = ["http"] }
+
+# Temporary: developmentseed/multistore#167 (`oidc_audience`). Replace with the
+# released version before merging.
+[patch.crates-io]
+multistore = { git = "https://github.com/developmentseed/multistore", branch = "feat/oidc-audience-option" }
+multistore-oidc-provider = { git = "https://github.com/developmentseed/multistore", branch = "feat/oidc-audience-option" }
+multistore-path-mapping = { git = "https://github.com/developmentseed/multistore", branch = "feat/oidc-audience-option" }
+multistore-sts = { git = "https://github.com/developmentseed/multistore", branch = "feat/oidc-audience-option" }
+multistore-cf-workers = { git = "https://github.com/developmentseed/multistore", branch = "feat/oidc-audience-option" }

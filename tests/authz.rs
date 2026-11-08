@@ -117,6 +117,7 @@ fn a_scope_narrower_than_every_product_permits_nothing() {
 fn role() -> BackendAuth {
     BackendAuth::S3WebIdentityRole {
         role_arn: "arn:aws:iam::1:role/r".into(),
+        audience: None,
     }
 }
 
