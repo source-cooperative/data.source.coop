@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.2](https://github.com/source-cooperative/data.source.coop/compare/v2.5.1...v2.5.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **observability:** size telemetry for volume-based pricing and define alerts ([#266](https://github.com/source-cooperative/data.source.coop/issues/266)) ([af4ef63](https://github.com/source-cooperative/data.source.coop/commit/af4ef63fab8616e4b8f6a58cc84165bc8f741e5a))
+
 ## [2.5.1](https://github.com/source-cooperative/data.source.coop/compare/v2.5.0...v2.5.1) (2026-10-20)
 
 
