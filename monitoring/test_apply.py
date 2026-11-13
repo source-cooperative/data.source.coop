@@ -35,14 +35,22 @@ def test_repo_definitions_load():
 
 
 def test_definitions_are_validated():
+    ok = {"name": PREFIX + "a", "severity": "page"}
+    cases = {
+        "a name without the prefix": [dict(ok, name="no prefix")],
+        "a missing name": [{"severity": "page"}],
+        "an unknown severity": [dict(ok, severity="urgent")],
+        "a duplicate name": [ok, dict(ok)],
+    }
     with tempfile.TemporaryDirectory() as d:
         bad = Path(d, "m.json")
-        bad.write_text(json.dumps({"policies": [{"name": "no prefix", "severity": "page"}]}))
-        try:
-            load_definitions(bad)
-        except SystemExit:
-            return
-    raise AssertionError("a name without the prefix must be rejected")
+        for case, policies in cases.items():
+            bad.write_text(json.dumps({"policies": policies}))
+            try:
+                load_definitions(bad)
+            except SystemExit:
+                continue
+            raise AssertionError(f"{case} must be rejected")
 
 
 if __name__ == "__main__":

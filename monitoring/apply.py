@@ -33,10 +33,10 @@ DEFINITIONS = Path(__file__).with_name("monitors.json")
 
 def load_definitions(path=DEFINITIONS):
     policies = json.loads(path.read_text())["policies"]
-    names = [p["name"] for p in policies]
+    names = [p.get("name") for p in policies]
     for p in policies:
-        if not p["name"].startswith(PREFIX):
-            raise SystemExit(f"{p['name']!r}: policy names must start with {PREFIX!r}")
+        if not isinstance(p.get("name"), str) or not p["name"].startswith(PREFIX):
+            raise SystemExit(f"{p.get('name')!r}: policy names must start with {PREFIX!r}")
         if p.get("severity") not in SEVERITIES:
             raise SystemExit(f"{p['name']!r}: severity must be one of {SEVERITIES}")
     if len(names) != len(set(names)):
@@ -75,13 +75,20 @@ class Cloudflare:
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.load(resp).get("result")
         except urllib.error.HTTPError as e:
             raise SystemExit(f"{method} {path}: HTTP {e.code}\n{e.read().decode()}")
 
     def our_policies(self):
-        return {p["name"]: p["id"] for p in self("GET", "/policies") or [] if p["name"].startswith(PREFIX)}
+        ours = [p for p in self("GET", "/policies") or [] if p["name"].startswith(PREFIX)]
+        names = [p["name"] for p in ours]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            # A name -> id map would silently keep one and leave the rest
+            # firing forever, untouched by apply.
+            raise SystemExit(f"duplicate owned policies on the account, delete the extras: {dupes}")
+        return {p["name"]: p["id"] for p in ours}
 
     def upsert_webhook(self, url):
         hooks = {h["name"]: h["id"] for h in self("GET", "/destinations/webhooks") or []}

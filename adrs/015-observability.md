@@ -122,7 +122,7 @@ Every alert posts to a Slack channel through one Cloudflare webhook destination,
 
 An alert does not repeat for every failed request:
 
-- **Cloudflare policies** notify when they trigger and again when they clear (`ALERT_STATE_EVENT_START` and `…_END` in the webhook payload). SQL-based Monitors also resend while still triggered, every `alert_interval`. Cloudflare's default is `1h`; we use `1h` for page and `24h` for notify.
+- **Cloudflare policies** notify when they trigger and again when they clear (`ALERT_STATE_EVENT_START` and `…_END` in the webhook payload). SQL-based Monitors also resend while still triggered, every `alert_interval`. Cloudflare's default is `1h`; set it in each entry, `1h` for page and `24h` for notify. `apply.py` doesn't derive it from `severity`.
 - **Issues alerts** fire once per new issue group, not per occurrence. A crash loop on one bug sends one message; a recurrence after the issue is resolved sends another.
 - **Upptime (M4)** opens an issue in `status.source.coop` and notifies Slack when a check goes down, then closes it and notifies again on recovery. It also notifies when a check is slower than its limit.
 - **Muting:** during a known incident or maintenance, mute alerts with a Silence (dashboard: **Alerts › Silences**, or `alerting/v3/silences`).
@@ -179,7 +179,7 @@ Two signals no alert covers:
 
 Every name starts with `data-proxy: `. That prefix marks a policy as owned by the file: `apply.py` creates the missing ones, rewrites the existing ones and deletes owned policies no longer listed. Policies without the prefix are never touched.
 
-SQL Monitors (`custom_analytics`) put their query, data source, detection method, comparison operator, windows and run interval in `filters`. The public API schema documents only some of those filters, and the format of `selectors`, which holds the query, is undocumented. So each SQL Monitor starts in the dashboard (**Alerts › Monitors**) and is then exported into the file:
+SQL Monitors (`custom_analytics`) put their query, data source, detection method, comparison operator, windows and run interval in `filters`. The public API schema documents only some of those filters, and the format of `selectors`, which holds the query, is undocumented. So each SQL Monitor starts in the dashboard (**Alerts › Monitors**) and is then exported into the file. Name the dashboard draft *without* the `data-proxy: ` prefix: a prefixed policy that isn't yet in `monitors.json` is deleted by the next release.
 
 ```sh
 # Prints the dashboard-made policy as a monitors.json entry, named with the
