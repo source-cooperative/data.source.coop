@@ -5,7 +5,7 @@
 **Issue:** #265
 **Depends on:** ADR-008
 **Amends:** ADR-008 (Axiom as a sink; retention; operational logging)
-**Implementation:** `wrangler.toml` `[observability]`; `monitoring/`; `.github/workflows/production.yml` (Apply Monitors), `.github/workflows/uptime.yml`
+**Implementation:** `wrangler.toml` `[observability]`; `monitoring/`; `.github/workflows/production.yml` (Apply Monitors); [source-cooperative/status.source.coop](https://github.com/source-cooperative/status.source.coop) (M4)
 
 ---
 
@@ -84,7 +84,7 @@ The live-globe Worker isn't critical infrastructure and stays without an `[obser
 
 ### Alerts are defined in the repository and applied on release
 
-Alerts are Cloudflare notification policies, defined in `monitoring/monitors.json` and applied by `monitoring/apply.py` when a release deploys. The uptime check that must not depend on Cloudflare is a GitHub Actions workflow. The [Monitors](#monitors) section lists each alert, what triggers it and how it is deployed.
+Alerts are Cloudflare notification policies, defined in `monitoring/monitors.json` and applied by `monitoring/apply.py` when a release deploys. The outside uptime check, which must not depend on Cloudflare, runs from a separate repository, `status.source.coop`, using Upptime, which also publishes the public status page. The [Monitors](#monitors) section lists each alert, what triggers it and how it is deployed.
 
 ---
 
@@ -101,7 +101,7 @@ An alert does not repeat for every failed request:
 
 - **Cloudflare policies** notify when they trigger and again when they clear (`ALERT_STATE_EVENT_START` and `…_END` in the webhook payload). SQL-based Monitors also resend while still triggered, every `alert_interval`. Cloudflare's default is `1h`; we use `1h` for page and `24h` for notify.
 - **Issues alerts** fire once per new issue group, not per occurrence. A crash loop on one bug sends one message; a recurrence after the issue is resolved sends another.
-- **The uptime check** tracks its own state through a GitHub issue, so it alerts once on failure and once on recovery.
+- **Upptime (M4)** opens an issue in `status.source.coop` and notifies Slack when a check goes down, then closes it and notifies again on recovery. It also notifies when a check is slower than its limit.
 - **Muting:** during a known incident or maintenance, mute alerts with a Silence (dashboard: **Alerts › Silences**, or `alerting/v3/silences`).
 
 ### The alerts
@@ -111,7 +111,7 @@ An alert does not repeat for every failed request:
 | M1 | Worker issues | page | Workers Issues (`workers_observability_real_time_issue`) | a new issue group opens | in `monitors.json` |
 | M2 | Error-rate SLO | page | Analytics Engine, share of `double2 >= 500` | 5xx share above 0.1% over 10 min (today: ~0.013%) | needs the query format, see [How monitors are defined](#how-monitors-are-defined) |
 | M3 | Access denied per product | notify | Analytics Engine, share of 403/404 by `index1` (`account/product`) | a product's share rises well above its own baseline, with a minimum request count | needs the query format |
-| M4 | Outside uptime check | page | `.github/workflows/uptime.yml`, `GET https://data.source.coop/` every 5 min from GitHub | three tries in one run fail | in the repository |
+| M4 | Outside uptime check and status page | page | Upptime in `status.source.coop`, every 5 min from GitHub: the website, the proxy, a real object read, the proxy's OIDC discovery document and Ory sign-in | a check fails, returns an unexpected body, or exceeds 5 s | in `status.source.coop` |
 | M5 | Cloudflare incidents | notify | Cloudflare's incident notifications (`incident_alert`), major and critical only | Cloudflare declares an incident | in `monitors.json` |
 | M6 | `/.sts` failures | page | Workers Logs (`logs.workersLogs`), WARN/ERROR lines on `/.sts` | failed exchanges rise above their baseline, excluding `rate_limited` | needs the query format |
 | M7 | Latency | notify | Analytics Engine, p99 `double3` (`duration_ms`) | p99 rises well above the last 24 h over 15 min | needs the query format |
@@ -137,7 +137,7 @@ The account's existing billing budget alert is left alone. It covers all of the 
 
 **One Cloudflare location fails.** Anycast routing sends clients to the next location, so no alert fires and users rarely notice. If a location stays up but breaks, for example its outbound DNS fails (the 530s fixed in #212), the proxy returns 5xx carrying a `cf-ray` rather than `server: AmazonS3`, and **M1** and **M2** fire. Analytics Engine doesn't record the location, so the WARN lines are what point to one.
 
-**Cloudflare or Workers is down.** Nothing inside Cloudflare can report it. **M4** fires from GitHub, and **M5** says why.
+**Cloudflare or Workers is down.** Nothing inside Cloudflare can report it. **M4** fires from GitHub and marks it on the public status page, and **M5** says why.
 
 **The sign-in service or a platform identity provider fails.** Users and the CLI can't get credentials from `/.sts`, though public reads keep working. **M6** fires.
 
@@ -184,7 +184,21 @@ The job needs:
 - the `ALERTS_SLACK_WEBHOOK_URL` repository secret, a Slack incoming webhook;
 - optionally, the `ALERTS_EMAIL` variable (comma-separated) for page-severity email.
 
-The uptime check (M4) is `.github/workflows/uptime.yml`. It runs every 5 minutes on `main` and reads the same Slack secret. The secret is set at repository level so that scheduled runs never wait on the `production` environment's protection rules. GitHub disables scheduled workflows after 60 days without repository activity, and may start them a few minutes late.
+The uptime check (M4) lives outside this repository, in [`source-cooperative/status.source.coop`](https://github.com/source-cooperative/status.source.coop), which runs [Upptime](https://upptime.js.org). Its `.upptimerc.yml` lists the checks:
+
+| Check | URL | What it proves |
+|---|---|---|
+| Website | `https://source.coop/` | Vercel serves the app |
+| Data proxy | `https://data.source.coop/` | Cloudflare runs the Worker; this needs no upstream service |
+| Data reads | `https://data.source.coop/radiantearth/landcovernet/README.md` | the whole read path: Source API, AWS credentials, S3 |
+| Credential exchange | `https://data.source.coop/.well-known/openid-configuration` | what S3 clients and the CLI discover before `/.sts` |
+| Sign-in | `https://auth.source.coop/.well-known/openid-configuration` | Ory answers |
+
+Upptime runs from GitHub Actions every 5 minutes. It records response times in the repository and publishes `status.source.coop` from its `gh-pages` branch. That gives users a public status page and history that need nothing from Cloudflare, Vercel or AWS.
+
+It posts to the same Slack channel through its own `NOTIFICATION_SLACK_WEBHOOK_URL` secret. Changing what it checks is a pull request to that repository; nothing in this repository deploys it.
+
+Two GitHub limits apply: scheduled workflows can start a few minutes late, and they are disabled after 60 days without repository activity. Upptime's own commits count as activity, so the second doesn't arise in practice.
 
 ---
 
