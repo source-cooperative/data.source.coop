@@ -3,7 +3,8 @@
 //! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
 //! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
 //! `account:product` bucket → dispatch through the multistore gateway → emit
-//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! analytics + location telemetry → apply CORS. Every response then names its
+//! trace in `x-source-trace-id` (ADR-016). Isolate-shared statics (HTTP
 //! client, JWKS cache, OIDC provider) initialize lazily from the first
 //! request's config.
 
@@ -20,9 +21,11 @@ mod pagination;
 mod platform;
 mod source_api;
 mod sts;
+mod trace;
 
 use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
+use crate::trace::TraceContext;
 use analytics::log_analytics;
 use futures_util::future::Either;
 use handlers::{AccountListHandler, IndexHandler};
@@ -157,6 +160,29 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
+    let traceparent = req.headers().get("traceparent").ok().flatten();
+    let trace = TraceContext::from_traceparent(traceparent.as_deref(), random());
+    let response = handle(req, env, ctx, &trace).await?;
+    // A relayed response's headers can be immutable; the trace ID is then
+    // dropped rather than failing the response.
+    let _ = response.headers().set("x-source-trace-id", &trace.trace_id);
+    Ok(response)
+}
+
+/// Random bytes for trace and span IDs. Uniqueness is all they need, so a
+/// failed draw leaves zeros rather than failing the request.
+pub(crate) fn random<const N: usize>() -> [u8; N] {
+    let mut bytes = [0; N];
+    let _ = getrandom::fill(&mut bytes);
+    bytes
+}
+
+async fn handle(
+    req: web_sys::Request,
+    env: Env,
+    ctx: Context,
+    trace: &TraceContext,
+) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let max_level = init_tracing(&env);
     let config = load_config(&env);
@@ -252,7 +278,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.oidc.signer.clone(),
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
-    );
+    )
+    .with_trace(trace.clone());
 
     // ── Short-circuit: API-key and platform-token exchanges ────────
     // An `sck_` key at `/.sts` is not a token: nothing verifies it here —
@@ -437,6 +464,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         tracing::warn!(
             status,
             duration_ms,
+            %request_id,
+            trace_id = %trace.trace_id,
             method = %parts.method,
             path = %parts.path,
             content_length = header_str(&parts.headers, "content-length"),

@@ -391,6 +391,9 @@ async fn cached_fetch<T: serde::de::DeserializeOwned>(
     if !request_id.is_empty() {
         let _ = req_headers.set("x-request-id", request_id);
     }
+    if let Some(traceparent) = api_auth.traceparent() {
+        let _ = req_headers.set("traceparent", &traceparent);
+    }
     init.set_headers(&req_headers);
     let req = web_sys::Request::new_with_str_and_init(api_url, &init)
         .map_err(|e| ProxyError::Internal(format!("request build failed: {:?}", e)))?;

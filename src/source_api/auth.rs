@@ -1,3 +1,4 @@
+use crate::trace::TraceContext;
 use multistore_oidc_provider::jwt::JwtSigner;
 
 /// The subject the proxy signs with when it calls the API as itself rather
@@ -26,12 +27,15 @@ impl<'a> From<Option<&'a str>> for ApiCaller<'a> {
     }
 }
 
-/// How the proxy authenticates to the Source Cooperative API.
+/// How the proxy authenticates to the Source Cooperative API, and the trace its
+/// calls belong to: every API call is made with one, so it carries the
+/// request's trace context too (ADR-016).
 #[derive(Clone)]
 pub(crate) struct ApiAuth {
     signer: JwtSigner,
     issuer: String,
     audience: String,
+    trace: Option<TraceContext>,
 }
 
 impl ApiAuth {
@@ -40,7 +44,19 @@ impl ApiAuth {
             signer,
             issuer,
             audience,
+            trace: None,
         }
+    }
+
+    /// API calls made with this carry a `traceparent` in `trace`.
+    pub fn with_trace(mut self, trace: TraceContext) -> Self {
+        self.trace = Some(trace);
+        self
+    }
+
+    /// A `traceparent` for one API call, each with its own span ID.
+    pub fn traceparent(&self) -> Option<String> {
+        self.trace.as_ref().map(|t| t.child(crate::random()))
     }
 
     /// Build the `Authorization` header value for an API request on behalf of
