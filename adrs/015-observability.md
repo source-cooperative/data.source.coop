@@ -5,7 +5,7 @@
 **Issue:** #265
 **Depends on:** ADR-008
 **Amends:** ADR-008 (Axiom as a sink; retention; operational logging)
-**Implementation:** `wrangler.toml` `[observability]`
+**Implementation:** `wrangler.toml` `[observability]`; `monitoring/`; `.github/workflows/production.yml` (Apply Monitors), `.github/workflows/uptime.yml`
 
 ---
 
@@ -60,7 +60,9 @@ To trace a particular request, the intended mechanism is a zone **Trace Rule** t
 
 `redact_query_string = true` in every environment, including PR previews (`wrangler.preview.toml`). Traces capture full URLs, and presigned requests carry `X-Amz-Signature` and `X-Amz-Credential` in the query string; without redaction both would sit in telemetry for its retention period. We lose the list parameters (`list-type`, `prefix`, `continuation-token`) in traces. Analytics Engine never recorded them either.
 
-### Workers Issues is enabled
+### Workers Issues is enabled in production
+
+Issues is on for production only. The alert that turns Issues into notifications (M1, below) applies to every Worker in the account and can't be filtered, so Issues in staging or previews would page operators for test failures.
 
 Issues groups uncaught exceptions, failed invocations, 5xx responses and `console.error` lines. It recovers what dropping invocation logs would otherwise lose: a record of invocations that fail outright, before the proxy can log anything. It doesn't count 4xx responses, which are ~41% of production traffic.
 
@@ -80,16 +82,109 @@ Staging samples logs, invocation logs and traces at 100%. At ~2M requests a mont
 
 The live-globe Worker isn't critical infrastructure and stays without an `[observability]` block. Cloudflare's built-in Worker metrics are free and already show its request and error counts.
 
-### Alerts are Monitors, defined in the repository
+### Alerts are defined in the repository and applied on release
 
-Alerts run as Cloudflare **Monitors** (beta): a scheduled SQL query against `source_data_proxy_production` with threshold, anomaly or SLO detection. The first two are:
+Alerts are Cloudflare notification policies, defined in `monitoring/monitors.json` and applied by `monitoring/apply.py` when a release deploys. The uptime check that must not depend on Cloudflare is a GitHub Actions workflow. The [Monitors](#monitors) section lists each alert, what triggers it and how it is deployed.
 
-- the 5xx rate, as an SLO on `double2`;
-- p99 `duration_ms`.
+---
 
-Through the API, a Monitor is a notification policy with `alert_type = "custom_analytics"`. Its query, source, detection method, operator, windows and run interval are all policy `filters`. The public OpenAPI schema documents only some of those filters, and the Terraform provider is generated from that schema, so Terraform can't fully express a Monitor yet.
+## Monitors
 
-Monitors are therefore defined as policy JSON checked into the repository and applied with the alerting API from CI. The first Monitor is created in the dashboard and then exported, because the format of the `selectors` filter isn't documented. They can move to Terraform once the schema documents the remaining filters.
+### How alerts reach operators
+
+Every alert posts to a Slack channel through one Cloudflare webhook destination, **data-proxy alerts (Slack)**, whose URL is the `ALERTS_SLACK_WEBHOOK_URL` repository secret. Alerts have one of two severities:
+
+- **page:** users are affected now. Slack, plus email to the addresses in the `ALERTS_EMAIL` variable.
+- **notify:** something looks wrong. Slack only.
+
+An alert does not repeat for every failed request:
+
+- **Cloudflare policies** notify when they trigger and again when they clear (`ALERT_STATE_EVENT_START` and `…_END` in the webhook payload). SQL-based Monitors also resend while still triggered, every `alert_interval`. Cloudflare's default is `1h`; we use `1h` for page and `24h` for notify.
+- **Issues alerts** fire once per new issue group, not per occurrence. A crash loop on one bug sends one message; a recurrence after the issue is resolved sends another.
+- **The uptime check** tracks its own state through a GitHub issue, so it alerts once on failure and once on recovery.
+- **Muting:** during a known incident or maintenance, mute alerts with a Silence (dashboard: **Alerts › Silences**, or `alerting/v3/silences`).
+
+### The alerts
+
+| | Alert | Severity | Watches | Fires when | Status |
+|---|---|---|---|---|---|
+| M1 | Worker issues | page | Workers Issues (`workers_observability_real_time_issue`) | a new issue group opens | in `monitors.json` |
+| M2 | Error-rate SLO | page | Analytics Engine, share of `double2 >= 500` | 5xx share above 0.1% over 10 min (today: ~0.013%) | needs the query format, see [How monitors are defined](#how-monitors-are-defined) |
+| M3 | Access denied per product | notify | Analytics Engine, share of 403/404 by `index1` (`account/product`) | a product's share rises well above its own baseline, with a minimum request count | needs the query format |
+| M4 | Outside uptime check | page | `.github/workflows/uptime.yml`, `GET https://data.source.coop/` every 5 min from GitHub | three tries in one run fail | in the repository |
+| M5 | Cloudflare incidents | notify | Cloudflare's incident notifications (`incident_alert`), major and critical only | Cloudflare declares an incident | in `monitors.json` |
+| M6 | `/.sts` failures | page | Workers Logs (`logs.workersLogs`), WARN/ERROR lines on `/.sts` | failed exchanges rise above their baseline, excluding `rate_limited` | needs the query format |
+| M7 | Latency | notify | Analytics Engine, p99 `double3` (`duration_ms`) | p99 rises well above the last 24 h over 15 min | needs the query format |
+| M8 | Monitoring health | notify | Workers Observability usage; Analytics Engine row count | telemetry above ~10 GB/day, or rows drop well below requests | needs the query format |
+
+Alerts that need the query format are SQL Monitors (`custom_analytics`). M2 and M3 query Analytics Engine, which deliberately skips `/.well-known` and `/.sts` (ADR-008); M6 exists because of that gap.
+
+The account's existing billing budget alert is left alone. It covers all of the account's spend, including Workers request charges, so it can't serve as a telemetry budget; M8 watches telemetry directly.
+
+### What triggers them
+
+**A bug stops the Worker from running.** A panic, an error passed out of `fetch`, or a CPU or memory limit leaves no Analytics Engine row, because the row is written when the response is ready (`src/lib.rs`). A panic still reaches the logs as an ERROR line through `console_error_panic_hook`, and Issues records every failed invocation. **M1** fires with the stack trace. M2 can't see this case, and reads *healthier* while it lasts. If no request succeeds, **M4** fires too.
+
+**A bug returns a 5xx.** The response has an Analytics Engine row and a WARN line carrying the request and relayed upstream headers. **M1** fires (Issues counts 5xx), and **M2** fires if enough requests are affected.
+
+**Vercel's Source API is down or unreachable.** Source API calls fail and the proxy answers 500 (`Internal: API returned 503 for …`), logging the cause at WARN. Answers are cached for 60 s (permissions) to 5 min (products and connections) per Cloudflare location, so the error rate climbs as caches expire. **M1** and **M2** fire, and **M7** may as well, since every cache miss gets slower.
+
+**Vercel rejects the proxy.** If the Source API answers 401 or 403, for example after a signing-key mismatch, the proxy returns 403 `AccessDenied`; a 404 for everything becomes `NoSuchBucket`. Neither is a 5xx or an Issue. **M3** fires, with many products spiking at once. Logging unexpected Source API 401/403/404 answers at ERROR would let M1 catch this directly.
+
+**AWS refuses the role.** If the IAM role behind a data connection is deleted, or its trust policy no longer admits the proxy, AWS STS returns `AccessDenied`. The proxy logs ERROR "backend STS rejected the federation exchange" with the STS code and answers 403. Other STS errors, such as the OIDC provider being removed from AWS, answer 502. **M1** fires either way. Credentials are cached until they expire, so this can show up to an hour after the change.
+
+**The role loses its S3 permissions, or a public bucket is made private.** AWS still issues credentials, so S3 itself answers 403, and the proxy relays it unchanged. There is no log line and no Issue. **M3** fires for that product alone. Listing requests go through the storage library instead and probably surface as 503, which also fires M1.
+
+**One Cloudflare location fails.** Anycast routing sends clients to the next location, so no alert fires and users rarely notice. If a location stays up but breaks, for example its outbound DNS fails (the 530s fixed in #212), the proxy returns 5xx carrying a `cf-ray` rather than `server: AmazonS3`, and **M1** and **M2** fire. Analytics Engine doesn't record the location, so the WARN lines are what point to one.
+
+**Cloudflare or Workers is down.** Nothing inside Cloudflare can report it. **M4** fires from GitHub, and **M5** says why.
+
+**The sign-in service or a platform identity provider fails.** Users and the CLI can't get credentials from `/.sts`, though public reads keep working. **M6** fires.
+
+**Slow but not failing.** S3 in one region slows down, or a deploy adds contention on a hot path. **M7** fires.
+
+**Monitoring breaks or overspends.** A flood of junk `/.sts` keys logs a WARN per request, or the Analytics Engine binding stops working after a config change. **M8** fires.
+
+Two signals no alert covers:
+
+- **A response that breaks mid-stream** has already recorded a 200 in Analytics Engine; whether Issues counts the failure is unverified.
+- **The Cloudflare location of a failure** isn't recorded. Adding a `colo` field to the Analytics Engine row would let M2 and M3 point at one.
+
+### How monitors are defined
+
+`monitoring/monitors.json` lists every Cloudflare policy this repository owns. Each entry is the policy's API body (`name`, `alert_type`, `description`, `filters`, and optionally `enabled` and `alert_interval`) plus a `severity`. The script turns `severity` into delivery targets.
+
+Every name starts with `data-proxy: `. That prefix marks a policy as owned by the file: `apply.py` creates the missing ones, rewrites the existing ones and deletes owned policies no longer listed. Policies without the prefix are never touched.
+
+SQL Monitors (`custom_analytics`) put their query, data source, detection method, comparison operator, windows and run interval in `filters`. The public API schema documents only some of those filters, and the format of `selectors`, which holds the query, is undocumented. So each SQL Monitor starts in the dashboard (**Alerts › Monitors**) and is then exported into the file:
+
+```sh
+# Prints the dashboard-made policy as a monitors.json entry, named with the
+# data-proxy: prefix. Set its severity, add it to the file, then delete the
+# dashboard original: the next release creates the owned copy.
+python3 monitoring/apply.py export "M2 Error-rate SLO"
+```
+
+From then on the file is the source of truth, and edits made in the dashboard are overwritten on the next release. Terraform can take over once its provider, which is generated from the same schema, can express these filters.
+
+`python3 monitoring/test_apply.py` checks the plan logic and validates the file offline; CI runs it on every pull request.
+
+### How monitors are deployed
+
+`production.yml` runs on every published release. After the deploy job succeeds, the **Apply Monitors** job runs `python3 monitoring/apply.py apply` in the `production` environment. It:
+
+1. creates or updates the Slack webhook destination;
+2. creates, updates or deletes the `data-proxy: ` policies to match `monitors.json`.
+
+Re-running it with an unchanged file changes nothing. To preview a run locally, use `python3 monitoring/apply.py plan`, which only reads.
+
+The job needs:
+
+- `CLOUDFLARE_API_TOKEN` with **Notifications Read/Write**, added to the existing deploy token;
+- the `ALERTS_SLACK_WEBHOOK_URL` repository secret, a Slack incoming webhook;
+- optionally, the `ALERTS_EMAIL` variable (comma-separated) for page-severity email.
+
+The uptime check (M4) is `.github/workflows/uptime.yml`. It runs every 5 minutes on `main` and reads the same Slack secret. The secret is set at repository level so that scheduled runs never wait on the `production` environment's protection rules. GitHub disables scheduled workflows after 60 days without repository activity, and may start them a few minutes late.
 
 ---
 

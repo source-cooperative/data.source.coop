@@ -1,0 +1,20 @@
+{
+  "policies": [
+    {
+      "name": "data-proxy: M1 Worker issues",
+      "severity": "page",
+      "alert_type": "workers_observability_real_time_issue",
+      "description": "A new Workers Issue: an uncaught exception, failed invocation, 5xx response or ERROR line in source-data-proxy. See ADR-015, Monitors.",
+      "filters": {}
+    },
+    {
+      "name": "data-proxy: M5 Cloudflare incidents",
+      "severity": "notify",
+      "alert_type": "incident_alert",
+      "description": "Cloudflare has declared a major or critical incident. Context for M2/M4 alerts. See ADR-015, Monitors.",
+      "filters": {
+        "incident_impact": ["INCIDENT_IMPACT_MAJOR", "INCIDENT_IMPACT_CRITICAL"]
+      }
+    }
+  ]
+}
