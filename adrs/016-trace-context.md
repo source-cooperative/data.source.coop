@@ -4,7 +4,7 @@
 **Date:** 2026-11-13
 **Depends on:** ADR-008
 **Related:** ADR-015 (observability sampling, sinks and alerting; in review as #266)
-**Implementation:** `src/trace.rs`, `src/lib.rs` (`fetch`), `src/source_api/auth.rs` and `cache.rs`; source.coop `src/instrumentation.ts` and `src/lib/storage/s3.ts`
+**Implementation:** `src/trace.rs`, `src/lib.rs` (`fetch`), `src/source_api/auth.rs` and `cache.rs`; source.coop `src/instrumentation.ts` and `src/lib/actions/proxy-credentials.ts`
 
 ---
 
@@ -29,10 +29,9 @@ The standard for joining the two is W3C Trace Context: a `traceparent` header ca
 
 source.coop registers OpenTelemetry through `@vercel/otel`. Each request the app serves gets a trace, and an incoming `traceparent`, such as the proxy's, is continued.
 
-The app sends `traceparent` to the data proxy and nowhere else. Third parties such as Ory and AWS don't receive it:
+The app sends `traceparent` to the data proxy and nowhere else; third parties such as Ory and AWS don't receive it. The instrumentation's `propagateContextUrls` is set to the proxy's endpoint. Despite its name, the instrumentation covers `node:http` and `node:https` as well as `fetch`, so the S3 SDK's requests carry the header too. It's added after SigV4 signing, so it's never part of the signature, and nothing done to it in transit can fail a signed request.
 
-- `fetch` calls get it through the instrumentation's `propagateContextUrls`, set to the proxy's endpoint.
-- The S3 client gets it from an SDK middleware, because the SDK sends through `node:http`, which `@vercel/otel` doesn't instrument. The middleware runs after SigV4 signing, so the header is never signed and nothing done to it in transit can fail a request.
+Tracing records each outgoing request's full URL. So nothing secret may travel in a URL to the proxy: source.coop sends the `/.sts` exchange's `WebIdentityToken` (the user's Ory ID token) in a form-encoded POST body, which the proxy has accepted since #196, never in the query string.
 
 ### The proxy continues it
 
@@ -67,6 +66,7 @@ The header is untrusted input, and only ever chooses an ID that nothing relies o
 - **The proxy is a gap in every trace.** Its own spans keep Cloudflare's trace IDs, not this one, until Workers supports external propagation. Within the proxy, the trace ID is in its logs, not its traces.
 - **Only 5xx lines carry `trace_id`.** A 403 or 404 is found through `request_id` and the response headers, not through a log search by trace ID.
 - **A caller can choose its trace ID.** That can mislead someone correlating, but grants nothing.
+- **source.coop's traces record every outgoing URL.** That's why the `/.sts` token moved to the request body. Ory's single-use login and consent challenges still travel in URLs during a credential refresh and so reach traces. They are spent within milliseconds, so the exposure is accepted, but any new request that carries a credential must keep it out of the URL.
 - **Vercel's sampling decides what the API records.** A proxy-started trace is unsampled, so an API failure caused by a direct client has no Vercel spans. It still has the proxy's 5xx line and `x-request-id`.
 
 ---
