@@ -21,12 +21,16 @@ pub struct TraceContext {
 }
 
 impl TraceContext {
-    /// The trace `traceparent` names, or a new unsampled one with ID
-    /// `new_trace_id` when the header is absent or malformed. An untrusted
-    /// header can only choose an ID, which nothing here relies on.
-    pub fn from_traceparent(traceparent: Option<&str>, new_trace_id: [u8; 16]) -> Self {
+    /// The trace `traceparent` names, or a new unsampled one with an ID drawn
+    /// from `new_trace_id` (called only then) when the header is absent or
+    /// malformed. An untrusted header chooses only the ID, which nothing
+    /// relies on for access, and whether the API records the trace.
+    pub fn from_traceparent(
+        traceparent: Option<&str>,
+        new_trace_id: impl FnOnce() -> [u8; 16],
+    ) -> Self {
         traceparent.and_then(parse).unwrap_or_else(|| Self {
-            trace_id: hex(&new_trace_id),
+            trace_id: hex(&new_trace_id()),
             sampled: false,
         })
     }

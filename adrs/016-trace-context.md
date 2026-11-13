@@ -41,9 +41,9 @@ For every request, the proxy takes the trace from a well-formed `traceparent`. W
 - **logs** it as `trace_id` on the WARN line written for every 5xx, next to `request_id`;
 - **sends** a child `traceparent` with every Source API call, with the same trace ID, a new parent span ID per call and the caller's sampled flag. Each call already sends `x-request-id`.
 
-The sampled flag passes through unchanged, so the API records spans only for traces its caller records. A trace the proxy starts itself, for a direct client such as a browser or the CLI, is unsampled. That keeps Vercel's trace volume tied to Vercel's own traffic rather than to every proxy cache miss.
+The sampled flag passes through unchanged, so the API records spans for a trace exactly when its caller does, and a page source.coop traces is followed through the proxy into the API. A trace the proxy starts itself, for a direct client such as a browser or the CLI, is unsampled.
 
-The header is untrusted input, and only ever chooses an ID that nothing relies on for access. A malformed one is replaced rather than repaired.
+The header is untrusted input. It chooses the ID, which nothing relies on for access, and whether the API records the trace. A malformed header is replaced rather than repaired.
 
 ### Finding a request on both sides
 
@@ -66,6 +66,7 @@ The header is untrusted input, and only ever chooses an ID that nothing relies o
 - **The proxy is a gap in every trace.** Its own spans keep Cloudflare's trace IDs, not this one, until Workers supports external propagation. Within the proxy, the trace ID is in its logs, not its traces.
 - **Only 5xx lines carry `trace_id`.** A 403 or 404 is found through `request_id` and the response headers, not through a log search by trace ID.
 - **A caller can choose its trace ID.** That can mislead someone correlating, but grants nothing.
+- **A caller can make the API record its trace.** Any client can send a sampled `traceparent`, and the API then records spans for the calls that request causes. It adds no API calls, only spans for calls that happen anyway, and those are bounded by the proxy's 60 s–5 min API cache. At worst, Vercel records a trace for every API call the proxy makes. Honoring the flag only from source.coop would need a way to authenticate source.coop's server, which anonymous reads don't have, and dropping the flag would lose the page → proxy → API trace.
 - **source.coop's traces record every outgoing URL.** That's why the `/.sts` token moved to the request body. Ory's single-use login and consent challenges still travel in URLs during a credential refresh and so reach traces. They are spent within milliseconds, so the exposure is accepted, but any new request that carries a credential must keep it out of the URL.
 - **Vercel's sampling decides what the API records.** A proxy-started trace is unsampled, so an API failure caused by a direct client has no Vercel spans. It still has the proxy's 5xx line and `x-request-id`.
 

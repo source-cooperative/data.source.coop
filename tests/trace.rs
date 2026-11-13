@@ -10,7 +10,7 @@ const NEW_ID: [u8; 16] = [0xab; 16];
 const SPAN: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
 fn from(header: &str) -> TraceContext {
-    TraceContext::from_traceparent(Some(header), NEW_ID)
+    TraceContext::from_traceparent(Some(header), || NEW_ID)
 }
 
 fn started_here(t: &TraceContext) -> bool {
@@ -33,7 +33,9 @@ fn a_later_version_may_carry_more_fields() {
 
 #[test]
 fn anything_else_starts_a_new_unsampled_trace() {
-    assert!(started_here(&TraceContext::from_traceparent(None, NEW_ID)));
+    assert!(started_here(&TraceContext::from_traceparent(None, || {
+        NEW_ID
+    })));
     for bad in [
         "",
         "garbage",
@@ -57,7 +59,7 @@ fn a_child_keeps_the_trace_and_its_sampling() {
         sampled.child(SPAN),
         "00-4bf92f3577b34da6a3ce929d0e0e4736-0102030405060708-01"
     );
-    let unsampled = TraceContext::from_traceparent(None, NEW_ID);
+    let unsampled = TraceContext::from_traceparent(None, || NEW_ID);
     assert_eq!(
         unsampled.child(SPAN),
         "00-abababababababababababababababab-0102030405060708-00"

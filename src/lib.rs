@@ -161,8 +161,12 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     let traceparent = req.headers().get("traceparent").ok().flatten();
-    let trace = TraceContext::from_traceparent(traceparent.as_deref(), random());
-    let response = handle(req, env, ctx, &trace).await?;
+    let trace = TraceContext::from_traceparent(traceparent.as_deref(), random);
+    // An error returned from here becomes the runtime's own 500, which carries
+    // no headers of ours; this line is what ties it to the trace.
+    let response = handle(req, env, ctx, &trace).await.inspect_err(|e| {
+        tracing::warn!(trace_id = %trace.trace_id, error = %e, "request failed");
+    })?;
     // A relayed response's headers can be immutable; the trace ID is then
     // dropped rather than failing the response.
     let _ = response.headers().set("x-source-trace-id", &trace.trace_id);
@@ -170,10 +174,15 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 }
 
 /// Random bytes for trace and span IDs. Uniqueness is all they need, so a
-/// failed draw leaves zeros rather than failing the request.
+/// failed draw falls back to `Math.random` rather than failing the request:
+/// zeros would be one ID shared by every such request, and one W3C rejects.
 pub(crate) fn random<const N: usize>() -> [u8; N] {
     let mut bytes = [0; N];
-    let _ = getrandom::fill(&mut bytes);
+    if getrandom::fill(&mut bytes).is_err() {
+        for b in &mut bytes {
+            *b = (js_sys::Math::random() * 256.0) as u8;
+        }
+    }
     bytes
 }
 
@@ -301,11 +310,11 @@ async fn handle(
             let ip = header_str(&parts.headers, "cf-connecting-ip");
             let (auth, id) = (&api_auth, request_id.as_str());
             if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
-                return Ok(finish_sts(result, &parts, config, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
             }
             if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
             {
-                return Ok(finish_sts(result, &parts, config, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
             }
         }
     }
@@ -611,13 +620,25 @@ fn add_cache_control(
 
 /// A `/.sts` exchange answered before the gateway, with the cache policy, the
 /// CORS headers and the request id every gateway response carries — as `x-request-id`, and as
-/// `x-amzn-requestid`, the header AWS SDKs read it from.
+/// `x-amzn-requestid`, the header AWS SDKs read it from. A 5xx gets the
+/// `trace_id` line the gateway path writes, since this returns before it.
 fn finish_sts(
     (status, xml): (u16, String),
     parts: &RequestParts,
     config: &config::AppConfig,
     request_id: &str,
+    trace: &TraceContext,
 ) -> web_sys::Response {
+    if status >= 500 {
+        tracing::warn!(
+            status,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
+    }
     let response = add_cors(add_cache_control(
         GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys(),
         parts,
