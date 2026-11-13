@@ -177,7 +177,7 @@ Two signals no alert covers:
 
 `monitoring/monitors.json` lists every Cloudflare policy this repository owns. Each entry is the policy's API body (`name`, `alert_type`, `description`, `filters`, and optionally `enabled` and `alert_interval`) plus a `severity`. The script turns `severity` into delivery targets.
 
-Every name starts with `data-proxy: `. That prefix marks a policy as owned by the file: `apply.py` creates the missing ones, rewrites the existing ones and deletes owned policies no longer listed. Policies without the prefix are never touched.
+Every name starts with `data-proxy: `. That prefix marks a policy as owned by the file: `apply.py` creates the missing ones, updates those that differ from the file (comparing only the fields the file sets), leaves matching ones alone and deletes owned policies no longer listed. Policies without the prefix are never touched.
 
 SQL Monitors (`custom_analytics`) put their query, data source, detection method, comparison operator, windows and run interval in `filters`. The public API schema documents only some of those filters, and the format of `selectors`, which holds the query, is undocumented. So each SQL Monitor starts in the dashboard (**Alerts › Monitors**) and is then exported into the file. Name the dashboard draft *without* the `data-proxy: ` prefix: a prefixed policy that isn't yet in `monitors.json` is deleted by the next release.
 
@@ -203,7 +203,7 @@ Re-running it with an unchanged file changes nothing. To preview a run locally, 
 
 The job needs:
 
-- `CLOUDFLARE_API_TOKEN` with **Notifications Read/Write**, added to the existing deploy token;
+- the `CLOUDFLARE_ALERTS_API_TOKEN` repository secret: a Cloudflare API token for this account with only **Notifications Read/Write**. It's kept separate from the deploy token (`CLOUDFLARE_API_TOKEN`), which has no Notifications permission and doesn't need one;
 - the `ALERTS_SLACK_WEBHOOK_URL` repository secret, a Slack incoming webhook;
 - optionally, the `ALERTS_EMAIL` variable (comma-separated) for page-severity email.
 

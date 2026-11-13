@@ -6,11 +6,13 @@
     python3 monitoring/apply.py export NAME  # print a dashboard-made policy as a monitors.json entry
 
 Policies whose name starts with PREFIX belong to this file: apply creates the
-missing ones, rewrites the existing ones and deletes those no longer listed.
+missing ones, updates those that differ from the file, leaves matching ones
+alone and deletes those no longer listed.
 Anything else on the account, such as the auto-created budget alert, is left
 alone.
 
-Env: CLOUDFLARE_API_TOKEN (Notifications Read/Write), CLOUDFLARE_ACCOUNT_ID,
+Env: CLOUDFLARE_API_TOKEN (Notifications Read/Write only; CI passes the
+CLOUDFLARE_ALERTS_API_TOKEN secret), CLOUDFLARE_ACCOUNT_ID,
 ALERTS_SLACK_WEBHOOK_URL (every policy), ALERTS_EMAIL (comma-separated,
 added to "page" policies; optional).
 """
@@ -44,11 +46,44 @@ def load_definitions(path=DEFINITIONS):
     return policies
 
 
-def plan(definitions, existing):
-    """Actions that bring `existing` (name -> id, ours only) in line with `definitions`."""
-    wanted = {d["name"] for d in definitions}
-    actions = [("update", d, existing[d["name"]]) if d["name"] in existing else ("create", d, None) for d in definitions]
-    actions += [("delete", {"name": name}, pid) for name, pid in sorted(existing.items()) if name not in wanted]
+def comparable(policy, fields):
+    """`fields` of a policy, normalised so a request body and the API's copy compare equal.
+
+    Filter values and mechanism ids are sorted, and empty ones dropped, because
+    their order and empty defaults carry no meaning. Anything else the API adds
+    (ids, timestamps, mechanism names) is ignored.
+    """
+    out = {}
+    for field in fields:
+        value = policy.get(field)
+        if field == "filters":
+            value = {k: sorted(v) if isinstance(v, list) else v for k, v in (value or {}).items() if v}
+        elif field == "mechanisms":
+            value = {k: sorted(m["id"] for m in v) for k, v in (value or {}).items() if v}
+        elif field == "description":
+            value = value or ""
+        out[field] = value
+    return out
+
+
+def plan(bodies, existing):
+    """Actions that bring `existing` (name -> API policy, ours only) in line with `bodies` (name -> request body).
+
+    Only the fields a body sets are compared, so a default the API fills in
+    (such as alert_interval) never reads as drift. A difference the comparison
+    can't explain is an update: the cost of a wrong guess is a rewrite, never a
+    skipped change.
+    """
+    actions = []
+    for name, body in bodies.items():
+        current = existing.get(name)
+        if current is None:
+            actions.append(("create", name, None))
+        elif comparable(body, body) == comparable(current, body):
+            actions.append(("unchanged", name, current["id"]))
+        else:
+            actions.append(("update", name, current["id"]))
+    actions += [("delete", name, p["id"]) for name, p in sorted(existing.items()) if name not in bodies]
     return actions
 
 
@@ -88,15 +123,18 @@ class Cloudflare:
             # A name -> id map would silently keep one and leave the rest
             # firing forever, untouched by apply.
             raise SystemExit(f"duplicate owned policies on the account, delete the extras: {dupes}")
-        return {p["name"]: p["id"] for p in ours}
+        return {p["name"]: p for p in ours}
+
+    def webhook_id(self):
+        return next((h["id"] for h in self("GET", "/destinations/webhooks") or [] if h["name"] == WEBHOOK_NAME), None)
 
     def upsert_webhook(self, url):
-        hooks = {h["name"]: h["id"] for h in self("GET", "/destinations/webhooks") or []}
+        hook_id = self.webhook_id()
         body = {"name": WEBHOOK_NAME, "url": url}
-        if WEBHOOK_NAME in hooks:
+        if hook_id:
             # The URL is write-only, so it can't be compared; rewriting it is idempotent.
-            self("PUT", f"/destinations/webhooks/{hooks[WEBHOOK_NAME]}", body)
-            return hooks[WEBHOOK_NAME]
+            self("PUT", f"/destinations/webhooks/{hook_id}", body)
+            return hook_id
         return self("POST", "/destinations/webhooks", body)["id"]
 
 
@@ -118,20 +156,23 @@ def main(argv):
         print(json.dumps(entry, indent=2))
         return
 
-    actions = plan(definitions, cf.our_policies())
-    for action, definition, _ in actions:
-        print(f"{action:7} {definition['name']}")
+    # `plan` only reads, so it compares against the webhook as it stands; with
+    # none yet, every policy differs and reads as create/update, as apply would.
+    webhook_id = cf.upsert_webhook(os.environ["ALERTS_SLACK_WEBHOOK_URL"]) if cmd == "apply" else cf.webhook_id()
+    emails = [e.strip() for e in os.environ.get("ALERTS_EMAIL", "").split(",") if e.strip()]
+    bodies = {d["name"]: body_for(d, webhook_id, emails) for d in definitions}
+    actions = plan(bodies, cf.our_policies())
+    for action, name, _ in actions:
+        print(f"{action:9} {name}")
     if cmd == "plan":
         return
 
-    webhook_id = cf.upsert_webhook(os.environ["ALERTS_SLACK_WEBHOOK_URL"])
-    emails = [e.strip() for e in os.environ.get("ALERTS_EMAIL", "").split(",") if e.strip()]
-    for action, definition, policy_id in actions:
+    for action, name, policy_id in actions:
         if action == "create":
-            cf("POST", "/policies", body_for(definition, webhook_id, emails))
+            cf("POST", "/policies", bodies[name])
         elif action == "update":
-            cf("PUT", f"/policies/{policy_id}", body_for(definition, webhook_id, emails))
-        else:
+            cf("PUT", f"/policies/{policy_id}", bodies[name])
+        elif action == "delete":
             cf("DELETE", f"/policies/{policy_id}")
 
 

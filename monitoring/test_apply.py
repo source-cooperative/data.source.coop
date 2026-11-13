@@ -7,18 +7,45 @@ from pathlib import Path
 from apply import PREFIX, body_for, load_definitions, plan
 
 
+A, B, STALE = PREFIX + "a", PREFIX + "b", PREFIX + "stale"
+BODY = {
+    "name": A,
+    "alert_type": "incident_alert",
+    "description": "d",
+    "enabled": True,
+    "filters": {"incident_impact": ["MAJOR", "CRITICAL"]},
+    "mechanisms": {"webhooks": [{"id": "w"}], "email": [{"id": "ops@x"}]},
+}
+# How the API returns the same policy: extra keys, reordered values, empty mechanisms.
+API_COPY = dict(
+    BODY,
+    id="id-a",
+    created="2026-11-13T00:00:00Z",
+    alert_interval="1h",
+    filters={"incident_impact": ["CRITICAL", "MAJOR"], "zones": []},
+    mechanisms={"email": [{"id": "ops@x"}], "webhooks": [{"id": "w", "name": "data-proxy alerts (Slack)"}], "pagerduty": []},
+)
+
+
 def test_plan_creates_updates_and_prunes_only_ours():
-    defs = [{"name": PREFIX + "a"}, {"name": PREFIX + "b"}]
-    existing = {PREFIX + "a": "id-a", PREFIX + "stale": "id-s"}
-    assert plan(defs, existing) == [
-        ("update", defs[0], "id-a"),
-        ("create", defs[1], None),
-        ("delete", {"name": PREFIX + "stale"}, "id-s"),
+    stale = {"id": "id-s", "name": STALE}
+    assert plan({A: BODY, B: dict(BODY, name=B)}, {A: API_COPY, STALE: stale}) == [
+        ("unchanged", A, "id-a"),
+        ("create", B, None),
+        ("delete", STALE, "id-s"),
     ]
-    assert plan(defs, {PREFIX + "a": "id-a", PREFIX + "b": "id-b"}) == [
-        ("update", defs[0], "id-a"),
-        ("update", defs[1], "id-b"),
-    ]
+
+
+def test_plan_ignores_api_noise_but_not_real_changes():
+    assert plan({A: BODY}, {A: API_COPY}) == [("unchanged", A, "id-a")]
+    for changed in (
+        {"description": "other"},
+        {"enabled": False},
+        {"filters": {"incident_impact": ["MAJOR"]}},
+        {"mechanisms": {"webhooks": [{"id": "new-webhook"}]}},
+        {"alert_interval": "24h"},
+    ):
+        assert plan({A: dict(BODY, **changed)}, {A: API_COPY}) == [("update", A, "id-a")], changed
 
 
 def test_email_only_on_page_and_severity_never_sent():
