@@ -82,6 +82,29 @@ Staging samples logs, invocation logs and traces at 100%. At ~2M requests a mont
 
 The live-globe Worker isn't critical infrastructure and stays without an `[observability]` block. Cloudflare's built-in Worker metrics are free and already show its request and error counts.
 
+### Tracing across source.coop and the proxy is wanted but not yet possible
+
+We'd like to follow a request across both applications in one trace. Traffic crosses between them in both directions:
+
+- `source.coop`'s server calls the proxy for object browsing and `/.sts`;
+- the proxy calls the Source API on `source.coop` whenever its cache misses.
+
+A failure on one side, such as the Source API rejecting the proxy, is often only explained by the other.
+
+Two Cloudflare limits stand in the way:
+
+- **Workers traces don't link to outside traces.** Cloudflare lists W3C trace-context propagation between Workers and services outside Cloudflare as a known limitation, planned but not available. The proxy's spans can't join a trace that started on Vercel, or pass one on to the Source API.
+- **Cloudflare can't receive outside traces.** Cloudflare Observability exports OpenTelemetry but documents no way to receive it, so Vercel's spans can't be stored next to the proxy's. A small Worker could accept them and write them as log lines: searchable by trace ID, but with no combined trace view, and with ingestion code for us to maintain. One combined view would instead need a third-party tool receiving traces from both sides, which this ADR moves away from.
+
+The interim plan is to share a trace ID rather than a trace:
+
+- `source.coop` adds `@vercel/otel`, so Next.js sends and continues W3C `traceparent` headers;
+- the proxy passes the incoming `traceparent` on to its Source API calls, adds the trace ID to its WARN/ERROR lines, and returns it to clients as `x-source-trace-id`.
+
+A trace in Vercel then covers the page and the API calls, with the proxy as a gap whose log lines carry the same ID. The two sides also sample independently: the proxy traces 1% of requests at random, so a Vercel trace rarely has proxy spans. Its WARN/ERROR lines are always kept, so failures can always be looked up by ID.
+
+Revisit when Cloudflare ships trace-context propagation for Workers. The proxy's spans would then join the trace directly, and choosing one place to view both sides becomes a real decision.
+
 ### Alerts are defined in the repository and applied on release
 
 Alerts are Cloudflare notification policies, defined in `monitoring/monitors.json` and applied by `monitoring/apply.py` when a release deploys. The outside uptime check, which must not depend on Cloudflare, runs from a separate repository, `status.source.coop`, using Upptime, which also publishes the public status page. The [Monitors](#monitors) section lists each alert, what triggers it and how it is deployed.
