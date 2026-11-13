@@ -11,8 +11,7 @@ alone and deletes those no longer listed.
 Anything else on the account, such as the auto-created budget alert, is left
 alone.
 
-Env: CLOUDFLARE_API_TOKEN (Notifications Read/Write only; CI passes the
-CLOUDFLARE_ALERTS_API_TOKEN secret), CLOUDFLARE_ACCOUNT_ID,
+Env: CLOUDFLARE_API_TOKEN (needs Account > Notifications > Edit), CLOUDFLARE_ACCOUNT_ID,
 ALERTS_SLACK_WEBHOOK_URL (every policy), ALERTS_EMAIL (comma-separated,
 added to "page" policies; optional).
 """

@@ -203,7 +203,7 @@ Re-running it with an unchanged file changes nothing. To preview a run locally, 
 
 The job needs:
 
-- the `CLOUDFLARE_ALERTS_API_TOKEN` repository secret: a Cloudflare API token for this account with only **Notifications Read/Write**. It's kept separate from the deploy token (`CLOUDFLARE_API_TOKEN`), which has no Notifications permission and doesn't need one;
+- **Account › Notifications › Edit** added to the existing deploy token, `CLOUDFLARE_API_TOKEN`. That token can already deploy the production Worker and replace its secrets, so a separate alerts-only token would add a secret to manage without reducing what a leaked token could do;
 - the `ALERTS_SLACK_WEBHOOK_URL` repository secret, a Slack incoming webhook;
 - optionally, the `ALERTS_EMAIL` variable (comma-separated) for page-severity email.
 

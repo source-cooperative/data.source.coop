@@ -36,9 +36,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 monitoring/apply.py apply
         env:
-          # Its own token, scoped to Notifications only: the deploy token
-          # doesn't carry that permission and shouldn't need to.
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_ALERTS_API_TOKEN }}
+          # The deploy token, which also needs Account › Notifications › Edit.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ALERTS_SLACK_WEBHOOK_URL: ${{ secrets.ALERTS_SLACK_WEBHOOK_URL }}
           ALERTS_EMAIL: ${{ vars.ALERTS_EMAIL }}
