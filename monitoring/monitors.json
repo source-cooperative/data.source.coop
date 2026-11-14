@@ -32,15 +32,15 @@
       "name": "data-proxy: M3 Access denied",
       "severity": "notify",
       "alert_type": "custom_analytics",
-      "description": "More than 60% of product requests answered 403 or 404 over 15 minutes (normally ~28%): the Source API or a bucket is refusing the proxy. See ADR-015, Monitors.",
+      "description": "More than 0.5% of product requests answered 403 over 15 minutes (normally at most 0.05%): the Source API or a bucket is refusing the proxy. 404s are left out because missing keys are routine for some products. See ADR-015, Monitors.",
       "alert_interval": "24h",
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT countIf(\"double2\" = 403 OR \"double2\" = 404) * 100.0 / COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+          "SELECT countIf(\"double2\" = 403) * 100.0 / COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
         ],
         "alert_trigger_preferences": ["threshold"],
-        "alert_trigger_preferences_value": ["60"],
+        "alert_trigger_preferences_value": ["0.5"],
         "alert_trigger_preferences_operator": [">"],
         "alert_trigger_preferences_short_window": ["15m"],
         "alert_trigger_preferences_minimum_threshold": ["1000"],

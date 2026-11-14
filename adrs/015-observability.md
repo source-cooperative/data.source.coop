@@ -115,7 +115,7 @@ Alerts are Cloudflare notification policies, defined in `monitoring/monitors.jso
 
 ### How alerts reach operators
 
-Every alert posts to a Slack channel through one Cloudflare webhook destination, **data-proxy alerts (Slack)**, whose URL is the `ALERTS_SLACK_WEBHOOK_URL` repository secret. Alerts have one of two severities:
+Every alert posts to a Slack channel through one Cloudflare webhook destination, **#devops (Slack)**, whose URL is the `ALERTS_SLACK_WEBHOOK_URL` organization secret. The account's budget alert uses the same destination. Alerts have one of two severities:
 
 - **page:** users are affected now. Slack, plus email to the addresses in the `ALERTS_EMAIL` variable.
 - **notify:** something looks wrong. Slack only.
@@ -133,7 +133,7 @@ An alert does not repeat for every failed request:
 |---|---|---|---|---|---|
 | M1 | Worker issues | page | Workers Issues (`workers_observability_real_time_issue`) | a new issue group opens | in `monitors.json` |
 | M2 | Error-rate SLO | page | Analytics Engine: requests with `double2 >= 500` against all requests | under 99.9% success over both the last 10 min and the last hour, with at least 1,000 requests (today: ~99.99%) | in `monitors.json` |
-| M3 | Access denied | notify | Analytics Engine: share of requests answering 403 or 404 | above 60% over 15 min (today: ~28%) | in `monitors.json` |
+| M3 | Access denied | notify | Analytics Engine: share of requests answering 403 | above 0.5% over 15 min (normally at most 0.05% in any hour) | in `monitors.json` |
 | M4 | Outside uptime check and status page | page | Upptime in `status.source.coop`, every 5 min from GitHub: the website, the proxy, a real object read, the proxy's OIDC discovery document and Ory sign-in | a check fails, returns an unexpected body, or exceeds 5 s | in `status.source.coop` |
 | M5 | Cloudflare incidents | notify | Cloudflare's incident notifications (`incident_alert`), major and critical only | Cloudflare declares an incident | in `monitors.json` |
 | M6 | Credential exchange failures | page | Workers Logs (`logs.workersLogs`): WARN/ERROR lines on `/.sts`, excluding `rate_limited` | more than 50 in 10 min (today: none) | in `monitors.json` |
@@ -141,6 +141,8 @@ An alert does not repeat for every failed request:
 | M8 | Monitoring health | notify | two policies: proxy lines in Workers Logs, and Analytics Engine row count | more than 50,000 log lines in an hour (today: ~1,000), or fewer than 50,000 rows in 15 min (today: ~480,000) | in `monitors.json` |
 
 M2, M3, M6, M7 and M8 are SQL Monitors (`custom_analytics`). Each runs one query on a schedule and compares a single number, so none of them can break results down by product or by Cloudflare location. M2, M3 and M7 query Analytics Engine, which deliberately skips `/.well-known` and `/.sts` (ADR-008); M6 exists because of that gap. Thresholds are set from production values measured on 2026-11-14 (the "today" figures above); revisit them as traffic changes.
+
+M3 counts only 403s. 404s are routine for some products: on 2026-11-14 one product answered 80% 404s across ~710k requests an hour, presumably clients probing for keys that don't exist, and it alone made up most of the overall ~28% 403/404 share. 403s are almost absent (at most 0.05% of requests in any hour over the previous day), so a single product being refused shows up overall once it carries more than ~0.5% of traffic. Grouping by product (`index1`) was considered and rejected: per-product 404 shares range from 0% to over 99% in normal operation, so no fixed per-product threshold works.
 
 The account's existing billing budget alert is left alone. It covers all of the account's spend, including Workers request charges, so it can't serve as a telemetry budget; M8 watches telemetry directly.
 
@@ -152,11 +154,11 @@ The account's existing billing budget alert is left alone. It covers all of the 
 
 **Vercel's Source API is down or unreachable.** Source API calls fail and the proxy answers 500 (`Internal: API returned 503 for …`), logging the cause at WARN. Answers are cached for 60 s (permissions) to 5 min (products and connections) per Cloudflare location, so the error rate climbs as caches expire. **M1** and **M2** fire, and **M7** may as well, since every cache miss gets slower.
 
-**Vercel rejects the proxy.** If the Source API answers 401 or 403, for example after a signing-key mismatch, the proxy returns 403 `AccessDenied`; a 404 for everything becomes `NoSuchBucket`. Neither is a 5xx or an Issue. **M3** fires: every product's requests turn to 403 or 404 at once, so the overall share jumps. Logging unexpected Source API 401/403/404 answers at ERROR would let M1 catch this directly.
+**Vercel rejects the proxy.** If the Source API answers 401 or 403, for example after a signing-key mismatch, the proxy returns 403 `AccessDenied`; a 404 for everything becomes `NoSuchBucket`. Neither is a 5xx or an Issue. A 401/403 from the Source API fires **M3**: every product's requests turn to 403 at once. A 404 for everything does not, because M3 leaves out 404s. Logging unexpected Source API 401/403/404 answers at ERROR would let M1 catch this directly.
 
 **AWS refuses the role.** If the IAM role behind a data connection is deleted, or its trust policy no longer admits the proxy, AWS STS returns `AccessDenied`. The proxy logs ERROR "backend STS rejected the federation exchange" with the STS code and answers 403. Other STS errors, such as the OIDC provider being removed from AWS, answer 502. **M1** fires either way. Credentials are cached until they expire, so this can show up to an hour after the change.
 
-**The role loses its S3 permissions, or a public bucket is made private.** AWS still issues credentials, so S3 itself answers 403, and the proxy relays it unchanged. There is no log line and no Issue. M3 watches the share across all products, so one product going dark doesn't move it; this case is currently unalerted, unless that product is a large share of traffic. Listing requests go through the storage library instead and probably surface as 503, which also fires M1.
+**The role loses its S3 permissions, or a public bucket is made private.** AWS still issues credentials, so S3 itself answers 403, and the proxy relays it unchanged. There is no log line and no Issue. **M3** fires if that product carries more than ~0.5% of traffic, because 403s are otherwise almost absent. A product with less traffic than that goes unalerted. Listing requests go through the storage library instead and probably surface as 503, which also fires M1.
 
 **One Cloudflare location fails.** Anycast routing sends clients to the next location, so no alert fires and users rarely notice. If a location stays up but breaks, for example its outbound DNS fails (the 530s fixed in #212), the proxy returns 5xx carrying a `cf-ray` rather than `server: AmazonS3`, and **M1** and **M2** fire. Analytics Engine doesn't record the location, so the WARN lines are what point to one.
 

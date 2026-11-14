@@ -24,7 +24,8 @@ import urllib.request
 from pathlib import Path
 
 PREFIX = "data-proxy: "
-WEBHOOK_NAME = "data-proxy alerts (Slack)"
+# The account's one Slack destination, also used by the budget alert.
+WEBHOOK_NAME = "#devops (Slack)"
 SEVERITIES = ("page", "notify")
 # Fields a policy is defined by; everything else the API returns (id,
 # mechanisms, timestamps) is derived or account state.
