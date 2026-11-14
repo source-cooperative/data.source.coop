@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.4](https://github.com/source-cooperative/data.source.coop/compare/v2.5.3...v2.5.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **monitoring:** stay within Cloudflare's five SQL Monitor limit ([#274](https://github.com/source-cooperative/data.source.coop/issues/274)) ([b00640a](https://github.com/source-cooperative/data.source.coop/commit/b00640a4dc48e723fa44e35df4bb974bc04eb60d))
+
 ## [2.5.3](https://github.com/source-cooperative/data.source.coop/compare/v2.5.2...v2.5.3) (2026-11-14)
 
 
