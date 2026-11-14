@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.5.3](https://github.com/source-cooperative/data.source.coop/compare/v2.5.2...v2.5.3) (2026-11-14)
+
+
+### Features
+
+* **monitoring:** define the SQL monitors M2, M3, M6, M7 and M8 ([#271](https://github.com/source-cooperative/data.source.coop/issues/271)) ([d2ea66a](https://github.com/source-cooperative/data.source.coop/commit/d2ea66abc84dad8527ae64f8757f75171cdf5f31))
+
+
+### Miscellaneous Chores
+
+* release 2.5.3 ([488cd00](https://github.com/source-cooperative/data.source.coop/commit/488cd0062321c97db18483e864b4254f0d07f600))
+
 ## [2.5.2](https://github.com/source-cooperative/data.source.coop/compare/v2.5.1...v2.5.2) (2026-11-13)
 
 
