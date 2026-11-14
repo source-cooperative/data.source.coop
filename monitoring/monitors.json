@@ -85,24 +85,6 @@
       }
     },
     {
-      "name": "data-proxy: M8 Log volume",
-      "severity": "notify",
-      "alert_type": "custom_analytics",
-      "description": "More than 50,000 proxy log lines in an hour (normally ~1,000): log ingestion, which is billed per GB, is running away. See ADR-015, Monitors.",
-      "alert_interval": "24h",
-      "filters": {
-        "source": ["sql_api"],
-        "selectors": [
-          "SELECT COUNT(*) AS \"value\"\nFROM \"logs\".\"workersLogs\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"scriptName\" = 'source-data-proxy'))"
-        ],
-        "alert_trigger_preferences": ["threshold"],
-        "alert_trigger_preferences_value": ["50000"],
-        "alert_trigger_preferences_operator": [">"],
-        "alert_trigger_preferences_short_window": ["1h"],
-        "execution_interval": ["5m"]
-      }
-    },
-    {
       "name": "data-proxy: M8 Analytics rows",
       "severity": "notify",
       "alert_type": "custom_analytics",

@@ -27,6 +27,9 @@ PREFIX = "data-proxy: "
 # The account's one Slack destination, also used by the budget alert.
 WEBHOOK_NAME = "#devops (Slack)"
 SEVERITIES = ("page", "notify")
+# Cloudflare's per-account cap on SQL Monitors (API error 17204). Monitors made
+# in the dashboard count toward it too.
+MAX_SQL_MONITORS = 5
 # Fields a policy is defined by; everything else the API returns (id,
 # mechanisms, timestamps) is derived or account state.
 POLICY_FIELDS = ("name", "alert_type", "description", "enabled", "alert_interval", "filters")
@@ -43,6 +46,9 @@ def load_definitions(path=DEFINITIONS):
             raise SystemExit(f"{p['name']!r}: severity must be one of {SEVERITIES}")
     if len(names) != len(set(names)):
         raise SystemExit("policy names must be unique")
+    sql_monitors = sum(p.get("alert_type") == "custom_analytics" for p in policies)
+    if sql_monitors > MAX_SQL_MONITORS:
+        raise SystemExit(f"{sql_monitors} custom_analytics policies; Cloudflare allows {MAX_SQL_MONITORS} per account")
     return policies
 
 
