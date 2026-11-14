@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from apply import PREFIX, body_for, load_definitions, plan
+from apply import MAX_SQL_MONITORS, PREFIX,body_for, load_definitions, plan
 
 
 A, B, STALE = PREFIX + "a", PREFIX + "b", PREFIX + "stale"
@@ -68,6 +68,9 @@ def test_definitions_are_validated():
         "a missing name": [{"severity": "page"}],
         "an unknown severity": [dict(ok, severity="urgent")],
         "a duplicate name": [ok, dict(ok)],
+        "more SQL Monitors than Cloudflare allows": [
+            dict(ok, name=f"{PREFIX}{i}", alert_type="custom_analytics") for i in range(MAX_SQL_MONITORS + 1)
+        ],
     }
     with tempfile.TemporaryDirectory() as d:
         bad = Path(d, "m.json")

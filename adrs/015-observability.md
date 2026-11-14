@@ -138,13 +138,13 @@ An alert does not repeat for every failed request:
 | M5 | Cloudflare incidents | notify | Cloudflare's incident notifications (`incident_alert`), major and critical only | Cloudflare declares an incident | in `monitors.json` |
 | M6 | Credential exchange failures | page | Workers Logs (`logs.workersLogs`): WARN/ERROR lines on `/.sts`, excluding `rate_limited` | more than 50 in 10 min (today: none) | in `monitors.json` |
 | M7 | Latency | notify | Analytics Engine: p99 of `double3` (`duration_ms`), weighted by `sampleInterval` | above 5 s over 15 min (today: ~0.9 s) | in `monitors.json` |
-| M8 | Monitoring health | notify | two policies: proxy lines in Workers Logs, and Analytics Engine row count | more than 50,000 log lines in an hour (today: ~1,000), or fewer than 50,000 rows in 15 min (today: ~480,000) | in `monitors.json` |
+| M8 | Analytics rows | notify | Analytics Engine row count | fewer than 50,000 rows in 15 min (today: ~480,000) | in `monitors.json` |
 
-M2, M3, M6, M7 and M8 are SQL Monitors (`custom_analytics`). Each runs one query on a schedule and compares a single number, so none of them can break results down by product or by Cloudflare location. M2, M3 and M7 query Analytics Engine, which deliberately skips `/.well-known` and `/.sts` (ADR-008); M6 exists because of that gap. Thresholds are set from production values measured on 2026-11-14 (the "today" figures above); revisit them as traffic changes.
+M2, M3, M6, M7 and M8 are SQL Monitors (`custom_analytics`). Cloudflare allows at most five per account, counting any made in the dashboard, and `apply.py` refuses a file with more. Those five slots went to the alerts nothing else replaces: a sixth, M8 Log volume (proxy log lines in Workers Logs), was dropped, so a runaway in billable log lines is caught only by the account's billing budget alert, which also posts to `#devops (Slack)`. Each runs one query on a schedule and compares a single number, so none of them can break results down by product or by Cloudflare location. M2, M3 and M7 query Analytics Engine, which deliberately skips `/.well-known` and `/.sts` (ADR-008); M6 exists because of that gap. Thresholds are set from production values measured on 2026-11-14 (the "today" figures above); revisit them as traffic changes.
 
 M3 counts only 403s. 404s are routine for some products: on 2026-11-14 one product answered 80% 404s across ~710k requests an hour, presumably clients probing for keys that don't exist, and it alone made up most of the overall ~28% 403/404 share. 403s are almost absent (at most 0.05% of requests in any hour over the previous day), so a single product being refused shows up overall once it carries more than ~0.5% of traffic. Grouping by product (`index1`) was considered and rejected: per-product 404 shares range from 0% to over 99% in normal operation, so no fixed per-product threshold works.
 
-The account's existing billing budget alert is left alone. It covers all of the account's spend, including Workers request charges, so it can't serve as a telemetry budget; M8 watches telemetry directly.
+The account's existing billing budget alert is left alone; it isn't a `data-proxy:` policy. It covers all of the account's spend, including Workers request charges, so it's only a coarse signal for telemetry cost, but it is the only one now that log volume has no Monitor.
 
 ### What triggers them
 
@@ -168,7 +168,7 @@ The account's existing billing budget alert is left alone. It covers all of the 
 
 **Slow but not failing.** S3 in one region slows down, or a deploy adds contention on a hot path. **M7** fires.
 
-**Monitoring breaks or overspends.** A flood of junk `/.sts` keys logs a WARN per request, or the Analytics Engine binding stops working after a config change. **M8** fires.
+**Monitoring breaks or overspends.** If the Analytics Engine binding stops writing after a config change, M2, M3 and M7 go quiet rather than alerting, and **M8** fires. A flood of junk `/.sts` keys that logs a WARN per request has no dedicated alert: it shows up in spend, and in the billing budget alert.
 
 Two signals no alert covers:
 
@@ -243,7 +243,7 @@ Two GitHub limits apply: scheduled workflows can start a few minutes late, and t
 - **Retention is 7 days and still set by the vendor.** ADR-008's position that retention isn't owned here still holds, now for a single sink.
 - **Analytics Engine is unbilled today, and this design leans on it harder.** If billing starts at the published rates, ~986M writes a month cost ~$244 a month. At that point, revisit sampling at the binding or by product.
 - **Traffic growth scales trace volume linearly.** At about 2× today's traffic, traces alone exceed the included 50 GB by enough to matter. Lower the trace rate before raising the budget.
-- **Log volume is unbounded.** At 100% sampling, log bytes follow the number of `WARN` lines, not traffic. An incident that fails every request, or a flood of refused `/.sts` exchanges (each refusal, including `rate_limited`, logs a `WARN`), would be billed line for line. Alert on log ingestion, and drop the log rate during such an incident.
+- **Log volume is unbounded.** At 100% sampling, log bytes follow the number of `WARN` lines, not traffic. An incident that fails every request, or a flood of refused `/.sts` exchanges (each refusal, including `rate_limited`, logs a `WARN`), would be billed line for line. No monitor watches log volume (see the five-Monitor limit under [The alerts](#the-alerts)); if the billing budget alert or the dashboard shows it, drop the log rate during such an incident.
 - **Monitors and Issues are both beta.** Their API shape and pricing can change under us.
 
 ---
