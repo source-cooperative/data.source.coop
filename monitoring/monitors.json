@@ -8,6 +8,119 @@
       "filters": {}
     },
     {
+      "name": "data-proxy: M2 Error-rate SLO",
+      "severity": "page",
+      "alert_type": "custom_analytics",
+      "description": "Fewer than 99.9% of product requests succeeded (status < 500) over both the last 10 minutes and the last hour. See ADR-015, Monitors.",
+      "alert_interval": "1h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"double2\" >= 500))",
+          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+        ],
+        "alert_trigger_preferences": ["slo"],
+        "alert_trigger_preferences_value": ["99.9"],
+        "alert_trigger_preferences_operator": ["<"],
+        "alert_trigger_preferences_short_window": ["10m"],
+        "alert_trigger_preferences_long_window": ["1h"],
+        "alert_trigger_preferences_minimum_threshold": ["1000"],
+        "execution_interval": ["1m"]
+      }
+    },
+    {
+      "name": "data-proxy: M3 Access denied",
+      "severity": "notify",
+      "alert_type": "custom_analytics",
+      "description": "More than 60% of product requests answered 403 or 404 over 15 minutes (normally ~28%): the Source API or a bucket is refusing the proxy. See ADR-015, Monitors.",
+      "alert_interval": "24h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT countIf(\"double2\" = 403 OR \"double2\" = 404) * 100.0 / COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+        ],
+        "alert_trigger_preferences": ["threshold"],
+        "alert_trigger_preferences_value": ["60"],
+        "alert_trigger_preferences_operator": [">"],
+        "alert_trigger_preferences_short_window": ["15m"],
+        "alert_trigger_preferences_minimum_threshold": ["1000"],
+        "execution_interval": ["5m"]
+      }
+    },
+    {
+      "name": "data-proxy: M6 Credential exchange failures",
+      "severity": "page",
+      "alert_type": "custom_analytics",
+      "description": "More than 50 WARN/ERROR lines on /.sts in 10 minutes, excluding rate-limited refusals (normally none): users and the CLI may not be getting credentials. See ADR-015, Monitors.",
+      "alert_interval": "1h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT COUNT(*) AS \"value\"\nFROM \"logs\".\"workersLogs\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"scriptName\" = 'source-data-proxy') AND (\"url\" LIKE '%/.sts%') AND (\"level\" = 'warn' OR \"level\" = 'error') AND (\"message\" NOT LIKE '%rate_limited%'))"
+        ],
+        "alert_trigger_preferences": ["threshold"],
+        "alert_trigger_preferences_value": ["50"],
+        "alert_trigger_preferences_operator": [">"],
+        "alert_trigger_preferences_short_window": ["10m"],
+        "execution_interval": ["1m"]
+      }
+    },
+    {
+      "name": "data-proxy: M7 Latency",
+      "severity": "notify",
+      "alert_type": "custom_analytics",
+      "description": "p99 product-request duration above 5 s over 15 minutes (normally under 1 s). See ADR-015, Monitors.",
+      "alert_interval": "24h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT quantileWeighted(0.99, \"double3\", \"sampleInterval\") AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+        ],
+        "alert_trigger_preferences": ["threshold"],
+        "alert_trigger_preferences_value": ["5000"],
+        "alert_trigger_preferences_operator": [">"],
+        "alert_trigger_preferences_short_window": ["15m"],
+        "alert_trigger_preferences_minimum_threshold": ["1000"],
+        "execution_interval": ["5m"]
+      }
+    },
+    {
+      "name": "data-proxy: M8 Log volume",
+      "severity": "notify",
+      "alert_type": "custom_analytics",
+      "description": "More than 50,000 proxy log lines in an hour (normally ~1,000): log ingestion, which is billed per GB, is running away. See ADR-015, Monitors.",
+      "alert_interval": "24h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT COUNT(*) AS \"value\"\nFROM \"logs\".\"workersLogs\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"scriptName\" = 'source-data-proxy'))"
+        ],
+        "alert_trigger_preferences": ["threshold"],
+        "alert_trigger_preferences_value": ["50000"],
+        "alert_trigger_preferences_operator": [">"],
+        "alert_trigger_preferences_short_window": ["1h"],
+        "execution_interval": ["5m"]
+      }
+    },
+    {
+      "name": "data-proxy: M8 Analytics rows",
+      "severity": "notify",
+      "alert_type": "custom_analytics",
+      "description": "Fewer than 50,000 Analytics Engine rows in 15 minutes (normally ~480,000): the ANALYTICS binding stopped writing, or traffic collapsed. See ADR-015, Monitors.",
+      "alert_interval": "24h",
+      "filters": {
+        "source": ["sql_api"],
+        "selectors": [
+          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+        ],
+        "alert_trigger_preferences": ["threshold"],
+        "alert_trigger_preferences_value": ["50000"],
+        "alert_trigger_preferences_operator": ["<"],
+        "alert_trigger_preferences_short_window": ["15m"],
+        "execution_interval": ["5m"]
+      }
+    },
+    {
       "name": "data-proxy: M5 Cloudflare incidents",
       "severity": "notify",
       "alert_type": "incident_alert",
