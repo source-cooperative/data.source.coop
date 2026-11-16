@@ -61,6 +61,8 @@ Raw client IPs do not enter the dataset. Each is replaced by `HMAC-SHA256(salt, 
 
 **There is no retention policy, and the salt is not rotated.** Both are deliberate positions rather than open questions.
 
+> **Amended by ADR-015 (Observability Sampling, Sinks and Alerting).** Axiom is no longer a sink. Workers logs and traces are kept only in Cloudflare Observability, for its 7 days; retention is still set by the vendor rather than here.
+
 Retention is whatever each sink applies by default: Analytics Engine keeps data points for its product-defined window, and Axiom retains logs and traces per the account's plan. Neither is configured in this repository, and nothing here shortens or extends them. The practical consequence is that the retention period is set by the vendors and can change without a change on our side.
 
 `IP_HASH_SALT` is set once per environment and left. The hashed IP is therefore a **stable pseudonymous identifier for the full life of the retained data** — the same client hashes to the same value across the whole dataset, which is what makes distinct-client counting work at all. Rotation would break that continuity, and counting distinct clients is the reason the field exists.
@@ -85,6 +87,8 @@ Broadcasting a coarse datacenter location for a public-product read is a deliber
 ### Structured Operational Logging
 
 Distinct from analytics, and aimed at operators: requests emit a tracing span, and 5xx responses re-emit at `WARN` with the span fields inlined, since production runs at `LOG_LEVEL=WARN` and would otherwise record a server error with no context. Those warnings deliberately include relayed upstream response headers (`server`, `cf-ray`, `x-amz-request-id`), which is what distinguishes a genuine upstream 5xx from one minted inside Cloudflare's egress path or synthesised by the runtime with no upstream reply at all.
+
+> **Amended by ADR-015 (Observability Sampling, Sinks and Alerting).** Production now keeps every log line the proxy writes, with invocation logs off; samples traces at 1%; redacts query strings; and exports nothing. Staging captures everything. The paragraph below describes the configuration before 2026-10-29.
 
 In production, logs and traces ship to Axiom with head sampling; staging is configured with no destinations, so nothing leaves it. Analytics data points are unsampled at the binding and sampled by Analytics Engine at the index.
 
