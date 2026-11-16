@@ -125,17 +125,22 @@ fn strip_range_unit_drops_bytes_prefix() {
 fn access_key_id_from_authorization_header() {
     let auth = "AWS4-HMAC-SHA256 Credential=STSPRXYABC123/20261116/us-east-1/s3/aws4_request, \
                 SignedHeaders=host;x-amz-date, Signature=deadbeef";
-    assert_eq!(access_key_id(auth, None), "STSPRXYABC123");
+    assert_eq!(access_key_id(auth), "STSPRXYABC123");
+}
+
+/// The `Authorization` header is not signed, so text a client adds to it must
+/// not change the recorded key: only the `Credential=` part multistore verified
+/// counts.
+#[test]
+fn access_key_id_ignores_credential_text_outside_the_credential_part() {
+    let auth = "AWS4-HMAC-SHA256 X=Credential=OTHERKEY, \
+                Credential=STSPRXYABC123/20261116/us-east-1/s3/aws4_request, \
+                SignedHeaders=host;x-amz-date, Signature=deadbeef";
+    assert_eq!(access_key_id(auth), "STSPRXYABC123");
 }
 
 #[test]
-fn access_key_id_from_presigned_query() {
-    let q = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=STSPRXYABC123%2F20261116%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=beef";
-    assert_eq!(access_key_id("", Some(q)), "STSPRXYABC123");
-}
-
-#[test]
-fn access_key_id_empty_when_unsigned() {
-    assert_eq!(access_key_id("", None), "");
-    assert_eq!(access_key_id("", Some("list-type=2&prefix=a")), "");
+fn access_key_id_empty_when_unsigned_or_malformed() {
+    assert_eq!(access_key_id(""), "");
+    assert_eq!(access_key_id("Bearer abc"), "");
 }

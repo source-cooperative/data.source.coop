@@ -468,7 +468,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             duration_ms,
             &config.ip_hash_salt,
             registry.principal(),
-            parts.query.as_deref(),
         );
     }
 

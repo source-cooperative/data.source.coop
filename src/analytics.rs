@@ -13,8 +13,9 @@ pub struct RequestEvent<'a> {
     pub product_id: &'a str,
     pub file_path: &'a str,
     pub method: &'a str,
-    /// The principal the request's signature verified as: the person, or the
-    /// account an API key or platform token acts as. Empty when anonymous.
+    /// The principal the request's signature verified as: a person's Ory
+    /// identity ID, or the service account an API key or platform token acts
+    /// as. Empty when anonymous.
     pub user_id: &'a str,
     /// The access key ID that signed the request; with the `credentials
     /// issued` log line, it names the API key or platform subject behind an
@@ -128,25 +129,17 @@ pub fn hash_ip(ip: &str, salt: &str) -> String {
         .collect()
 }
 
-/// The access key ID a SigV4 request was signed with: the `Credential=` of the
-/// `Authorization` header, or a presigned URL's `X-Amz-Credential`. Empty when
-/// neither is present.
-pub fn access_key_id<'a>(authorization: &'a str, query: Option<&'a str>) -> &'a str {
-    let credential = authorization
-        .split_once("Credential=")
-        .map(|(_, rest)| rest)
-        .or_else(|| {
-            query?
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("X-Amz-Credential="))
-        })
-        .unwrap_or("");
-    // The ID is alphanumeric; the scope after it is `/`-separated, encoded as
-    // `%2F` in a query string.
-    let end = credential
-        .find(|c: char| !c.is_ascii_alphanumeric())
-        .unwrap_or(credential.len());
-    &credential[..end]
+/// The access key ID a SigV4 `Authorization` header was signed with, parsed by
+/// the same function multistore verified the signature with. The header itself
+/// is not signed, so any other reading of it could disagree with the key the
+/// signature was checked against. Empty when the header does not parse.
+///
+/// A presigned URL never reaches here: multistore authenticates only the
+/// `Authorization` header, so a presigned request has no principal.
+pub fn access_key_id(authorization: &str) -> String {
+    multistore::auth::parse_sigv4_auth(authorization)
+        .map(|sig| sig.access_key_id)
+        .unwrap_or_default()
 }
 
 /// Strip the constant `bytes=` unit prefix from a `Range` header value
@@ -184,7 +177,6 @@ pub(crate) fn log_analytics(
     duration_ms: f64,
     ip_hash_salt: &str,
     principal: Option<&str>,
-    query: Option<&str>,
 ) {
     let content_type = response
         .headers()
@@ -202,6 +194,11 @@ pub(crate) fn log_analytics(
 
     let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
     let range = strip_range_unit(header_str(headers, "range"));
+    // Only once the principal is known: before that, the header is just what
+    // the client sent, verified by nothing.
+    let signing_key = principal
+        .map(|_| access_key_id(header_str(headers, "authorization")))
+        .unwrap_or_default();
 
     log_request(
         env,
@@ -211,13 +208,7 @@ pub(crate) fn log_analytics(
             file_path: key.unwrap_or(""),
             method: method.as_str(),
             user_id: principal.unwrap_or(""),
-            // Only once the principal is known: before that, the header is
-            // just what the client sent, verified by nothing.
-            access_key_id: if principal.is_some() {
-                access_key_id(header_str(headers, "authorization"), query)
-            } else {
-                ""
-            },
+            access_key_id: &signing_key,
             client_ip_hash: &client_ip_hash,
             range,
             country: header_str(headers, "cf-ipcountry"),

@@ -85,7 +85,7 @@ impl BucketRegistry for SourceCoopRegistry {
 
         let subject = match identity {
             ResolvedIdentity::Authenticated(auth) => {
-                let _ = self.principal.set(auth.principal_name.clone());
+                self.principal.get_or_init(|| auth.principal_name.clone());
                 // The Role ceiling goes first and is local (ADR-011): a session
                 // whose Role does not allow the action is refused before
                 // anything is fetched, with the AccessDenied every other
