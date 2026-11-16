@@ -185,6 +185,7 @@ TRUST_EXCHANGE_COUNTS = {}
 # Who the proxy said it was asking as, per product path, so a test can check
 # which principal a session carries: see test_platform_trust.py.
 PRODUCT_LOOKUP_SUBJECTS = {}
+PRODUCT_LOOKUP_TRACEPARENTS = {}
 
 
 def _bearer_subject(authorization):
@@ -248,6 +249,11 @@ class Handler(BaseHTTPRequestHandler):
         # Test-only: the subject each product was last looked up as.
         if path == "/_stub/product-lookup-subjects":
             return self._send(200, json.dumps(PRODUCT_LOOKUP_SUBJECTS).encode())
+        # Test-only: the traceparent each product was last looked up with.
+        if path == "/_stub/product-lookup-traceparents":
+            return self._send(200, json.dumps(PRODUCT_LOOKUP_TRACEPARENTS).encode())
+        if path.startswith("/api/v1/products/"):
+            PRODUCT_LOOKUP_TRACEPARENTS[path] = self.headers.get("traceparent")
         if path.startswith("/api/v1/products/") and self.headers.get("Authorization"):
             PRODUCT_LOOKUP_SUBJECTS[path] = _bearer_subject(self.headers["Authorization"])
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
