@@ -88,7 +88,7 @@
       "name": "data-proxy: M8 Analytics rows",
       "severity": "notify",
       "alert_type": "custom_analytics",
-      "description": "Fewer than 50,000 Analytics Engine rows in 15 minutes (normally ~480,000): the ANALYTICS binding stopped writing, or traffic collapsed. See ADR-015, Monitors.",
+      "description": "Fewer than 10,000 Analytics Engine rows in 15 minutes (quiet weekend nights read ~40,000): the ANALYTICS binding stopped writing, or traffic collapsed. See ADR-015, Monitors.",
       "alert_interval": "24h",
       "filters": {
         "source": ["sql_api"],
@@ -96,7 +96,7 @@
           "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
         ],
         "alert_trigger_preferences": ["threshold"],
-        "alert_trigger_preferences_value": ["50000"],
+        "alert_trigger_preferences_value": ["10000"],
         "alert_trigger_preferences_operator": ["<"],
         "alert_trigger_preferences_short_window": ["15m"],
         "execution_interval": ["5m"]
