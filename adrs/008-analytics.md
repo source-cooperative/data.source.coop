@@ -40,14 +40,23 @@ Three request shapes short-circuit before logging and so are never recorded at a
 | blob1–2 | `account_id`, `product_id` | |
 | blob3 | `file_path` | Truncated to 256 bytes on a char boundary |
 | blob4 | `method` | |
-| blob5 | `user_id` | Empty for anonymous requests |
+| blob5 | `user_id` | The principal the request's SigV4 signature verified as; empty for anonymous requests. See *Who Made a Request* |
 | blob6 | `country` | From `cf-ipcountry` |
 | blob7 | `content_type` | |
 | blob8 | `client_ip_hash` | HMAC-SHA256; empty when the IP is unknown |
 | blob9 | `range` | `Range` header with the `bytes=` unit prefix stripped |
+| blob10 | `access_key_id` | The access key ID that signed the request; empty for anonymous requests |
 | double1–3 | `bytes_sent`, `status_code`, `duration_ms` | `bytes_sent` is the response's declared `Content-Length`, recorded as 0 when absent — a chunked response therefore logs zero egress |
 
 Retaining `range` and `bytes_sent` is what makes read-amplification analysis possible: range-heavy formats (COG, Zarr, Parquet) are read very differently from whole-object downloads, and the distinction matters for both caching decisions and egress attribution.
+
+### Who Made a Request
+
+A signed request records who signed it. `user_id` is the `principal_name` multistore verified from the request's SigV4 signature: the identity sealed into the session token when `/.sts` minted the credentials, which a client cannot alter. The gateway hands it only to `SourceCoopRegistry::get_bucket`, which keeps it for the request; a request refused before that point, or made anonymously, records none. Before this was fixed, the column was filled from an `x-source-user-id` request header that nothing set, so it was empty on every row, and would have been unverified had a client sent it.
+
+The principal names a person only for a session they started by signing in to source.coop. An API key or platform token acts as an account (ADR-013, ADR-014), so its principal is that account. For those, `access_key_id` (blob10) identifies the session, and the exchange that issued it writes one `credentials issued` log line carrying the same `access_key_id` with the API key's ID (`via: api_key`) or the platform token's issuer and subject (`via: platform`). The line is written straight to the console, outside the `LOG_LEVEL` filter, so production keeps it without counting it as a warning; there is one per session, not per request. Joining the two answers which key or workflow made a request, for as long as Workers Logs retains the line.
+
+Anonymous reads stay anonymous: none of this applies to a request with no signature.
 
 ### Client IPs Are Never Stored
 

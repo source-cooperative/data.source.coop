@@ -363,7 +363,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        MappedRegistry::new(registry, mapping.clone()),
+        MappedRegistry::new(registry.clone(), mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
@@ -467,6 +467,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             key,
             duration_ms,
             &config.ip_hash_salt,
+            registry.principal(),
+            parts.query.as_deref(),
         );
     }
 
@@ -665,6 +667,20 @@ async fn api_key_exchange(
     )
 }
 
+/// Record which access key an API-key or platform exchange issued, and to whom:
+/// the request's analytics carry only the access key ID and the account it acts
+/// as, and this line maps the one to the API key or platform subject behind it.
+/// Written to the console directly, so `LOG_LEVEL=WARN` keeps it at info level
+/// rather than as a warning M6 would count. Once per session, so cheap. A
+/// person's own session needs none: its principal already names them.
+fn log_issued(creds: &TemporaryCredentials, mut fields: serde_json::Value) {
+    fields["message"] = "credentials issued".into();
+    fields["access_key_id"] = creds.access_key_id.as_str().into();
+    fields["account_id"] = creds.source_identity.as_str().into();
+    fields["expires"] = creds.expiration.to_rfc3339().into();
+    worker::console_log!("{fields}");
+}
+
 /// `InvalidIdentityToken`, with the request id in the message.
 fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
     sts_refusal(&ProxyError::InvalidOidcToken(message.into()), request_id)
@@ -754,7 +770,10 @@ async fn exchange_api_key(
         sts.duration_seconds,
         &config.session_token_key,
     )?;
-    tracing::info!(%request_id, key_id, %account_id, role = %role.role_id, "API key exchanged");
+    log_issued(
+        &creds,
+        serde_json::json!({ "request_id": request_id, "via": "api_key", "key_id": key_id, "role": &role.role_id }),
+    );
     Ok(creds)
 }
 
@@ -917,7 +936,10 @@ async fn platform_exchange(
             &config.session_token_key,
         )
         .map_err(failed)?;
-        tracing::info!(%request_id, %issuer, %subject, %account, role = %role.role_id, "platform token exchanged");
+        log_issued(
+            &creds,
+            serde_json::json!({ "request_id": request_id, "via": "platform", "issuer": issuer, "subject": subject, "role": &role.role_id }),
+        );
         Ok(creds)
     }
     .await;

@@ -5,6 +5,8 @@ use multistore::error::ProxyError;
 use multistore::registry::{BucketRegistry, ResolvedBucket};
 use multistore::types::{Action, BucketConfig, ResolvedIdentity, S3Operation};
 
+use std::sync::{Arc, OnceLock};
+
 use crate::authz::{ceiling_permits, decide_backend_auth, is_write_action};
 
 /// Pages of 100 an account's product list may span: 10,000 products.
@@ -17,6 +19,11 @@ pub struct SourceCoopRegistry {
     api_base_url: String,
     api_auth: crate::ApiAuth,
     pub(crate) request_id: String,
+    /// The principal this request's signature verified as, kept for analytics:
+    /// the gateway resolves it and hands it only to `get_bucket`. Shared with
+    /// the clones the gateway makes, and set once — a CopyObject resolves two
+    /// buckets with the same identity.
+    principal: Arc<OnceLock<String>>,
 }
 
 impl SourceCoopRegistry {
@@ -25,7 +32,14 @@ impl SourceCoopRegistry {
             api_base_url,
             api_auth,
             request_id,
+            principal: Arc::default(),
         }
+    }
+
+    /// The verified principal of the request, once `get_bucket` has seen it;
+    /// `None` for an anonymous request or one refused before that.
+    pub fn principal(&self) -> Option<&str> {
+        self.principal.get().map(String::as_str)
     }
 
     /// List products for an account via the Source API, every page of it.
@@ -71,6 +85,7 @@ impl BucketRegistry for SourceCoopRegistry {
 
         let subject = match identity {
             ResolvedIdentity::Authenticated(auth) => {
+                let _ = self.principal.set(auth.principal_name.clone());
                 // The Role ceiling goes first and is local (ADR-011): a session
                 // whose Role does not allow the action is refused before
                 // anything is fetched, with the AccessDenied every other

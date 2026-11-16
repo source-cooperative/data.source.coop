@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{hash_ip, strip_range_unit, RequestEvent};
+use analytics::{access_key_id, hash_ip, strip_range_unit, RequestEvent};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -10,6 +10,7 @@ fn event<'a>() -> RequestEvent<'a> {
         file_path: "countries.parquet",
         method: "GET",
         user_id: "",
+        access_key_id: "",
         client_ip_hash: "deadbeef",
         range: "0-1023", // already stripped of the "bytes=" unit prefix
         country: "US",
@@ -41,6 +42,7 @@ fn blobs_in_schema_order() {
             "application/octet-stream", // blob7: content_type
             "deadbeef",                 // blob8: client_ip_hash
             "0-1023",                   // blob9: range (bytes= prefix stripped)
+            "",                         // blob10: access_key_id (anonymous)
         ]
     );
 }
@@ -115,4 +117,25 @@ fn strip_range_unit_drops_bytes_prefix() {
     // unit is not silently mangled).
     assert_eq!(strip_range_unit(""), "");
     assert_eq!(strip_range_unit("items=0-5"), "items=0-5");
+}
+
+// ── access_key_id ───────────────────────────────────────────────────
+
+#[test]
+fn access_key_id_from_authorization_header() {
+    let auth = "AWS4-HMAC-SHA256 Credential=STSPRXYABC123/20261116/us-east-1/s3/aws4_request, \
+                SignedHeaders=host;x-amz-date, Signature=deadbeef";
+    assert_eq!(access_key_id(auth, None), "STSPRXYABC123");
+}
+
+#[test]
+fn access_key_id_from_presigned_query() {
+    let q = "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=STSPRXYABC123%2F20261116%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Signature=beef";
+    assert_eq!(access_key_id("", Some(q)), "STSPRXYABC123");
+}
+
+#[test]
+fn access_key_id_empty_when_unsigned() {
+    assert_eq!(access_key_id("", None), "");
+    assert_eq!(access_key_id("", Some("list-type=2&prefix=a")), "");
 }
