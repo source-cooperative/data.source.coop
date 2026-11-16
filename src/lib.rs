@@ -326,6 +326,16 @@ async fn handle(
     // When unset, refuse it with a 501 rather than serving it unrestricted.
     // API keys and platform tokens, answered above, do not depend on it.
     if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+        // A 5xx answered before the gateway: write the line the gateway path
+        // writes, so the trace ID is on every 5xx (ADR-016).
+        tracing::warn!(
+            status = 501,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
         let resp = ErrorResponse {
             code: "NotImplemented".to_string(),
             message: "STS token exchange is not configured".to_string(),
