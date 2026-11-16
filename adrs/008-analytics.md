@@ -109,7 +109,8 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 
 - Per-product usage and egress data without operating a log pipeline.
 - Read-amplification and range behaviour are measurable, which directly informs caching work.
-- Reader privacy is preserved by construction: raw IPs are never written, and the public stream carries only coarse geography.
+- Reader privacy is preserved by construction for anonymous reads: raw IPs are never written, and the public stream carries only coarse geography.
+- A signed request can be traced to who made it: the principal and access key it was signed with, and for an API key or platform token, which one.
 - Telemetry failures cannot affect availability.
 - Operational 5xx diagnosis is possible at production log levels.
 
@@ -120,6 +121,7 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 - Retention is not owned by this project. If a retention commitment is ever needed — for a privacy policy, or a compliance answer — it has to be established at the sinks first; nothing in this repository constrains it today.
 - `IP_HASH_SALT` unset in a deployment degrades the guarantee silently apart from a startup warning.
 - The public stream discloses that *someone* near a datacenter read a public product. Coarse, but not nothing.
+- Signed requests, reads of restricted products among them, are attributable to a named principal for as long as Analytics Engine keeps the row. That is the point of the field, and it applies only to callers who signed in or presented a key; it is still a record of who read what.
 - Cost attribution is derived from `bytes_sent` on the proxy, not from provider invoices; the two will not reconcile exactly, and a response sent without a `Content-Length` contributes zero.
 
 ---
