@@ -69,12 +69,12 @@
       "name": "data-proxy: M7 Latency",
       "severity": "notify",
       "alert_type": "custom_analytics",
-      "description": "p99 product-request duration above 5 s over 15 minutes (normally under 1 s). See ADR-015, Monitors.",
+      "description": "p99 duration of GET and HEAD product requests above 5 s over 15 minutes (normally ~0.9 s). Uploads are left out: their p99 is ~6.5 s in normal operation. See ADR-015, Monitors.",
       "alert_interval": "24h",
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT quantileWeighted(0.99, \"double3\", \"sampleInterval\") AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+          "SELECT quantileWeighted(0.99, \"double3\", \"sampleInterval\") AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"blob4\" = 'GET' OR \"blob4\" = 'HEAD'))"
         ],
         "alert_trigger_preferences": ["threshold"],
         "alert_trigger_preferences_value": ["5000"],
