@@ -162,11 +162,17 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
     let traceparent = req.headers().get("traceparent").ok().flatten();
     let trace = TraceContext::from_traceparent(traceparent.as_deref(), random);
-    // An error returned from here becomes the runtime's own 500, which carries
-    // no headers of ours; this line is what ties it to the trace.
-    let response = handle(req, env, ctx, &trace).await.inspect_err(|e| {
-        tracing::warn!(trace_id = %trace.trace_id, error = %e, "request failed");
-    })?;
+    // An error from `handle` would become the runtime's own bare 500, with no
+    // trace header; answer it ourselves so the caller can quote the trace.
+    let response = match handle(req, env, ctx, &trace).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(trace_id = %trace.trace_id, error = %e, "request failed");
+            let init = web_sys::ResponseInit::new();
+            init.set_status(500);
+            web_sys::Response::new_with_opt_str_and_init(Some("Internal Server Error"), &init)?
+        }
+    };
     // A relayed response's headers can be immutable; the trace ID is then
     // dropped rather than failing the response.
     let _ = response.headers().set("x-source-trace-id", &trace.trace_id);
@@ -287,8 +293,8 @@ async fn handle(
         config.oidc.signer.clone(),
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
-    )
-    .with_trace(trace.clone());
+        trace.clone(),
+    );
 
     // ── Short-circuit: API-key and platform-token exchanges ────────
     // An `sck_` key at `/.sts` is not a token: nothing verifies it here —

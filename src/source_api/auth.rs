@@ -35,28 +35,22 @@ pub(crate) struct ApiAuth {
     signer: JwtSigner,
     issuer: String,
     audience: String,
-    trace: Option<TraceContext>,
+    trace: TraceContext,
 }
 
 impl ApiAuth {
-    pub fn new(signer: JwtSigner, issuer: String, audience: String) -> Self {
+    pub fn new(signer: JwtSigner, issuer: String, audience: String, trace: TraceContext) -> Self {
         Self {
             signer,
             issuer,
             audience,
-            trace: None,
+            trace,
         }
     }
 
-    /// API calls made with this carry a `traceparent` in `trace`.
-    pub fn with_trace(mut self, trace: TraceContext) -> Self {
-        self.trace = Some(trace);
-        self
-    }
-
     /// A `traceparent` for one API call, each with its own span ID.
-    pub fn traceparent(&self) -> Option<String> {
-        self.trace.as_ref().map(|t| t.child(crate::random()))
+    pub fn traceparent(&self) -> String {
+        self.trace.child(crate::random())
     }
 
     /// Build the `Authorization` header value for an API request on behalf of

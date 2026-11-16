@@ -35,8 +35,12 @@ def test_a_request_without_one_starts_its_own():
 
 
 def test_a_malformed_traceparent_starts_a_new_trace():
-    resp = requests.get(f"{PROXY_URL}/", headers={"traceparent": "00-not-a-trace-01"})
-    assert re.fullmatch(r"[0-9a-f]{32}", resp.headers["x-source-trace-id"])
+    # Well-formed except for the all-zero trace ID, which W3C forbids: it must
+    # be discarded, not echoed.
+    zeros = "0" * 32
+    resp = requests.get(f"{PROXY_URL}/", headers={"traceparent": _traceparent(zeros)})
+    got = resp.headers["x-source-trace-id"]
+    assert re.fullmatch(r"[0-9a-f]{32}", got) and got != zeros
 
 
 def test_an_error_response_names_its_trace():
