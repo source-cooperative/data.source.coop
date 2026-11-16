@@ -40,14 +40,23 @@ Three request shapes short-circuit before logging and so are never recorded at a
 | blob1–2 | `account_id`, `product_id` | |
 | blob3 | `file_path` | Truncated to 256 bytes on a char boundary |
 | blob4 | `method` | |
-| blob5 | `user_id` | Empty for anonymous requests |
+| blob5 | `user_id` | The principal the request's SigV4 signature verified as; empty for anonymous requests. See *Who Made a Request* |
 | blob6 | `country` | From `cf-ipcountry` |
 | blob7 | `content_type` | |
 | blob8 | `client_ip_hash` | HMAC-SHA256; empty when the IP is unknown |
 | blob9 | `range` | `Range` header with the `bytes=` unit prefix stripped |
+| blob10 | `access_key_id` | The access key ID that signed the request; empty for anonymous requests |
 | double1–3 | `bytes_sent`, `status_code`, `duration_ms` | `bytes_sent` is the response's declared `Content-Length`, recorded as 0 when absent — a chunked response therefore logs zero egress |
 
 Retaining `range` and `bytes_sent` is what makes read-amplification analysis possible: range-heavy formats (COG, Zarr, Parquet) are read very differently from whole-object downloads, and the distinction matters for both caching decisions and egress attribution.
+
+### Who Made a Request
+
+A signed request records who signed it. `user_id` is the `principal_name` multistore verified from the request's SigV4 signature: the identity sealed into the session token when `/.sts` minted the credentials, which a client cannot alter. The gateway hands it only to `SourceCoopRegistry::get_bucket`, which keeps it for the request; a request refused before that point, or made anonymously, records none. Two signed shapes record none either: an account-level listing (`/{account}`), which the router answers before multistore resolves the signature, and a presigned URL, which multistore does not authenticate and so treats as anonymous.
+
+What the principal is depends on how the session was obtained. For a person who signed in to source.coop, it is their Ory identity ID, a UUID, which the accounts table maps to their account through `identity_id`. API keys and platform tokens only ever act as a service account (ADR-013, ADR-014), so their principal is the service account's id, `{owner_account_id}--{name}`, which names its owner too. A service account may hold several keys and trust several platform subjects, so for these sessions `access_key_id` (blob10) identifies the session, and the exchange that issued it writes one `credentials issued` log line carrying the same `access_key_id` with the API key's ID (`via: api_key`) or the platform token's issuer and subject (`via: platform`). The line is written straight to the console, outside the `LOG_LEVEL` filter, so production keeps it without counting it as a warning; there is one per session, not per request. Joining the two answers which key or workflow made a request, for as long as Workers Logs retains the line.
+
+Anonymous reads stay anonymous: none of this applies to a request with no signature.
 
 ### Client IPs Are Never Stored
 
@@ -100,7 +109,8 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 
 - Per-product usage and egress data without operating a log pipeline.
 - Read-amplification and range behaviour are measurable, which directly informs caching work.
-- Reader privacy is preserved by construction: raw IPs are never written, and the public stream carries only coarse geography.
+- Reader privacy is preserved by construction for anonymous reads: raw IPs are never written, and the public stream carries only coarse geography.
+- A signed request can be traced to who made it: the principal and access key it was signed with, and for an API key or platform token, which one.
 - Telemetry failures cannot affect availability.
 - Operational 5xx diagnosis is possible at production log levels.
 
@@ -111,6 +121,7 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 - Retention is not owned by this project. If a retention commitment is ever needed — for a privacy policy, or a compliance answer — it has to be established at the sinks first; nothing in this repository constrains it today.
 - `IP_HASH_SALT` unset in a deployment degrades the guarantee silently apart from a startup warning.
 - The public stream discloses that *someone* near a datacenter read a public product. Coarse, but not nothing.
+- Signed requests, reads of restricted products among them, are attributable to a named principal for as long as Analytics Engine keeps the row. That is the point of the field, and it applies only to callers who signed in or presented a key; it is still a record of who read what.
 - Cost attribution is derived from `bytes_sent` on the proxy, not from provider invoices; the two will not reconcile exactly, and a response sent without a `Content-Length` contributes zero.
 
 ---
