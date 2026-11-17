@@ -1,5 +1,89 @@
 # Changelog
 
+## [2.5.5](https://github.com/source-cooperative/data.source.coop/compare/v2.5.4...v2.5.5) (2026-11-17)
+
+
+### Features
+
+* **observability:** continue the caller's trace and return x-source-trace-id ([#269](https://github.com/source-cooperative/data.source.coop/issues/269)) ([3abad5a](https://github.com/source-cooperative/data.source.coop/commit/3abad5aa0f6c697067841e27541c15d4bea019f8))
+
+
+### Bug Fixes
+
+* **analytics:** record the verified principal and access key of each signed request ([#279](https://github.com/source-cooperative/data.source.coop/issues/279)) ([fe2aad2](https://github.com/source-cooperative/data.source.coop/commit/fe2aad275072a3dd224b98a9d2015b54c1348cfa))
+* **monitoring:** lower M8's Analytics rows floor to 10,000 ([#278](https://github.com/source-cooperative/data.source.coop/issues/278)) ([4fe4e40](https://github.com/source-cooperative/data.source.coop/commit/4fe4e40fe6d6033568f0928deac671f3b8fe6951))
+* **monitoring:** measure M7 latency over reads only, and label each alert's kind in ADR-015 ([#276](https://github.com/source-cooperative/data.source.coop/issues/276)) ([8cbd27f](https://github.com/source-cooperative/data.source.coop/commit/8cbd27fdd7c1880f4c027710f98540f058a959e5))
+
+
+### Miscellaneous Chores
+
+* release 2.5.5 ([cf21a1f](https://github.com/source-cooperative/data.source.coop/commit/cf21a1f27f806364b8680a6dc7ef9d7c8fca1e57))
+
+## [2.5.4](https://github.com/source-cooperative/data.source.coop/compare/v2.5.3...v2.5.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **monitoring:** stay within Cloudflare's five SQL Monitor limit ([#274](https://github.com/source-cooperative/data.source.coop/issues/274)) ([b00640a](https://github.com/source-cooperative/data.source.coop/commit/b00640a4dc48e723fa44e35df4bb974bc04eb60d))
+
+## [2.5.3](https://github.com/source-cooperative/data.source.coop/compare/v2.5.2...v2.5.3) (2026-11-14)
+
+
+### Features
+
+* **monitoring:** define the SQL monitors M2, M3, M6, M7 and M8 ([#271](https://github.com/source-cooperative/data.source.coop/issues/271)) ([d2ea66a](https://github.com/source-cooperative/data.source.coop/commit/d2ea66abc84dad8527ae64f8757f75171cdf5f31))
+
+
+### Miscellaneous Chores
+
+* release 2.5.3 ([488cd00](https://github.com/source-cooperative/data.source.coop/commit/488cd0062321c97db18483e864b4254f0d07f600))
+
+## [2.5.2](https://github.com/source-cooperative/data.source.coop/compare/v2.5.1...v2.5.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **observability:** size telemetry for volume-based pricing and define alerts ([#266](https://github.com/source-cooperative/data.source.coop/issues/266)) ([af4ef63](https://github.com/source-cooperative/data.source.coop/commit/af4ef63fab8616e4b8f6a58cc84165bc8f741e5a))
+
+## [2.5.1](https://github.com/source-cooperative/data.source.coop/compare/v2.5.0...v2.5.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **log-stream:** replace an overdue alarm instead of trusting it ([#260](https://github.com/source-cooperative/data.source.coop/issues/260)) ([a12589a](https://github.com/source-cooperative/data.source.coop/commit/a12589abb1e642b3941cc6895adcb41943a50e4f))
+
+## [2.5.0](https://github.com/source-cooperative/data.source.coop/compare/v2.4.0...v2.5.0) (2026-10-20)
+
+
+### Features
+
+* **source-api:** follow the paged product list ([#253](https://github.com/source-cooperative/data.source.coop/issues/253)) ([8d02d47](https://github.com/source-cooperative/data.source.coop/commit/8d02d47e7a82474b242fa983dc6ed3d28b8d039c))
+
+
+### Bug Fixes
+
+* **deps:** bump rustls and quinn-proto past new RustSec advisories ([#259](https://github.com/source-cooperative/data.source.coop/issues/259)) ([9a5b650](https://github.com/source-cooperative/data.source.coop/commit/9a5b65064c38f66f3e0284fa1183bad7ee944bf9))
+* **log-stream:** re-arm the tick alarm from storage, not a cached flag ([#257](https://github.com/source-cooperative/data.source.coop/issues/257)) ([3e04c46](https://github.com/source-cooperative/data.source.coop/commit/3e04c46f8659d1b90921264edfd2b55580c6acf5))
+
+## [2.4.0](https://github.com/source-cooperative/data.source.coop/compare/v2.3.4...v2.4.0) (2026-10-05)
+
+
+### Features
+
+* **sts:** answer GetCallerIdentity with multistore 0.8.0 ([#248](https://github.com/source-cooperative/data.source.coop/issues/248)) ([0659a7b](https://github.com/source-cooperative/data.source.coop/commit/0659a7b4a88938a63f9acbb1d1c4a1f66d679e4e))
+* **sts:** exchange opaque API keys at /.sts by hash lookup ([#235](https://github.com/source-cooperative/data.source.coop/issues/235)) ([e9d2485](https://github.com/source-cooperative/data.source.coop/commit/e9d248519fec1c5a304d894e0a984d6589e91ee9))
+* **sts:** let platform IdP tokens act as accounts that trust them ([#237](https://github.com/source-cooperative/data.source.coop/issues/237)) ([14efd33](https://github.com/source-cooperative/data.source.coop/commit/14efd3385b0a190e191ff050932034c3bc1383f0))
+* **sts:** serve the FullAccess and ReadOnly roles ([#236](https://github.com/source-cooperative/data.source.coop/issues/236)) ([aa0abb3](https://github.com/source-cooperative/data.source.coop/commit/aa0abb3c4d0455cf012f5d4f368e55b8788fb55f))
+
+
+### Bug Fixes
+
+* **cache-control:** review fixes for [#227](https://github.com/source-cooperative/data.source.coop/issues/227) ([#250](https://github.com/source-cooperative/data.source.coop/issues/250)) ([7bce43f](https://github.com/source-cooperative/data.source.coop/commit/7bce43f002b33537780c5a6ab8927ca550d01673))
+* **cors:** let browsers cache preflights for two hours ([#251](https://github.com/source-cooperative/data.source.coop/issues/251)) ([cd9218e](https://github.com/source-cooperative/data.source.coop/commit/cd9218efc9831b90c755d5f8973b9b500dc7f959))
+* **deps:** bump h2 to 0.4.18 for RUSTSEC-2026-0258 ([#214](https://github.com/source-cooperative/data.source.coop/issues/214)) ([52d9eb2](https://github.com/source-cooperative/data.source.coop/commit/52d9eb2e23f93433aef40eb534933ea1a440520c))
+* **deps:** bump rustls to 0.23.45 for RUSTSEC-2026-0285 ([#238](https://github.com/source-cooperative/data.source.coop/issues/238)) ([188842b](https://github.com/source-cooperative/data.source.coop/commit/188842b66006672e22009166fce93f0454aa1e10))
+* keep Cloudflare credentials out of build and install environments ([#211](https://github.com/source-cooperative/data.source.coop/issues/211)) ([e4ebade](https://github.com/source-cooperative/data.source.coop/commit/e4ebadeec7bda5e2142a46aade342f5eb4d2ed2d))
+
 ## [2.3.4](https://github.com/source-cooperative/data.source.coop/compare/v2.3.3...v2.3.4) (2026-07-28)
 
 

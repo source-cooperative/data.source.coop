@@ -3,15 +3,15 @@
 Data requests to the proxy are SigV4-only (Bearer JWTs are rejected), so an
 authenticated write follows the real client flow end-to-end:
 
-  1. Obtain an OIDC identity token whose `aud` is in the worker's AUTH_AUDIENCE.
-     In CI this is a GitHub Actions OIDC token (AUTH_ISSUER =
-     https://token.actions.githubusercontent.com); the proxy verifies it via
-     OIDC discovery against GitHub's JWKS.
-  2. Exchange it at POST /.sts (AssumeRoleWithWebIdentity, RoleArn=_default)
-     for temporary credentials whose SessionToken is sealed under
-     SESSION_TOKEN_KEY.
+  1. Obtain a GitHub Actions OIDC token with an audience the worker accepts
+     for GitHub, a platform issuer (PLATFORM_ISSUERS in ci.yml). The proxy
+     verifies it via OIDC discovery against GitHub's JWKS.
+  2. Exchange it at POST /.sts (AssumeRoleWithWebIdentity) with a RoleArn
+     naming TRUST_ACCOUNT, which the stub says trusts this repository's
+     workflows, for temporary credentials whose SessionToken is sealed under
+     SESSION_TOKEN_KEY (ADR-014).
   3. SigV4-sign S3 requests with those credentials; the proxy unseals the
-     token, verifies the signature, and recovers the subject (the JWT's `sub`).
+     token, verifies the signature, and recovers the principal: the account.
 
 Two tiers, so the suite degrades gracefully:
 
@@ -33,11 +33,15 @@ import xml.etree.ElementTree as ET
 import pytest
 import requests
 
+from stub_api import TRUST_ACCOUNT as STUB_TRUST_ACCOUNT
 from stub_api import WRITE_ACCOUNT, WRITE_PRODUCT
 
 PROXY_URL = os.environ.get("PROXY_URL", "http://localhost:8787")
 ID_TOKEN = os.environ.get("CI_WRITE_ID_TOKEN")
 WRONG_AUD_TOKEN = os.environ.get("CI_WRONG_AUDIENCE_TOKEN")
+# The account the caller's token acts as: the stub's, or against a deployed
+# proxy (staging.yml) a service account there that trusts this repository.
+TRUST_ACCOUNT = os.environ.get("CI_TRUST_ACCOUNT") or STUB_TRUST_ACCOUNT
 
 # When CI declares a token must exist (same-repo runs export CI_EXPECT_OIDC),
 # a missing token means the mint->env plumbing broke: run the tests and fail
@@ -53,19 +57,19 @@ needs_wrong_aud_token = pytest.mark.skipif(
 )
 
 
-def sts_exchange(token, *, form_body=False):
+def sts_exchange(token, *, in_url=False):
     """POST /.sts with the given web identity token; return the raw response.
 
-    `form_body` sends the parameters the way AWS SDKs do — form-encoded in the
-    request body, with no query string — instead of in the query string."""
+    The parameters are form-encoded in the body, the way AWS SDKs send them;
+    `in_url` sends them in the query string instead."""
     params = {
         "Action": "AssumeRoleWithWebIdentity",
-        "RoleArn": "_default",
+        "RoleArn": f"arn:aws:iam::{TRUST_ACCOUNT}:role/FullAccess",
         "WebIdentityToken": token,
     }
-    if form_body:
-        return requests.post(f"{PROXY_URL}/.sts", data=params)
-    return requests.post(f"{PROXY_URL}/.sts", params=params)
+    if in_url:
+        return requests.post(f"{PROXY_URL}/.sts", params=params)
+    return requests.post(f"{PROXY_URL}/.sts", data=params)
 
 
 @functools.lru_cache(maxsize=1)
@@ -207,15 +211,11 @@ def test_sts_exchange_issues_credentials():
 
 
 @needs_token
-def test_sts_exchange_accepts_a_form_encoded_body():
-    """The same exchange, sent the way an AWS SDK sends it: parameters
-    form-encoded in the POST body rather than in the query string."""
-    resp = sts_exchange(ID_TOKEN, form_body=True)
-    assert resp.status_code == 200, (
-        f"form-encoded /.sts exchange failed ({resp.status_code}): {resp.text[:300]}"
-    )
-    fields = {el.tag.rpartition("}")[2]: el.text for el in ET.fromstring(resp.text).iter()}
-    assert fields["AccessKeyId"].startswith("STSPRXY")
+def test_sts_exchange_refuses_a_platform_token_in_the_url():
+    """Cloudflare logs the URL, and a logged token could be replayed."""
+    resp = sts_exchange(ID_TOKEN, in_url=True)
+    assert resp.status_code == 400, resp.text[:300]
+    assert "must be sent in the request body" in resp.text
 
 
 def test_sts_form_encoded_body_reaches_the_sts_handler():
@@ -224,7 +224,7 @@ def test_sts_form_encoded_body_reaches_the_sts_handler():
     through to the S3 pipeline. Without the body being collected before
     dispatch, the STS handler never sees the `Action` param and never matches,
     so the failure mode is a non-STS error rather than a 200."""
-    resp = sts_exchange("not-a-jwt", form_body=True)
+    resp = sts_exchange("not-a-jwt")
     assert resp.status_code == 400, (
         f"expected an STS rejection ({resp.status_code}): {resp.text[:300]}"
     )
@@ -274,9 +274,9 @@ def test_sts_rejects_tampered_signature():
 
 @needs_wrong_aud_token
 def test_sts_rejects_wrong_audience():
-    """A validly-signed token whose aud isn't in AUTH_AUDIENCE must be
-    rejected — this is the gate that keeps other GitHub OIDC consumers'
-    tokens from minting credentials here."""
+    """A validly-signed token whose aud isn't one PLATFORM_ISSUERS lists for
+    GitHub must be rejected — this is the gate that keeps other GitHub OIDC
+    consumers' tokens from minting credentials here."""
     # Presence assert, not just the skipif: with the token missing,
     # sts_exchange(None) sends no WebIdentityToken and the 4xx assertion
     # below would pass vacuously — testing nothing.

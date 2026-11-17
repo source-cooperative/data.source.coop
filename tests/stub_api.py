@@ -21,10 +21,15 @@ CI starts this before `wrangler dev` and points the worker at it via
 SOURCE_API_URL in .dev.vars.
 """
 
+import base64
+import hashlib
 import json
 import os
+import re
+import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PORT = 9000
 
@@ -85,15 +90,28 @@ RESTRICTED_PRODUCT = "restricted-probe"
 RESTRICTED_PRODUCT_JSON = _fixture("product_restricted")
 
 ROUTES = {
-    f"/api/v1/products/{ACCOUNT}": {"products": [PRODUCT_JSON]},
+    f"/api/v1/products/{ACCOUNT}": {"items": [PRODUCT_JSON], "next_cursor": None},
     f"/api/v1/products/{ACCOUNT}/{PRODUCT}": PRODUCT_JSON,
     # No `authentication` field -> BackendAuth::Unsigned -> unsigned reads.
     f"/api/v1/data-connections/{CONNECTION}": _fixture("data_connection"),
     # Write probe (see above).
-    f"/api/v1/products/{WRITE_ACCOUNT}": {"products": [WRITE_PRODUCT_JSON]},
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}": WRITE_PRODUCT_JSON,
     f"/api/v1/products/{WRITE_ACCOUNT}/{WRITE_PRODUCT}/permissions": ["read", "write"],
     f"/api/v1/data-connections/{WRITE_CONNECTION}": WRITE_CONNECTION_JSON,
+}
+
+# The write account's listing spans two pages, so the proxy has to follow
+# next_cursor to list both products. The cursor holds the characters a real
+# (base64) one does, which reach here intact only if the proxy encodes them:
+# an unencoded "+" arrives as a space.
+SECOND_PAGE_PRODUCT = "second-page"
+SECOND_PAGE_CURSOR = "eyJw+/Ig=="
+PRODUCT_LIST_PAGES = {
+    None: {"items": [WRITE_PRODUCT_JSON], "next_cursor": SECOND_PAGE_CURSOR},
+    SECOND_PAGE_CURSOR: {
+        "items": [{**WRITE_PRODUCT_JSON, "product_id": SECOND_PAGE_PRODUCT}],
+        "next_cursor": None,
+    },
 }
 
 # Import-time drift guards: routes are keyed on the constants above, bodies
@@ -112,9 +130,132 @@ assert (
 )
 
 
+# ── API keys ───────────────────────────────────────────────────────
+# Opaque keys the proxy resolves by SHA-256 at POST
+# /api/v1/service-account-keys/exchanges (ADR-013), as itself. The stub keys
+# its answers on the hash of each constant, so test_api_keys.py presents the
+# key and never the hash — exactly what the proxy is meant to send. A counter
+# per hash lets the tests prove the proxy's 60s standing cache is doing its
+# job: the second exchange of a key must not reach here.
+BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def _key(char):
+    """A well-formed key: 30 of `char`, then their CRC-32 in six base62 digits."""
+    body, n, checksum = char * 30, zlib.crc32((char * 30).encode()), ""
+    for _ in range(6):
+        n, digit = divmod(n, 62)
+        checksum = BASE62[digit] + checksum
+    return "sck_" + body + checksum
+
+
+LIVE_KEY = _key("L")
+REVOKED_KEY = _key("R")
+UNKNOWN_KEY = _key("U")
+ERR_500_KEY = _key("E")
+KEY_ACCOUNT = "ci-tests--nightly-sync"
+
+
+def _hash(key):
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+KEY_STANDINGS = {
+    _hash(LIVE_KEY): (200, {"account_id": KEY_ACCOUNT, "key_id": "k-live", "active": True}),
+    _hash(REVOKED_KEY): (200, {"active": False}),
+    _hash(ERR_500_KEY): (500, {}),
+}
+KEY_EXCHANGE_COUNTS = {}
+
+
+# ── Account trusts ─────────────────────────────────────────────────
+# Whether an account trusts a platform token's issuer and subject, at POST
+# /api/v1/accounts/{account}/trusts/exchanges (ADR-014). The proxy asks as the
+# account itself. Only TRUST_ACCOUNT trusts anyone, and only the exact subject
+# of the token CI minted for this run (CI_TRUSTED_SUBJECT, set by ci.yml), as
+# source.coop matches a trust exactly. SAYS_NO_ACCOUNT answers no with a 200,
+# which the real route never does, so the proxy's read of the body is pinned.
+# A counter per account lets test_platform_trust.py prove the proxy caches.
+TRUST_ACCOUNT = "ci-tests--github-ci"
+SAYS_NO_ACCOUNT = "ci-tests--says-no-with-200"
+TRUSTED_ISSUER = "https://token.actions.githubusercontent.com"
+TRUSTED_SUBJECT = os.environ.get("CI_TRUSTED_SUBJECT")
+TRUST_EXCHANGE_COUNTS = {}
+
+# Who the proxy said it was asking as, per product path, so a test can check
+# which principal a session carries: see test_platform_trust.py.
+PRODUCT_LOOKUP_SUBJECTS = {}
+PRODUCT_LOOKUP_TRACEPARENTS = {}
+
+
+def _bearer_subject(authorization):
+    """The `sub` of the proxy's assertion, unverified: the stub has no key."""
+    try:
+        payload = authorization.removeprefix("Bearer ").split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["sub"]
+    except (IndexError, ValueError, KeyError):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        trust = re.fullmatch(r"/api/v1/accounts/([^/]+)/trusts/exchanges", path)
+        if trust:
+            return self._trust_exchange(unquote(trust.group(1)))
+        if path != "/api/v1/service-account-keys/exchanges":
+            return self._send(404, b"{}")
+        # The proxy authenticates as itself; the stub cannot verify the
+        # signature, but a missing header would mean the proxy sent nothing.
+        if not self.headers.get("Authorization", "").startswith("Bearer "):
+            return self._send(401, b"{}")
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            key_hash = json.loads(self.rfile.read(length))["key_hash"]
+        except (ValueError, KeyError, TypeError):
+            return self._send(400, b"{}")
+        KEY_EXCHANGE_COUNTS[key_hash] = KEY_EXCHANGE_COUNTS.get(key_hash, 0) + 1
+        status, body = KEY_STANDINGS.get(key_hash, (200, {"active": False}))
+        self._send(status, json.dumps(body).encode())
+
+    def _trust_exchange(self, account):
+        # Anyone but the account itself is refused, as the real route does.
+        if _bearer_subject(self.headers.get("Authorization", "")) != account:
+            return self._send(401, b'{"error": "Unauthorized"}')
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length))
+            issuer, subject = body["issuer"], body["subject"]
+        except (ValueError, KeyError, TypeError):
+            return self._send(400, b"{}")
+        TRUST_EXCHANGE_COUNTS[account] = TRUST_EXCHANGE_COUNTS.get(account, 0) + 1
+        if account == SAYS_NO_ACCOUNT:
+            return self._send(200, b'{"trusted": false}')
+        trusted = (
+            account == TRUST_ACCOUNT
+            and issuer == TRUSTED_ISSUER
+            and subject == TRUSTED_SUBJECT
+        )
+        self._send(200 if trusted else 403, json.dumps({"trusted": trusted}).encode())
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        # Test-only: how many times each key's standing was asked for.
+        if path == "/_stub/key-exchange-counts":
+            return self._send(200, json.dumps(KEY_EXCHANGE_COUNTS).encode())
+        # Test-only: how many times each account's trust was asked for.
+        if path == "/_stub/trust-exchange-counts":
+            return self._send(200, json.dumps(TRUST_EXCHANGE_COUNTS).encode())
+        # Test-only: the subject each product was last looked up as.
+        if path == "/_stub/product-lookup-subjects":
+            return self._send(200, json.dumps(PRODUCT_LOOKUP_SUBJECTS).encode())
+        # Test-only: the traceparent each product was last looked up with.
+        if path == "/_stub/product-lookup-traceparents":
+            return self._send(200, json.dumps(PRODUCT_LOOKUP_TRACEPARENTS).encode())
+        if path.startswith("/api/v1/products/"):
+            PRODUCT_LOOKUP_TRACEPARENTS[path] = self.headers.get("traceparent")
+        if path.startswith("/api/v1/products/") and self.headers.get("Authorization"):
+            PRODUCT_LOOKUP_SUBJECTS[path] = _bearer_subject(self.headers["Authorization"])
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_500_PRODUCT}":
             return self._send(500, b"{}")
         if path == f"/api/v1/products/{WRITE_ACCOUNT}/{ERR_BAD_JSON_PRODUCT}":
@@ -123,7 +264,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get("Authorization"):
                 return self._send(200, json.dumps(RESTRICTED_PRODUCT_JSON).encode())
             return self._send(404, b"{}")
-        body = ROUTES.get(path)
+        if path == f"/api/v1/products/{WRITE_ACCOUNT}":
+            cursor = parse_qs(urlsplit(self.path).query).get("cursor", [None])[0]
+            body = PRODUCT_LIST_PAGES.get(cursor)
+        else:
+            body = ROUTES.get(path)
         if body is None:
             return self._send(404, b"{}")
         self._send(200, json.dumps(body).encode())

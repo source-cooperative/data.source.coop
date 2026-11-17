@@ -91,7 +91,7 @@ jobs:
           name: worker-build-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/
       # Installed separately so the package resolution is uncredentialed too.
-      - run: npm install -g wrangler@3
+      - run: npm install -g wrangler@4
 
       - name: Override service bindings
         if: inputs.service_overrides != ''

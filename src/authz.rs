@@ -1,14 +1,15 @@
-//! Authorization for product backends: write-action classification and the
-//! authorization → federation decision ([`decide_backend_auth`]). Kept wasm-free
-//! so both can be unit-tested natively (see `tests/authz.rs`), despite the
-//! crate's `[lib] test = false`.
+//! Authorization for product backends: write-action classification, the Role
+//! ceiling ([`ceiling_permits`]) and the authorization → federation decision
+//! ([`decide_backend_auth`]). Kept wasm-free so all three can be unit-tested
+//! natively (see `tests/authz.rs`), despite the crate's `[lib] test = false`.
 
 use std::collections::HashMap;
 
 use multistore::error::ProxyError;
-use multistore::types::Action;
+use multistore::types::{AccessScope, Action};
 
 use crate::backend_auth::{apply_backend_auth, BackendAuth};
+use crate::sts::ALL_PRODUCTS;
 
 /// Whether an S3 action mutates the backend. Reads (GET/HEAD/LIST) are served
 /// without a write check; everything else is a write and must be authorized.
@@ -22,6 +23,23 @@ pub(crate) fn is_write_action(action: Action) -> bool {
         action,
         Action::GetObject | Action::HeadObject | Action::ListBucket
     )
+}
+
+/// Whether the Role ceiling sealed into a session (ADR-011) allows `action`.
+/// Checked before anything is fetched, and it only subtracts: what it allows
+/// still needs the account's own permissions.
+///
+/// No scopes means no ceiling: `FullAccess` and `_default` seal none. Otherwise
+/// a scope must name every product ([`ALL_PRODUCTS`]) with no prefix and list
+/// the action. The proxy seals nothing narrower, so a narrower scope is refused
+/// rather than guessed at.
+pub(crate) fn ceiling_permits(scopes: &[AccessScope], action: Action) -> bool {
+    scopes.is_empty()
+        || scopes.iter().any(|scope| {
+            scope.bucket == ALL_PRODUCTS
+                && scope.prefixes.is_empty()
+                && scope.actions.contains(&action)
+        })
 }
 
 /// Authorize a resolved product's request and, only on success, translate the

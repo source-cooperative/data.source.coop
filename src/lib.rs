@@ -3,28 +3,38 @@
 //! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
 //! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
 //! `account:product` bucket → dispatch through the multistore gateway → emit
-//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! analytics + location telemetry → apply CORS. Every response then names its
+//! trace in `x-source-trace-id` (ADR-016). Isolate-shared statics (HTTP
 //! client, JWKS cache, OIDC provider) initialize lazily from the first
 //! request's config.
 
 mod analytics;
 mod authz;
 mod backend_auth;
+mod cache_control;
 mod config;
 mod handlers;
+mod keys;
 mod location;
 mod object_path;
 mod pagination;
+mod platform;
 mod source_api;
 mod sts;
+mod trace;
 
+use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
+use crate::trace::TraceContext;
 use analytics::log_analytics;
+use futures_util::future::Either;
 use handlers::{AccountListHandler, IndexHandler};
 use multistore::api::response::ErrorResponse;
+use multistore::error::ProxyError;
 use multistore::proxy::{GatewayResponse, ProxyGateway};
 use multistore::route_handler::{ProxyResult, RequestInfo};
 use multistore::router::Router;
+use multistore::types::TemporaryCredentials;
 use multistore_cf_workers::{
     collect_js_body, GatewayResponseExt, NoopCredentialRegistry, RequestParts, WorkerBackend,
     WorkerSubscriber,
@@ -33,8 +43,9 @@ use multistore_oidc_provider::backend_auth::{AwsBackendAuth, MaybeOidcAuth};
 use multistore_oidc_provider::route_handler::OidcRouterExt;
 use multistore_oidc_provider::{HttpExchange, OidcCredentialProvider, OidcProviderError};
 use multistore_path_mapping::{MappedRegistry, PathMapping};
-use multistore_sts::jwks::JwksCache;
+use multistore_sts::jwks::{find_key, JwksCache, JwksResponse};
 use multistore_sts::route_handler::StsRouterExt;
+use multistore_sts::{build_sts_response, try_parse_sts_request};
 use object_path::{extract_path_segments, is_keyless_write, mapped_copy_source};
 use std::sync::OnceLock;
 use sts::StsCredentialRegistry;
@@ -62,6 +73,38 @@ fn jwks_cache() -> JwksCache {
     JWKS_CACHE
         .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(900)))
         .clone()
+}
+
+/// A platform issuer's keys, looked up again when `JWKS_CACHE`'s copy lacks a
+/// token's key id: an issuer that rotates (GitHub does) publishes a key before
+/// it signs with it. Held a minute, so a forged key id costs the issuer at
+/// most one fetch a minute per isolate.
+static FRESH_JWKS_CACHE: OnceLock<JwksCache> = OnceLock::new();
+
+/// `issuer`'s published keys, including `kid` if the issuer publishes it.
+async fn platform_keys(issuer: &str, kid: &str) -> Result<JwksResponse, ProxyError> {
+    let keys = fetch_keys(&jwks_cache(), issuer).await?;
+    if find_key(&keys, kid).is_ok() {
+        return Ok(keys);
+    }
+    let fresh = FRESH_JWKS_CACHE
+        .get_or_init(|| JwksCache::new(http_client(), std::time::Duration::from_secs(60)));
+    fetch_keys(fresh, issuer).await
+}
+
+/// `issuer`'s keys from `cache`, bounded by `STS_REQUEST_TIMEOUT`. A failure
+/// is the issuer's, not the token's: an `InternalError` the caller's SDK
+/// retries, where `InvalidIdentityToken` would fail it outright.
+async fn fetch_keys(cache: &JwksCache, issuer: &str) -> Result<JwksResponse, ProxyError> {
+    let fetch = std::pin::pin!(cache.get_or_fetch(issuer));
+    let timeout = std::pin::pin!(worker::Delay::from(STS_REQUEST_TIMEOUT));
+    match futures_util::future::select(fetch, timeout).await {
+        Either::Left((Ok(keys), _)) => Ok(keys),
+        Either::Left((Err(e), _)) => Err(ProxyError::Internal(format!(
+            "keys for {issuer} unavailable: {e}"
+        ))),
+        Either::Right(_) => Err(ProxyError::Internal(format!("keys for {issuer} timed out"))),
+    }
 }
 
 /// Bound the outbound STS `AssumeRoleWithWebIdentity` call. Without it a slow or
@@ -117,6 +160,44 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
+    let traceparent = req.headers().get("traceparent").ok().flatten();
+    let trace = TraceContext::from_traceparent(traceparent.as_deref(), random);
+    // An error from `handle` would become the runtime's own bare 500, with no
+    // trace header; answer it ourselves so the caller can quote the trace.
+    let response = match handle(req, env, ctx, &trace).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(trace_id = %trace.trace_id, error = %e, "request failed");
+            let init = web_sys::ResponseInit::new();
+            init.set_status(500);
+            web_sys::Response::new_with_opt_str_and_init(Some("Internal Server Error"), &init)?
+        }
+    };
+    // A relayed response's headers can be immutable; the trace ID is then
+    // dropped rather than failing the response.
+    let _ = response.headers().set("x-source-trace-id", &trace.trace_id);
+    Ok(response)
+}
+
+/// Random bytes for trace and span IDs. Uniqueness is all they need, so a
+/// failed draw falls back to `Math.random` rather than failing the request:
+/// zeros would be one ID shared by every such request, and one W3C rejects.
+pub(crate) fn random<const N: usize>() -> [u8; N] {
+    let mut bytes = [0; N];
+    if getrandom::fill(&mut bytes).is_err() {
+        for b in &mut bytes {
+            *b = (js_sys::Math::random() * 256.0) as u8;
+        }
+    }
+    bytes
+}
+
+async fn handle(
+    req: web_sys::Request,
+    env: Env,
+    ctx: Context,
+    trace: &TraceContext,
+) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let max_level = init_tracing(&env);
     let config = load_config(&env);
@@ -165,23 +246,6 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // writable and signable) and the backend-auth middleware signs them. See
     // `authz` and `backend_auth`.
 
-    // ── Short-circuit: STS disabled (fail closed) ───────────────────
-    // `/.sts` requires an audience restriction (AUTH_AUDIENCE) to be safe —
-    // without it, an ID token minted for any OAuth client of AUTH_ISSUER could
-    // be exchanged for a user's credentials. When unset, refuse the endpoint
-    // with a 501 rather than serving it unrestricted.
-    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
-        let resp = ErrorResponse {
-            code: "NotImplemented".to_string(),
-            message: "STS token exchange is not configured".to_string(),
-            resource: String::new(),
-            request_id: request_id.clone(),
-        };
-        return Ok(add_cors(
-            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
-        ));
-    }
-
     // ── Short-circuit: write to a keyless path ──────────────────────
     // A keyless PUT/DELETE (e.g. `aws s3 cp f s3://account/product` with no
     // trailing slash) targets the product root, which has no object key.
@@ -229,7 +293,68 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.oidc.signer.clone(),
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
+        trace.clone(),
     );
+
+    // ── Short-circuit: API-key and platform-token exchanges ────────
+    // An `sck_` key at `/.sts` is not a token: nothing verifies it here —
+    // source.coop answers for it, by hash (ADR-013). A platform IdP's token
+    // (GitHub Actions, say) is verified here, then acts as the account
+    // `RoleArn` names only if that account trusts it (ADR-014). Both are
+    // handled ahead of the STS route, which serves the person issuer alone.
+    if parts.path == "/.sts" {
+        // Parsed once for both, where the STS route reads them: the query
+        // string if it carries the parameters, else the form body.
+        let parsed = match try_parse_sts_request(parts.query.as_deref()) {
+            Some(parsed) => Some((parsed, true)),
+            None => try_parse_sts_request(parts.form_body.as_deref()).map(|p| (p, false)),
+        };
+        if let Some((Ok(mut sts), in_url)) = parsed {
+            // SDKs send a token file's contents as-is, and `jq -r … > file`
+            // ends it in a newline, which a JWT's base64 decode rejects.
+            sts.web_identity_token = sts.web_identity_token.trim().to_string();
+            let ip = header_str(&parts.headers, "cf-connecting-ip");
+            let (auth, id) = (&api_auth, request_id.as_str());
+            if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
+            }
+            if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
+            {
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
+            }
+        }
+    }
+
+    // ── Short-circuit: STS disabled (fail closed) ───────────────────
+    // The person issuer's route requires an audience restriction
+    // (AUTH_AUDIENCE) to be safe — without it, an ID token minted for any
+    // OAuth client of AUTH_ISSUER could be exchanged for a user's credentials.
+    // When unset, refuse it with a 501 rather than serving it unrestricted.
+    // API keys and platform tokens, answered above, do not depend on it.
+    if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+        // A 5xx answered before the gateway: write the line the gateway path
+        // writes, so the trace ID is on every 5xx (ADR-016).
+        tracing::warn!(
+            status = 501,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
+        let resp = ErrorResponse {
+            code: "NotImplemented".to_string(),
+            message: "STS token exchange is not configured".to_string(),
+            resource: String::new(),
+            request_id: request_id.clone(),
+        };
+        return Ok(add_cors(add_cache_control(
+            GatewayResponse::Response(ProxyResult::xml(501, resp.to_xml())).into_web_sys(),
+            &parts,
+            config,
+            false,
+        )));
+    }
 
     // ── Build gateway with route handlers ──────────────────────────
     let registry = SourceCoopRegistry::new(
@@ -290,7 +415,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        MappedRegistry::new(registry, mapping.clone()),
+        MappedRegistry::new(registry.clone(), mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
@@ -364,6 +489,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         tracing::warn!(
             status,
             duration_ms,
+            %request_id,
+            trace_id = %trace.trace_id,
             method = %parts.method,
             path = %parts.path,
             content_length = header_str(&parts.headers, "content-length"),
@@ -394,6 +521,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             key,
             duration_ms,
             &config.ip_hash_salt,
+            registry.principal(),
         );
     }
 
@@ -417,7 +545,28 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         }
     }
 
-    let response = add_cors(response);
+    // Non-public products are cached `private` whoever reads them. Fails
+    // closed: a product the lookup can't resolve is treated as private.
+    let private = match (account, product) {
+        (Some(acct), Some(prod))
+            if !parts.path.starts_with("/.")
+                && matches!(parts.method, http::Method::GET | http::Method::HEAD)
+                && response.status() != 304 =>
+        {
+            !source_api::cache::get_or_fetch_product(
+                &config.api_base_url,
+                acct,
+                prod,
+                &api_auth,
+                &request_id,
+                None,
+            )
+            .await
+            .is_ok_and(|p| p.is_public())
+        }
+        _ => false,
+    };
+    let response = add_cors(add_cache_control(response, &parts, config, private));
     if !request_id.is_empty() {
         let _ = response.headers().set("x-request-id", &request_id);
     }
@@ -452,6 +601,419 @@ pub(crate) fn header_str<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a st
         .unwrap_or("")
 }
 
+// ── Cache-Control ───────────────────────────────────────────────────
+
+/// Add the default `Cache-Control` where the backend set no freshness policy of
+/// its own. Without it a read carries `Last-Modified` but no directive, and
+/// RFC 9111 §4.2.2 lets caches invent a lifetime — which served pre-publish STAC
+/// metadata to browsers (#225). The policy lives in [`cache_control`]. Not
+/// called on the OPTIONS and keyless-write short-circuits, which it would skip
+/// anyway (non-reads).
+fn add_cache_control(
+    resp: web_sys::Response,
+    parts: &RequestParts,
+    config: &config::AppConfig,
+    private: bool,
+) -> web_sys::Response {
+    let h = resp.headers();
+    let existing = h.get("cache-control").ok().flatten();
+    if let Some(value) = cache_control::default_cache_control(
+        &parts.method,
+        &parts.path,
+        resp.status(),
+        existing.as_deref(),
+        h.get("expires").ok().flatten().is_some(),
+        private,
+        config.default_cache_control.as_deref(),
+    ) {
+        if let Err(e) = h.set("cache-control", &value) {
+            tracing::warn!("failed to set cache-control header: {:?}", e);
+        }
+    }
+    resp
+}
+
+// ── API keys ────────────────────────────────────────────────────────
+
+/// A `/.sts` exchange answered before the gateway, with the cache policy, the
+/// CORS headers and the request id every gateway response carries — as `x-request-id`, and as
+/// `x-amzn-requestid`, the header AWS SDKs read it from. A 5xx gets the
+/// `trace_id` line the gateway path writes, since this returns before it.
+fn finish_sts(
+    (status, xml): (u16, String),
+    parts: &RequestParts,
+    config: &config::AppConfig,
+    request_id: &str,
+    trace: &TraceContext,
+) -> web_sys::Response {
+    if status >= 500 {
+        tracing::warn!(
+            status,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
+    }
+    let response = add_cors(add_cache_control(
+        GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys(),
+        parts,
+        config,
+        false,
+    ));
+    if !request_id.is_empty() {
+        let _ = response.headers().set("x-request-id", request_id);
+        let _ = response.headers().set("x-amzn-requestid", request_id);
+    }
+    response
+}
+
+/// The rate-limiter binding for `/.sts` exchanges that may cost a Source API
+/// call, keyed by client IP: every API-key exchange, and each platform-token
+/// exchange the trust cache cannot answer.
+const STS_EXCHANGE_LIMIT: &str = "STS_EXCHANGE_LIMIT";
+
+/// The API-key exchange, if this request is one: `None` when it does not carry
+/// an `sck_` key, so the STS route takes it. A key is accepted from the form
+/// body only — Cloudflare logs the URL — and the refusal for one in the query
+/// string says so, because that is the one mistake a user can fix.
+async fn api_key_exchange(
+    config: &AppConfig,
+    env: &Env,
+    client_ip: &str,
+    api_auth: &ApiAuth,
+    request_id: &str,
+    sts: &multistore_sts::request::StsRequest,
+    in_url: bool,
+) -> Option<(u16, String)> {
+    if !keys::looks_like_api_key(&sts.web_identity_token) {
+        return None;
+    }
+    if in_url {
+        tracing::warn!(%request_id, reason = "query_string", "API key exchange refused");
+        return Some(key_refusal(
+            "API key must be sent in the request body, not the URL",
+            request_id,
+        ));
+    }
+
+    // A repeated key is answered from the standing cache, but each distinct key
+    // costs a lookup, so the flood to bound is distinct junk keys from one
+    // place. Legitimate key exchanges are rare, once per session; the limit is
+    // shared with platform-token lookups from the same address.
+    if !within_rate_limit(env, client_ip).await {
+        tracing::warn!(%request_id, reason = "rate_limited", "API key exchange refused");
+        return Some(throttled());
+    }
+
+    Some(
+        match exchange_api_key(config, sts, api_auth, request_id).await {
+            Ok(creds) => build_sts_response(&creds),
+            // A key that fails its shape or checksum was cut short or mistyped,
+            // which the user can fix; saying so reveals nothing, since the
+            // format is public and no lookup was made.
+            Err(ProxyError::InvalidOidcToken(reason)) if reason == "malformed" => key_refusal(
+                "API key is malformed; check that it was copied whole",
+                request_id,
+            ),
+            // One answer for every other refusal of the key — unknown, revoked,
+            // expired, disabled. `exchange_api_key` has logged why.
+            Err(ProxyError::InvalidOidcToken(_)) => {
+                key_refusal("API key was not accepted", request_id)
+            }
+            // A bad role is about the request, not the key; anything else is the
+            // API being unreachable, which fails closed as a 500 the SDK retries.
+            Err(e) => {
+                tracing::warn!(%request_id, error = %e, "API key exchange failed");
+                sts_refusal(&e, request_id)
+            }
+        },
+    )
+}
+
+/// Record which access key an API-key or platform exchange issued, and to whom:
+/// the request's analytics carry only the access key ID and the account it acts
+/// as, and this line maps the one to the API key or platform subject behind it.
+/// Written to the console directly, so `LOG_LEVEL=WARN` keeps it at info level
+/// rather than as a warning M6 would count. Once per session, so cheap. A
+/// person's own session needs none: its principal already names them.
+fn log_issued(creds: &TemporaryCredentials, mut fields: serde_json::Value) {
+    fields["message"] = "credentials issued".into();
+    fields["access_key_id"] = creds.access_key_id.as_str().into();
+    fields["account_id"] = creds.source_identity.as_str().into();
+    fields["expires"] = creds.expiration.to_rfc3339().into();
+    worker::console_log!("{fields}");
+}
+
+/// `InvalidIdentityToken`, with the request id in the message.
+fn key_refusal(message: &str, request_id: &str) -> (u16, String) {
+    sts_refusal(&ProxyError::InvalidOidcToken(message.into()), request_id)
+}
+
+/// The STS error for `e`, mapped as multistore's `build_sts_error_response`
+/// maps it, with the request id in the message. Built here because that one
+/// writes the message unescaped, and it can carry a caller's `RoleArn` or a
+/// token's `kid`.
+fn sts_refusal(e: &ProxyError, request_id: &str) -> (u16, String) {
+    let (status, code, message) = match e {
+        ProxyError::RoleNotFound(r) => (
+            400,
+            "MalformedPolicyDocument",
+            format!("role not found: {r}"),
+        ),
+        ProxyError::InvalidOidcToken(m) => (400, "InvalidIdentityToken", m.clone()),
+        ProxyError::InvalidRequest(m) => (400, "InvalidParameterValue", m.clone()),
+        ProxyError::AccessDenied => (403, "AccessDenied", "access denied".to_string()),
+        _ => (500, "InternalError", "internal error".to_string()),
+    };
+    let message = with_request_id(&message, request_id);
+    (status, sts_error_xml(code, &message))
+}
+
+/// `message` with the request id, if there is one: SDKs show a user the
+/// message and nothing else, and the id is what finds the log line.
+fn with_request_id(message: &str, request_id: &str) -> String {
+    if request_id.is_empty() {
+        message.to_string()
+    } else {
+        format!("{message} (request id {request_id})")
+    }
+}
+
+/// Hash the key, ask source.coop for its standing, and mint for the account
+/// it names. A refused key is logged here, once, and returned as
+/// `InvalidOidcToken`. The proxy knows only "malformed" or "inactive": which
+/// of unknown, revoked, expired or disabled is in source.coop's log under the
+/// same request id.
+async fn exchange_api_key(
+    config: &AppConfig,
+    sts: &multistore_sts::request::StsRequest,
+    api_auth: &ApiAuth,
+    request_id: &str,
+) -> Result<TemporaryCredentials, ProxyError> {
+    let Some(key) = keys::parse_api_key(&sts.web_identity_token) else {
+        tracing::warn!(%request_id, reason = "malformed", "API key exchange refused");
+        return Err(ProxyError::InvalidOidcToken("malformed".into()));
+    };
+    let Some(role) = sts::role(
+        &sts.role_arn,
+        config.auth_issuer.clone(),
+        config.auth_audiences.clone(),
+        config.sts_max_session_duration_secs,
+    ) else {
+        return Err(ProxyError::RoleNotFound(sts.role_arn.clone()));
+    };
+    let key_hash = keys::key_hash(key);
+    let standing = source_api::cache::get_or_fetch_key_standing(
+        &config.api_base_url,
+        &key_hash,
+        api_auth,
+        request_id,
+    )
+    .await
+    .map_err(|e| match e {
+        // The route answers 200 for any well-formed hash; a 404 means the API
+        // does not serve it, which is a deployment mismatch, not an unknown key.
+        ProxyError::BucketNotFound(_) => {
+            ProxyError::Internal("key standing route not found".into())
+        }
+        e => e,
+    })?;
+    let key_id = standing.key_id.as_deref().unwrap_or("");
+    let hash_prefix = &key_hash[..8];
+    let account_id = match (standing.active, standing.account_id) {
+        (true, Some(account_id)) => account_id,
+        _ => {
+            tracing::warn!(%request_id, key_id, hash_prefix, "API key is not active");
+            return Err(ProxyError::InvalidOidcToken("inactive".into()));
+        }
+    };
+    let creds = keys::credentials_for(
+        &role,
+        &account_id,
+        sts.duration_seconds,
+        &config.session_token_key,
+    )?;
+    log_issued(
+        &creds,
+        serde_json::json!({ "request_id": request_id, "via": "api_key", "key_id": key_id, "role": &role.role_id }),
+    );
+    Ok(creds)
+}
+
+/// Whether `client_ip` may make another exchange attempt now. A missing
+/// binding is a deployment error, logged as such; it does not refuse traffic.
+async fn within_rate_limit(env: &Env, client_ip: &str) -> bool {
+    let key = if client_ip.is_empty() {
+        "unknown"
+    } else {
+        client_ip
+    };
+    match env.rate_limiter(STS_EXCHANGE_LIMIT) {
+        Ok(limiter) => match limiter.limit(key.to_string()).await {
+            Ok(outcome) => outcome.success,
+            Err(e) => {
+                tracing::warn!("rate limiter call failed: {e}");
+                true
+            }
+        },
+        Err(_) => {
+            tracing::error!(
+                "{STS_EXCHANGE_LIMIT} binding is not configured; exchanges are unlimited"
+            );
+            true
+        }
+    }
+}
+
+/// The answer to an exchange over `STS_EXCHANGE_LIMIT`, which SDKs back off on.
+fn throttled() -> (u16, String) {
+    (
+        429,
+        sts_error_xml(
+            "Throttling",
+            "too many exchanges from this address; retry later",
+        ),
+    )
+}
+
+/// An STS-shaped error body. The message is escaped: it can carry text the
+/// caller sent, and the body is served as XML.
+fn sts_error_xml(code: &str, message: &str) -> String {
+    let message = message
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse><Error><Code>{code}</Code><Message>{message}</Message></Error></ErrorResponse>"
+    )
+}
+
+// ── Platform identity providers ─────────────────────────────────────
+
+/// The exchange of a platform issuer's token, if this request carries one:
+/// `None` for any other token, which the STS route takes. Like an API key, the
+/// token is accepted from the form body only: Cloudflare logs the URL, and a
+/// logged token could be replayed for credentials until it expires.
+///
+/// The token is verified, then credentials are minted for the service account
+/// `RoleArn` names if that account trusts the token's issuer and subject
+/// (ADR-014). They act as the account, never as the token's subject.
+/// Everything local comes first, so a token that fails it costs the Source API
+/// nothing; what does cost a call is rate-limited per address. Every refusal
+/// of the account's trust reads the same, whatever the reason.
+async fn platform_exchange(
+    config: &AppConfig,
+    env: &Env,
+    client_ip: &str,
+    api_auth: &ApiAuth,
+    request_id: &str,
+    sts: &multistore_sts::request::StsRequest,
+    in_url: bool,
+) -> Option<(u16, String)> {
+    let (header, claims) = platform::unverified(&sts.web_identity_token)?;
+    let issuer = claims.get("iss")?.as_str()?;
+    let audiences = config.platform_issuers.get(issuer)?;
+    if in_url {
+        tracing::warn!(%request_id, %issuer, reason = "query_string", "platform token exchange refused");
+        let message = "WebIdentityToken must be sent in the request body, not the URL";
+        return Some(sts_refusal(
+            &ProxyError::InvalidRequest(message.into()),
+            request_id,
+        ));
+    }
+    let minted: Result<TemporaryCredentials, (u16, String)> = async {
+        let failed = |e: ProxyError| {
+            tracing::warn!(%request_id, %issuer, error = %e, "platform token exchange failed");
+            sts_refusal(&e, request_id)
+        };
+        let not_authorized = || {
+            let message = "Not authorized to perform sts:AssumeRoleWithWebIdentity";
+            (
+                403,
+                sts_error_xml("AccessDenied", &with_request_id(message, request_id)),
+            )
+        };
+
+        let role = sts::role(
+            &sts.role_arn,
+            issuer.to_string(),
+            audiences.to_vec(),
+            config.sts_max_session_duration_secs,
+        )
+        .ok_or_else(|| failed(ProxyError::RoleNotFound(sts.role_arn.clone())))?;
+        let account = sts::account(&sts.role_arn).ok_or_else(|| {
+            failed(ProxyError::InvalidRequest(
+                "RoleArn must name the account to act as: arn:aws:iam::ACCOUNT:role/ROLE".into(),
+            ))
+        })?;
+        // Only a service account trusts subjects (ADR-014), and the credentials'
+        // principal is this segment as given, which source.coop tries as an Ory
+        // identity first. So anything else is refused before the token is
+        // verified or anything is signed as it.
+        if !sts::is_service_account_id(account) {
+            tracing::warn!(%request_id, %issuer, %account, "RoleArn names no service account");
+            return Err(not_authorized());
+        }
+        let kid = header["kid"]
+            .as_str()
+            .ok_or_else(|| failed(ProxyError::InvalidOidcToken("JWT missing kid".into())))?;
+        let keys = platform_keys(issuer, kid).await.map_err(failed)?;
+        let subject =
+            platform::verify(&sts.web_identity_token, kid, &keys, issuer, &role).map_err(failed)?;
+        let api = config.api_base_url.as_str();
+        let answer = match source_api::cache::cached_trust(api, account, issuer, &subject).await {
+            Some(answer) => answer,
+            None => {
+                // Anyone can mint a token for this audience in their own workflow,
+                // so a lookup the cache cannot answer is rate-limited; a cached
+                // answer costs the Source API nothing and is not.
+                if !within_rate_limit(env, client_ip).await {
+                    tracing::warn!(%request_id, %issuer, reason = "rate_limited", "platform token exchange refused");
+                    return Err(throttled());
+                }
+                source_api::cache::get_or_fetch_trust(
+                    api, account, issuer, &subject, api_auth, request_id,
+                )
+                .await
+            }
+        };
+        match answer {
+            Ok(()) => {}
+            Err(ProxyError::AccessDenied) => {
+                tracing::warn!(%request_id, %issuer, %subject, %account, "account does not trust the token");
+                return Err(not_authorized());
+            }
+            // The route answers for any account; a 404 means the API does not
+            // serve it, which is a deployment mismatch, not a refusal.
+            Err(ProxyError::BucketNotFound(_)) => {
+                return Err(failed(ProxyError::Internal(
+                    "trusts route not found".into(),
+                )))
+            }
+            Err(e) => return Err(failed(e)),
+        }
+        let creds = keys::credentials_for(
+            &role,
+            account,
+            sts.duration_seconds,
+            &config.session_token_key,
+        )
+        .map_err(failed)?;
+        log_issued(
+            &creds,
+            serde_json::json!({ "request_id": request_id, "via": "platform", "issuer": issuer, "subject": subject, "role": &role.role_id }),
+        );
+        Ok(creds)
+    }
+    .await;
+    Some(match minted {
+        Ok(creds) => build_sts_response(&creds),
+        Err(response) => response,
+    })
+}
+
 // ── CORS ────────────────────────────────────────────────────────────
 
 fn add_cors(resp: web_sys::Response) -> web_sys::Response {
@@ -464,6 +1026,10 @@ fn add_cors(resp: web_sys::Response) -> web_sys::Response {
         ),
         ("access-control-allow-headers", "*"),
         ("access-control-expose-headers", "*"),
+        // Browsers cache a preflight per URL; Chrome caps this at 7200s.
+        // Every batch DeleteObjects for a product posts to the same URL,
+        // so a long cache lets the second batch onward skip its OPTIONS.
+        ("access-control-max-age", "7200"),
     ] {
         if let Err(e) = h.set(name, value) {
             tracing::warn!("failed to set CORS header {}: {:?}", name, e);

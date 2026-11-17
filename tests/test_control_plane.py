@@ -34,6 +34,9 @@ def test_restricted_product_hidden_from_anonymous():
     )
     assert resp.status_code == 404
     assert "<Code>NoSuchBucket</Code>" in resp.text
+    # Non-public products are never storable by a shared cache, even when the
+    # answer is a denial.
+    assert "private" in resp.headers.get("cache-control", "")
 
 
 @needs_token

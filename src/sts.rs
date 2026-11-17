@@ -1,24 +1,30 @@
 //! STS credential registry for token exchange.
 //!
-//! Provides a hardcoded `_default` role that trusts the Source Cooperative auth
-//! provider, enabling clients to exchange OIDC tokens for temporary S3-style credentials.
+//! Serves the hardcoded Roles (ADR-014): `FullAccess`, everything the caller's
+//! memberships allow, and `ReadOnly`, the same with writing removed. `_default`
+//! is `FullAccess` under the name existing clients already use. There is no
+//! lookup: account-owned Roles (ADR-010) are deferred, and a Role only ever
+//! subtracts from the account's own permissions, so any caller may name either.
 
 use multistore::error::ProxyError;
 use multistore::registry::CredentialRegistry;
-use multistore::types::{RoleConfig, StoredCredential};
+use multistore::types::{AccessScope, Action, RoleConfig, StoredCredential};
 
-/// Credential registry that serves a single hardcoded `_default` role.
-///
-/// The default role trusts the Source Cooperative auth provider with no scope
-/// restrictions, so any user holding a token for one of the configured
-/// audiences (`required_audiences`) can obtain temporary credentials.
+/// The bucket a Role's scope names to cover every product. Only the proxy's
+/// registry reads scopes — multistore's own scope check never runs on this
+/// gateway — so the wildcard means what `authz::ceiling_permits` says it does.
+pub(crate) const ALL_PRODUCTS: &str = "*";
+
+/// Credential registry that serves the hardcoded Roles.
 #[derive(Clone)]
 pub struct StsCredentialRegistry {
-    default_role: RoleConfig,
+    oidc_issuer: String,
+    required_audiences: Vec<String>,
+    max_session_duration_secs: u64,
 }
 
 impl StsCredentialRegistry {
-    /// Create a new registry whose `_default` role trusts the given auth issuer.
+    /// Create a new registry whose Roles trust the given auth issuer.
     ///
     /// `required_audiences` restricts token exchange to subject tokens minted
     /// for one of these OAuth clients (the `aud` claim); a token is accepted if
@@ -36,17 +42,97 @@ impl StsCredentialRegistry {
         max_session_duration_secs: u64,
     ) -> Self {
         Self {
-            default_role: RoleConfig {
-                role_id: "_default".to_string(),
-                name: "Default".to_string(),
-                trusted_oidc_issuers: vec![oidc_issuer],
-                required_audiences,
-                subject_conditions: vec![],
-                allowed_scopes: vec![], // unlimited
-                max_session_duration_secs,
-            },
+            oidc_issuer,
+            required_audiences,
+            max_session_duration_secs,
         }
     }
+}
+
+/// The Role `role_arn` names, trusting `oidc_issuer` for tokens minted for one
+/// of `required_audiences`; `None` for a name the proxy does not serve. Never a
+/// fallback: a workload that asks for a Role it cannot have fails at exchange
+/// rather than receiving different access than it asked for. Shared with the
+/// API-key exchange, which mints under the named Role once the API has named
+/// the account (`keys::credentials_for`).
+pub(crate) fn role(
+    role_arn: &str,
+    oidc_issuer: String,
+    required_audiences: Vec<String>,
+    max_session_duration_secs: u64,
+) -> Option<RoleConfig> {
+    let name = role_name(role_arn)?;
+    let allowed_scopes = match name {
+        // No scopes, no ceiling: the account's permissions are the only limit.
+        "FullAccess" | "_default" => vec![],
+        // Sealed into the session; `authz::ceiling_permits` enforces it.
+        "ReadOnly" => vec![AccessScope {
+            bucket: ALL_PRODUCTS.to_string(),
+            prefixes: vec![],
+            actions: vec![Action::GetObject, Action::HeadObject, Action::ListBucket],
+        }],
+        _ => return None,
+    };
+    Some(RoleConfig {
+        role_id: name.to_string(),
+        name: name.to_string(),
+        trusted_oidc_issuers: vec![oidc_issuer],
+        required_audiences,
+        // Any subject: the person issuer's token names the person, and a
+        // platform token acts only as an account that trusts its subject.
+        subject_conditions: vec!["*".to_string()],
+        // Every issuer must set `exp`; a token without one is replayable for good.
+        allow_missing_exp_from: vec![],
+        allowed_scopes,
+        max_session_duration_secs,
+    })
+}
+
+/// The Role name in `role_arn`: a bare name, or the `role/<name>` resource of
+/// an ARN of any partition and account, such as
+/// `arn:aws:iam::000000000000:role/ReadOnly`.
+///
+/// The ARN form exists because AWS SDKs validate `RoleArn` client-side (ARN
+/// shape, 20-character minimum) before the request is ever sent, so a bare name
+/// can't reach the server from standard tooling (see
+/// source-cooperative/data.source.coop#184). The partition and account carry no
+/// meaning for the Role itself, so they are ignored rather than validated.
+fn role_name(role_arn: &str) -> Option<&str> {
+    if !role_arn.starts_with("arn:") {
+        return Some(role_arn);
+    }
+    role_arn.splitn(6, ':').nth(5)?.strip_prefix("role/")
+}
+
+/// The account segment of an ARN-form `role_arn`
+/// (`arn:aws:iam::<account>:role/<name>`): the account a platform IdP's token
+/// asks to act as (ADR-014). `None` for a bare name or an empty account.
+pub(crate) fn account(role_arn: &str) -> Option<&str> {
+    match role_arn.splitn(6, ':').collect::<Vec<_>>()[..] {
+        ["arn", _, _, _, account, _] if !account.is_empty() => Some(account),
+        _ => None,
+    }
+}
+
+/// Whether `id` is a service account's id, `{owner}--{name}`: source.coop's
+/// `SERVICE_ACCOUNT_ID_REGEX` and its 82-character limit. Each half is at least
+/// two of `a-z`, `0-9` and inner single hyphens, so the one `--` is the
+/// separator, and no person's or organisation's handle, nor an Ory identity
+/// id, can match.
+pub(crate) fn is_service_account_id(id: &str) -> bool {
+    let half = |part: &str| {
+        part.len() >= 2
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && !part.contains("--")
+    };
+    id.len() <= 82
+        && id
+            .split_once("--")
+            .is_some_and(|(owner, name)| half(owner) && half(name))
 }
 
 impl CredentialRegistry for StsCredentialRegistry {
@@ -59,29 +145,11 @@ impl CredentialRegistry for StsCredentialRegistry {
     }
 
     async fn get_role(&self, role_id: &str) -> Result<Option<RoleConfig>, ProxyError> {
-        // TODO: Eventually look up roles via the Source Cooperative API so that
-        // individual repositories can define custom roles with fine-grained
-        // scope and subject restrictions (e.g. per-repo CI/CD access).
-        // For now, only the hardcoded `_default` role is supported.
-        if is_default_role(role_id) {
-            Ok(Some(self.default_role.clone()))
-        } else {
-            Ok(None)
-        }
+        Ok(role(
+            role_id,
+            self.oidc_issuer.clone(),
+            self.required_audiences.clone(),
+            self.max_session_duration_secs,
+        ))
     }
-}
-
-/// Whether `role_id` names the `_default` role — literally, or via an
-/// ARN-shaped alias whose resource is `role/_default` (any partition/account,
-/// e.g. `arn:aws:iam::000000000000:role/_default`).
-///
-/// The alias exists because AWS SDKs validate `RoleArn` client-side (ARN shape,
-/// 20-character minimum) before the request is ever sent, so a bare `_default`
-/// can't reach the server from standard tooling. Accepting the alias keeps
-/// `/.sts` a drop-in `AssumeRoleWithWebIdentity` target for unmodified SDKs
-/// (see source-cooperative/data.source.coop#184). Same role, same trust model —
-/// only the name is longer; the partition/account portion is ignored rather
-/// than validated because it carries no meaning here.
-pub(crate) fn is_default_role(role_id: &str) -> bool {
-    role_id == "_default" || (role_id.starts_with("arn:") && role_id.ends_with(":role/_default"))
 }
