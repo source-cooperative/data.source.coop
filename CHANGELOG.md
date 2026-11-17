@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.5.5](https://github.com/source-cooperative/data.source.coop/compare/v2.5.4...v2.5.5) (2026-11-17)
+
+
+### Features
+
+* **observability:** continue the caller's trace and return x-source-trace-id ([#269](https://github.com/source-cooperative/data.source.coop/issues/269)) ([3abad5a](https://github.com/source-cooperative/data.source.coop/commit/3abad5aa0f6c697067841e27541c15d4bea019f8))
+
+
+### Bug Fixes
+
+* **analytics:** record the verified principal and access key of each signed request ([#279](https://github.com/source-cooperative/data.source.coop/issues/279)) ([fe2aad2](https://github.com/source-cooperative/data.source.coop/commit/fe2aad275072a3dd224b98a9d2015b54c1348cfa))
+* **monitoring:** lower M8's Analytics rows floor to 10,000 ([#278](https://github.com/source-cooperative/data.source.coop/issues/278)) ([4fe4e40](https://github.com/source-cooperative/data.source.coop/commit/4fe4e40fe6d6033568f0928deac671f3b8fe6951))
+* **monitoring:** measure M7 latency over reads only, and label each alert's kind in ADR-015 ([#276](https://github.com/source-cooperative/data.source.coop/issues/276)) ([8cbd27f](https://github.com/source-cooperative/data.source.coop/commit/8cbd27fdd7c1880f4c027710f98540f058a959e5))
+
+
+### Miscellaneous Chores
+
+* release 2.5.5 ([cf21a1f](https://github.com/source-cooperative/data.source.coop/commit/cf21a1f27f806364b8680a6dc7ef9d7c8fca1e57))
+
 ## [2.5.4](https://github.com/source-cooperative/data.source.coop/compare/v2.5.3...v2.5.4) (2026-11-14)
 
 
