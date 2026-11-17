@@ -21,6 +21,14 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  monitors:
+    name: Monitor definitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 monitoring/test_apply.py
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

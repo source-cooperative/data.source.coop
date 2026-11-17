@@ -32,6 +32,12 @@ command = "cargo install -q worker-build@0.7.5 && worker-build --release"
 [observability]
 enabled = true
 head_sampling_rate = 1
+# Presigned URLs carry X-Amz-Signature in the query string (ADR-015).
+redact_query_string = true
+
+# Off: the M1 Issues alert is account-wide and would page on previews (ADR-015).
+[observability.issues]
+enabled = false
 
 [observability.logs]
 enabled = true
