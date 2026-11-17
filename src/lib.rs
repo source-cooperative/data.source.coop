@@ -3,7 +3,8 @@
 //! Each request flows through `fetch`: parse → short-circuit (OPTIONS / writes
 //! / STS-disabled) → rewrite `/{account}/{product}/{key}` to an internal
 //! `account:product` bucket → dispatch through the multistore gateway → emit
-//! analytics + location telemetry → apply CORS. Isolate-shared statics (HTTP
+//! analytics + location telemetry → apply CORS. Every response then names its
+//! trace in `x-source-trace-id` (ADR-016). Isolate-shared statics (HTTP
 //! client, JWKS cache, OIDC provider) initialize lazily from the first
 //! request's config.
 
@@ -20,9 +21,11 @@ mod pagination;
 mod platform;
 mod source_api;
 mod sts;
+mod trace;
 
 use crate::config::AppConfig;
 use crate::source_api::{ApiAuth, SourceCoopRegistry};
+use crate::trace::TraceContext;
 use analytics::log_analytics;
 use futures_util::future::Either;
 use handlers::{AccountListHandler, IndexHandler};
@@ -157,6 +160,44 @@ static OIDC_PROVIDER: OnceLock<OidcCredentialProvider<FetchHttpExchange>> = Once
 
 #[event(fetch)]
 async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys::Response> {
+    let traceparent = req.headers().get("traceparent").ok().flatten();
+    let trace = TraceContext::from_traceparent(traceparent.as_deref(), random);
+    // An error from `handle` would become the runtime's own bare 500, with no
+    // trace header; answer it ourselves so the caller can quote the trace.
+    let response = match handle(req, env, ctx, &trace).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(trace_id = %trace.trace_id, error = %e, "request failed");
+            let init = web_sys::ResponseInit::new();
+            init.set_status(500);
+            web_sys::Response::new_with_opt_str_and_init(Some("Internal Server Error"), &init)?
+        }
+    };
+    // A relayed response's headers can be immutable; the trace ID is then
+    // dropped rather than failing the response.
+    let _ = response.headers().set("x-source-trace-id", &trace.trace_id);
+    Ok(response)
+}
+
+/// Random bytes for trace and span IDs. Uniqueness is all they need, so a
+/// failed draw falls back to `Math.random` rather than failing the request:
+/// zeros would be one ID shared by every such request, and one W3C rejects.
+pub(crate) fn random<const N: usize>() -> [u8; N] {
+    let mut bytes = [0; N];
+    if getrandom::fill(&mut bytes).is_err() {
+        for b in &mut bytes {
+            *b = (js_sys::Math::random() * 256.0) as u8;
+        }
+    }
+    bytes
+}
+
+async fn handle(
+    req: web_sys::Request,
+    env: Env,
+    ctx: Context,
+    trace: &TraceContext,
+) -> Result<web_sys::Response> {
     console_error_panic_hook::set_once();
     let max_level = init_tracing(&env);
     let config = load_config(&env);
@@ -252,6 +293,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         config.oidc.signer.clone(),
         config.oidc.issuer.clone(),
         config.api_base_url.clone(),
+        trace.clone(),
     );
 
     // ── Short-circuit: API-key and platform-token exchanges ────────
@@ -274,11 +316,11 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             let ip = header_str(&parts.headers, "cf-connecting-ip");
             let (auth, id) = (&api_auth, request_id.as_str());
             if let Some(result) = api_key_exchange(config, &env, ip, auth, id, &sts, in_url).await {
-                return Ok(finish_sts(result, &parts, config, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
             }
             if let Some(result) = platform_exchange(config, &env, ip, auth, id, &sts, in_url).await
             {
-                return Ok(finish_sts(result, &parts, config, &request_id));
+                return Ok(finish_sts(result, &parts, config, &request_id, trace));
             }
         }
     }
@@ -290,6 +332,16 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
     // When unset, refuse it with a 501 rather than serving it unrestricted.
     // API keys and platform tokens, answered above, do not depend on it.
     if parts.path == "/.sts" && config.auth_audiences.is_empty() {
+        // A 5xx answered before the gateway: write the line the gateway path
+        // writes, so the trace ID is on every 5xx (ADR-016).
+        tracing::warn!(
+            status = 501,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
         let resp = ErrorResponse {
             code: "NotImplemented".to_string(),
             message: "STS token exchange is not configured".to_string(),
@@ -363,7 +415,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
 
     let gateway = ProxyGateway::new(
         WorkerBackend,
-        MappedRegistry::new(registry, mapping.clone()),
+        MappedRegistry::new(registry.clone(), mapping.clone()),
         NoopCredentialRegistry,
         None,
     )
@@ -437,6 +489,8 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
         tracing::warn!(
             status,
             duration_ms,
+            %request_id,
+            trace_id = %trace.trace_id,
             method = %parts.method,
             path = %parts.path,
             content_length = header_str(&parts.headers, "content-length"),
@@ -467,6 +521,7 @@ async fn fetch(req: web_sys::Request, env: Env, ctx: Context) -> Result<web_sys:
             key,
             duration_ms,
             &config.ip_hash_salt,
+            registry.principal(),
         );
     }
 
@@ -582,13 +637,25 @@ fn add_cache_control(
 
 /// A `/.sts` exchange answered before the gateway, with the cache policy, the
 /// CORS headers and the request id every gateway response carries — as `x-request-id`, and as
-/// `x-amzn-requestid`, the header AWS SDKs read it from.
+/// `x-amzn-requestid`, the header AWS SDKs read it from. A 5xx gets the
+/// `trace_id` line the gateway path writes, since this returns before it.
 fn finish_sts(
     (status, xml): (u16, String),
     parts: &RequestParts,
     config: &config::AppConfig,
     request_id: &str,
+    trace: &TraceContext,
 ) -> web_sys::Response {
+    if status >= 500 {
+        tracing::warn!(
+            status,
+            %request_id,
+            trace_id = %trace.trace_id,
+            method = %parts.method,
+            path = %parts.path,
+            "server error response"
+        );
+    }
     let response = add_cors(add_cache_control(
         GatewayResponse::Response(ProxyResult::xml(status, xml)).into_web_sys(),
         parts,
@@ -663,6 +730,20 @@ async fn api_key_exchange(
             }
         },
     )
+}
+
+/// Record which access key an API-key or platform exchange issued, and to whom:
+/// the request's analytics carry only the access key ID and the account it acts
+/// as, and this line maps the one to the API key or platform subject behind it.
+/// Written to the console directly, so `LOG_LEVEL=WARN` keeps it at info level
+/// rather than as a warning M6 would count. Once per session, so cheap. A
+/// person's own session needs none: its principal already names them.
+fn log_issued(creds: &TemporaryCredentials, mut fields: serde_json::Value) {
+    fields["message"] = "credentials issued".into();
+    fields["access_key_id"] = creds.access_key_id.as_str().into();
+    fields["account_id"] = creds.source_identity.as_str().into();
+    fields["expires"] = creds.expiration.to_rfc3339().into();
+    worker::console_log!("{fields}");
 }
 
 /// `InvalidIdentityToken`, with the request id in the message.
@@ -754,7 +835,10 @@ async fn exchange_api_key(
         sts.duration_seconds,
         &config.session_token_key,
     )?;
-    tracing::info!(%request_id, key_id, %account_id, role = %role.role_id, "API key exchanged");
+    log_issued(
+        &creds,
+        serde_json::json!({ "request_id": request_id, "via": "api_key", "key_id": key_id, "role": &role.role_id }),
+    );
     Ok(creds)
 }
 
@@ -917,7 +1001,10 @@ async fn platform_exchange(
             &config.session_token_key,
         )
         .map_err(failed)?;
-        tracing::info!(%request_id, %issuer, %subject, %account, role = %role.role_id, "platform token exchanged");
+        log_issued(
+            &creds,
+            serde_json::json!({ "request_id": request_id, "via": "platform", "issuer": issuer, "subject": subject, "role": &role.role_id }),
+        );
         Ok(creds)
     }
     .await;

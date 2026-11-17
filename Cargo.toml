@@ -2,7 +2,7 @@
 authors = ["Anthony Lukach <anthonylukach@gmail.com>"]
 edition = "2021"
 name = "source-data-proxy"
-version = "2.5.1"
+version = "2.5.4"
 
 [lib]
 crate-type = ["cdylib"]
@@ -41,6 +41,10 @@ path = "tests/cache_control.rs"
 [[test]]
 name = "keys"
 path = "tests/keys.rs"
+
+[[test]]
+name = "trace"
+path = "tests/trace.rs"
 
 [dependencies]
 # Multistore

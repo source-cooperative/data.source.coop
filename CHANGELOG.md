@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.5.4](https://github.com/source-cooperative/data.source.coop/compare/v2.5.3...v2.5.4) (2026-11-14)
+
+
+### Bug Fixes
+
+* **monitoring:** stay within Cloudflare's five SQL Monitor limit ([#274](https://github.com/source-cooperative/data.source.coop/issues/274)) ([b00640a](https://github.com/source-cooperative/data.source.coop/commit/b00640a4dc48e723fa44e35df4bb974bc04eb60d))
+
+## [2.5.3](https://github.com/source-cooperative/data.source.coop/compare/v2.5.2...v2.5.3) (2026-11-14)
+
+
+### Features
+
+* **monitoring:** define the SQL monitors M2, M3, M6, M7 and M8 ([#271](https://github.com/source-cooperative/data.source.coop/issues/271)) ([d2ea66a](https://github.com/source-cooperative/data.source.coop/commit/d2ea66abc84dad8527ae64f8757f75171cdf5f31))
+
+
+### Miscellaneous Chores
+
+* release 2.5.3 ([488cd00](https://github.com/source-cooperative/data.source.coop/commit/488cd0062321c97db18483e864b4254f0d07f600))
+
+## [2.5.2](https://github.com/source-cooperative/data.source.coop/compare/v2.5.1...v2.5.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **observability:** size telemetry for volume-based pricing and define alerts ([#266](https://github.com/source-cooperative/data.source.coop/issues/266)) ([af4ef63](https://github.com/source-cooperative/data.source.coop/commit/af4ef63fab8616e4b8f6a58cc84165bc8f741e5a))
+
 ## [2.5.1](https://github.com/source-cooperative/data.source.coop/compare/v2.5.0...v2.5.1) (2026-10-20)
 
 

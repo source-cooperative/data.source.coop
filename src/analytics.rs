@@ -13,7 +13,14 @@ pub struct RequestEvent<'a> {
     pub product_id: &'a str,
     pub file_path: &'a str,
     pub method: &'a str,
+    /// The principal the request's signature verified as: a person's Ory
+    /// identity ID, or the service account an API key or platform token acts
+    /// as. Empty when anonymous.
     pub user_id: &'a str,
+    /// The access key ID that signed the request; with the `credentials
+    /// issued` log line, it names the API key or platform subject behind an
+    /// account principal. Empty when anonymous.
+    pub access_key_id: &'a str,
     /// HMAC-SHA256 of the client IP — see [`hash_ip`]. We never log the raw
     /// IP; this lets us count distinct clients without storing PII.
     pub client_ip_hash: &'a str,
@@ -33,18 +40,19 @@ impl RequestEvent<'_> {
         format!("{}/{}", self.account_id, self.product_id)
     }
 
-    /// Blob columns in Analytics Engine schema order (blob1..blob9).
+    /// Blob columns in Analytics Engine schema order (blob1..blob10).
     ///
     ///   blob1: account_id
     ///   blob2: product_id
     ///   blob3: file_path (truncated to 256 bytes)
     ///   blob4: method
-    ///   blob5: user_id (empty for anonymous requests)
+    ///   blob5: user_id (verified principal; empty for anonymous requests)
     ///   blob6: country
     ///   blob7: content_type
     ///   blob8: client_ip_hash (HMAC-SHA256; empty when IP is unknown)
     ///   blob9: range (Range header, "bytes=" prefix stripped, empty if absent)
-    pub fn blobs(&self) -> [&str; 9] {
+    ///   blob10: access_key_id (empty for anonymous requests)
+    pub fn blobs(&self) -> [&str; 10] {
         [
             self.account_id,
             self.product_id,
@@ -56,6 +64,7 @@ impl RequestEvent<'_> {
             self.content_type,
             self.client_ip_hash,
             self.range,
+            self.access_key_id,
         ]
     }
 
@@ -120,6 +129,19 @@ pub fn hash_ip(ip: &str, salt: &str) -> String {
         .collect()
 }
 
+/// The access key ID a SigV4 `Authorization` header was signed with, parsed by
+/// the same function multistore verified the signature with. The header itself
+/// is not signed, so any other reading of it could disagree with the key the
+/// signature was checked against. Empty when the header does not parse.
+///
+/// A presigned URL never reaches here: multistore authenticates only the
+/// `Authorization` header, so a presigned request has no principal.
+pub fn access_key_id(authorization: &str) -> String {
+    multistore::auth::parse_sigv4_auth(authorization)
+        .map(|sig| sig.access_key_id)
+        .unwrap_or_default()
+}
+
 /// Strip the constant `bytes=` unit prefix from a `Range` header value
 /// (e.g. `bytes=0-1023` → `0-1023`) so blob9 stores just the parseable ranges.
 /// A non-bytes unit (legal per RFC 7233, never seen in practice) and the empty
@@ -154,6 +176,7 @@ pub(crate) fn log_analytics(
     key: Option<&str>,
     duration_ms: f64,
     ip_hash_salt: &str,
+    principal: Option<&str>,
 ) {
     let content_type = response
         .headers()
@@ -171,6 +194,11 @@ pub(crate) fn log_analytics(
 
     let client_ip_hash = hash_ip(header_str(headers, "cf-connecting-ip"), ip_hash_salt);
     let range = strip_range_unit(header_str(headers, "range"));
+    // Only once the principal is known: before that, the header is just what
+    // the client sent, verified by nothing.
+    let signing_key = principal
+        .map(|_| access_key_id(header_str(headers, "authorization")))
+        .unwrap_or_default();
 
     log_request(
         env,
@@ -179,7 +207,8 @@ pub(crate) fn log_analytics(
             product_id: product.unwrap_or(""),
             file_path: key.unwrap_or(""),
             method: method.as_str(),
-            user_id: header_str(headers, "x-source-user-id"),
+            user_id: principal.unwrap_or(""),
+            access_key_id: &signing_key,
             client_ip_hash: &client_ip_hash,
             range,
             country: header_str(headers, "cf-ipcountry"),

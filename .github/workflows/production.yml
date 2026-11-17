@@ -24,6 +24,24 @@ jobs:
       OIDC_PROVIDER_KEY_PREVIOUS: ${{ secrets.OIDC_PROVIDER_KEY_PREVIOUS }}
       IP_HASH_SALT: ${{ secrets.IP_HASH_SALT }}
 
+  # Alerting is part of the release: monitoring/monitors.json is applied once
+  # the Worker it watches is deployed. Idempotent; see ADR-015, Monitors.
+  monitors:
+    name: Apply Monitors
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 monitoring/apply.py apply
+        env:
+          # The deploy token, which also needs Account › Notifications › Edit.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ALERTS_SLACK_WEBHOOK_URL: ${{ secrets.ALERTS_SLACK_WEBHOOK_URL }}
+          ALERTS_EMAIL: ${{ vars.ALERTS_EMAIL }}
+
   deploy-public-log-stream:
     name: Deploy Public Log Stream
     uses: ./.github/workflows/deploy-public-log-stream.yml
