@@ -46,6 +46,10 @@ path = "tests/keys.rs"
 name = "trace"
 path = "tests/trace.rs"
 
+[[test]]
+name = "location_batch"
+path = "tests/location_batch.rs"
+
 [dependencies]
 # Multistore
 multistore = { version = "0.8.0", features = ["azure", "gcp"] }

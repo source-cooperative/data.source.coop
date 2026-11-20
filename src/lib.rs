@@ -16,6 +16,7 @@ mod config;
 mod handlers;
 mod keys;
 mod location;
+mod location_batch;
 mod object_path;
 mod pagination;
 mod platform;
@@ -534,10 +535,8 @@ async fn handle(
                 &env,
                 location::LocationEvent {
                     cf: location::CfProperties::from_request(&req),
-                    country: header_str(&parts.headers, "cf-ipcountry").to_string(),
                     account: acct.to_string(),
                     product: prod.to_string(),
-                    key: key.unwrap_or("").to_string(),
                     api_base_url: config.api_base_url.clone(),
                     api_auth: api_auth.clone(),
                 },

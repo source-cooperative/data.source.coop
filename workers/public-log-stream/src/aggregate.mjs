@@ -12,6 +12,31 @@ export function topProducts(products, k) {
 }
 
 /**
+ * Fold one posted event into the per-colo accumulator and return how many
+ * requests it carried. The proxy posts a batch, `{colo, products: {key: n}}`;
+ * a bare `{colo, account_id, product_id}` (older proxy) counts as one request.
+ * @param {Map<string, {n: number, products: Map<string, number>}>} colos
+ * @param {{colo?: string, products?: Record<string, number>, account_id?: string, product_id?: string}} event
+ * @returns {number}
+ */
+export function addEvent(colos, event) {
+  if (!event.colo) return 0;
+  const entries = event.products
+    ? Object.entries(event.products)
+    : [[`${event.account_id ?? ""}/${event.product_id ?? ""}`, 1]];
+  const colo = colos.get(event.colo) ?? { n: 0, products: new Map() };
+  let total = 0;
+  for (const [product, count] of entries) {
+    if (!Number.isInteger(count) || count <= 0) continue;
+    colo.n += count;
+    colo.products.set(product, (colo.products.get(product) ?? 0) + count);
+    total += count;
+  }
+  if (total > 0) colos.set(event.colo, colo);
+  return total;
+}
+
+/**
  * Shape the per-colo accumulator into the wire payload: one entry per
  * datacenter with its request count and top products this window.
  * @param {Map<string, {n: number, products: Map<string, number>}>} colos
