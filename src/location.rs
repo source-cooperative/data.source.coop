@@ -1,17 +1,25 @@
-//! Live location broadcasting: push each public product request's geolocation
-//! to the public-log-stream WebSocket service. Fire-and-forget inside
-//! `wait_until`, so it never blocks the response.
+//! Live location broadcasting for the public activity globe.
+//!
+//! Public product reads are batched per isolate and posted to the
+//! public-log-stream service at most once per [`WINDOW_MS`]. An isolate runs in
+//! a single datacenter, so batching in the isolate is batching by datacenter:
+//! a busy colo collapses into one message carrying exact counts, while a quiet
+//! colo still reports its first request. Nothing is sampled away; only the
+//! number of posts shrinks (each post is a billed Durable Object request plus
+//! the CPU of both Workers). Runs inside `wait_until`, so it never blocks the
+//! response.
 
-use worker::{Context, Env};
+use std::cell::RefCell;
+use std::time::Duration;
 
+use worker::{Context, Delay, Env};
+
+use crate::location_batch::{record, Pending, WINDOW_MS};
 use crate::source_api::{self, ApiAuth};
 
 /// Properties extracted from the Cloudflare `request.cf` object.
 #[derive(Default)]
 pub(crate) struct CfProperties {
-    latitude: String,
-    longitude: String,
-    city: String,
     colo: String,
 }
 
@@ -22,43 +30,32 @@ impl CfProperties {
         if cf.is_undefined() || cf.is_null() {
             return Self::default();
         }
-        let get = |key: &str| -> String {
-            js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str(key))
-                .ok()
-                .map(|v| {
-                    v.as_string()
-                        .unwrap_or_else(|| v.as_f64().map(|n| n.to_string()).unwrap_or_default())
-                })
-                .unwrap_or_default()
-        };
-        Self {
-            latitude: get("latitude"),
-            longitude: get("longitude"),
-            city: get("city"),
-            colo: get("colo"),
-        }
+        let colo = js_sys::Reflect::get(&cf, &wasm_bindgen::JsValue::from_str("colo"))
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_default();
+        Self { colo }
     }
 }
 
 pub(crate) struct LocationEvent {
     pub cf: CfProperties,
-    pub country: String,
     pub account: String,
     pub product: String,
-    pub key: String,
     pub api_base_url: String,
     pub api_auth: ApiAuth,
 }
 
-/// Broadcast the request's geolocation to WebSocket viewers via the public-log-stream service.
-/// Runs entirely inside `wait_until` so it never blocks the response.
+thread_local! {
+    // Workers are single-threaded; this is the isolate's current batch.
+    static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
+}
+
+/// Count this request toward the live globe. Only public products are counted.
 pub(crate) fn maybe_broadcast_location(ctx: &Context, env: &Env, event: LocationEvent) {
-    let (Ok(lat), Ok(lon)) = (
-        event.cf.latitude.parse::<f64>(),
-        event.cf.longitude.parse::<f64>(),
-    ) else {
+    if event.cf.colo.is_empty() {
         return;
-    };
+    }
 
     let Ok(location_ws) = env.service("PUBLIC_LOG_STREAM") else {
         return;
@@ -80,16 +77,25 @@ pub(crate) fn maybe_broadcast_location(ctx: &Context, env: &Env, event: Location
             return;
         }
 
-        let body = serde_json::json!({
-            "lat": lat,
-            "lon": lon,
-            "city": event.cf.city,
-            "country": event.country,
-            "colo": event.cf.colo,
-            "account_id": event.account,
-            "product_id": event.product,
-            "path": event.key,
+        let product = format!("{}/{}", event.account, event.product);
+        let leader = PENDING.with(|s| {
+            record(
+                &mut s.borrow_mut(),
+                &event.cf.colo,
+                product,
+                js_sys::Date::now(),
+            )
         });
+        if !leader {
+            return;
+        }
+
+        Delay::from(Duration::from_millis(WINDOW_MS as u64)).await;
+        let Some(batch) = PENDING.with(|s| s.borrow_mut().take()) else {
+            return;
+        };
+
+        let body = serde_json::json!({ "colo": batch.colo, "products": batch.products });
         let mut init = worker::RequestInit::new();
         init.with_method(worker::Method::Post);
         init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));

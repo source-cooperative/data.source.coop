@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { buildLocs } from "./aggregate.mjs";
+import { addEvent, buildLocs } from "./aggregate.mjs";
 
 export interface Env {
   LOCATION_HUB: DurableObjectNamespace<LocationHub>;
@@ -8,11 +8,14 @@ export interface Env {
   CORS_ORIGIN: string;
 }
 
-// Posted by the proxy per successful public-product GET. Only the datacenter
-// (colo) and the product are used; requester geolocation is intentionally
-// never forwarded to viewers.
+// Posted by the proxy: one batch of public-product GETs seen by one isolate,
+// i.e. one datacenter. `products` maps "account/product" to its request count.
+// The bare `account_id`/`product_id` form is one request from an older proxy.
+// Only the datacenter and the products are used; requester geolocation is
+// intentionally never forwarded to viewers.
 export interface LocationEvent {
   colo?: string;
+  products?: Record<string, number>;
   account_id?: string;
   product_id?: string;
 }
@@ -73,13 +76,10 @@ export class LocationHub extends DurableObject<Env> {
       return new Response("ok");
     }
 
-    const colo = this.colos.get(event.colo) ?? { n: 0, products: new Map() };
-    colo.n++;
-    const product = `${event.account_id ?? ""}/${event.product_id ?? ""}`;
-    colo.products.set(product, (colo.products.get(product) ?? 0) + 1);
-    this.colos.set(event.colo, colo);
+    const added = addEvent(this.colos, event);
+    if (added === 0) return new Response("ok");
 
-    this.requestCount++;
+    this.requestCount += added;
     this.sentIdle = false;
     await this.ensureAlarm();
     return new Response("ok");
