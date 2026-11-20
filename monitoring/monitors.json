@@ -16,8 +16,8 @@
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"double2\" >= 500))",
-          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+          "SELECT SUM(if(\"double4\" > 1, \"double4\", 1.0)) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"double2\" >= 500))",
+          "SELECT SUM(if(\"double4\" > 1, \"double4\", 1.0)) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
         ],
         "alert_trigger_preferences": ["slo"],
         "alert_trigger_preferences_value": ["99.9"],
@@ -37,7 +37,7 @@
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT countIf(\"double2\" = 403) * 100.0 / COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+          "SELECT SUM(if(\"double2\" = 403, if(\"double4\" > 1, \"double4\", 1.0), 0.0)) * 100.0 / SUM(if(\"double4\" > 1, \"double4\", 1.0)) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
         ],
         "alert_trigger_preferences": ["threshold"],
         "alert_trigger_preferences_value": ["0.5"],
@@ -74,7 +74,7 @@
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT quantileWeighted(0.99, \"double3\", \"sampleInterval\") AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"blob4\" = 'GET' OR \"blob4\" = 'HEAD'))"
+          "SELECT quantileWeighted(0.99, \"double3\", toUInt32(\"sampleInterval\" * if(\"double4\" > 1, \"double4\", 1.0))) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE ((\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71') AND (\"blob4\" = 'GET' OR \"blob4\" = 'HEAD'))"
         ],
         "alert_trigger_preferences": ["threshold"],
         "alert_trigger_preferences_value": ["5000"],
@@ -88,12 +88,12 @@
       "name": "data-proxy: M8 Analytics rows",
       "severity": "notify",
       "alert_type": "custom_analytics",
-      "description": "Fewer than 10,000 requests counted in Analytics Engine in 15 minutes (quiet weekend nights read ~40,000): the ANALYTICS binding stopped writing, or traffic all but stopped. See ADR-015, Monitors.",
+      "description": "Fewer than 10,000 requests estimated from Analytics Engine in 15 minutes (quiet weekend nights read ~40,000 before sampling): the ANALYTICS binding stopped writing, or traffic all but stopped. Counted as the sum of each row's weight, since production writes only a sample of requests. See ADR-015, Monitors.",
       "alert_interval": "24h",
       "filters": {
         "source": ["sql_api"],
         "selectors": [
-          "SELECT COUNT(*) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
+          "SELECT SUM(if(\"double4\" > 1, \"double4\", 1.0)) AS \"value\"\nFROM \"events\".\"analyticsEngine\".\"source_data_proxy_production\"\nWHERE (\"accountTag\" = '1335bb5b87a1c2e1de2ca03408c23b71')"
         ],
         "alert_trigger_preferences": ["threshold"],
         "alert_trigger_preferences_value": ["10000"],
