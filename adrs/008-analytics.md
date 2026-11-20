@@ -4,7 +4,7 @@
 **Date:** 2026-08-09
 **RFC:** RFC-001 §10, §12
 **Depends on:** ADR-002
-**Implementation:** `src/analytics.rs`, `src/location.rs`, `workers/public-log-stream/`
+**Implementation:** `src/analytics.rs`, `src/location.rs`, `src/location_batch.rs`, `workers/public-log-stream/`
 **Implemented by:** #119 (Analytics Engine request logging), #120 (account/product sampling index), #153 (request duration and hashed client IP), #122 (real-time public log stream via Durable Objects), #171 (aggregate live-globe activity by datacenter)
 
 ---
@@ -88,8 +88,11 @@ A separate Worker (`workers/public-log-stream`) holds a Durable Object that fans
 
 - Only **GETs of public products returning a status below 400** are broadcast. Non-product paths, errors, and writes are excluded; note that a 3xx (for example a 304) counts as success, and HEAD reads are never broadcast.
 - The broadcast is fire-and-forget inside `wait_until`, so it never blocks the response.
-- The proxy posts Cloudflare-derived geolocation (latitude, longitude, city, colo) from the request's `cf` object, the country from `cf-ipcountry`, plus account, product, and key. **The Durable Object reads only `colo`, `account_id`, and `product_id`** — latitude, longitude, city, country, and key are discarded on arrival and never reach a subscriber. Requester geolocation finer than the datacenter is therefore never published, by the receiver's contract rather than by the sender's restraint. (The proxy also drops the event entirely when latitude/longitude fail to parse, even though the receiver would not have used them.)
-- Activity is **aggregated by datacenter** rather than emitted per request, which bounds fan-out cost and coarsens location before it is ever made public.
+- The proxy posts only the datacenter (`colo`, from the request's `cf` object) and a count per `account/product`. No coordinates, city, country, or key leave the proxy, so requester geolocation finer than the datacenter is never published. The Durable Object also ignores any other field it receives. (Proxies that predate batching posted one event per request with latitude, longitude, city, country, and key; the Durable Object discarded those on arrival and still accepts the bare `account_id`/`product_id` form.)
+- Activity is **batched by datacenter** rather than emitted per request. An isolate runs in one datacenter, so each isolate gathers its public reads for three seconds and posts one batch of exact counts. A busy datacenter collapses into few posts, a quiet one still reports its first request, and nothing is sampled away. Each post is a billed Durable Object request plus the CPU of both Workers (a service-binding call is not billed as a separate Worker request). Posting per request cost about $145 a month (Oct 16–Nov 15: $132 of Durable Object requests, about $14 of CPU) and overloaded the single global Durable Object at peak.
+- The Durable Object **spreads each batch over the next six 500 ms ticks** (three seconds) rather than emitting it in one tick, so viewers see a steady trickle instead of a burst each time a proxy isolate flushes. Counts are conserved, and every emitted datacenter entry has a count of at least one. Together with the proxy's three-second window, activity can reach viewers up to about six seconds after the requests. Ticks are numbered by absolute time, so an alarm that fires late catches up on the ticks it missed. The one empty "idle" tick that lets the globe fade out is sent only once nothing is queued.
+- A viewer who connects receives **one replay message** straight away: the last three seconds of already-emitted activity, merged, in the shape of a tick with `replay: true` and `windowMs`. It re-sends data already public and never overlaps what the viewer then receives live. The alarm runs only while someone is watching or activity is queued, so an idle hub still stops and hibernates.
+- Counts held by an isolate that is evicted before its window ends, and activity queued in a Durable Object that is evicted, are lost, which is acceptable for a decorative display.
 
 Broadcasting a coarse datacenter location for a public-product read is a deliberately narrower disclosure than the request event stored in Analytics Engine: nothing user-identifying crosses into the public stream.
 
