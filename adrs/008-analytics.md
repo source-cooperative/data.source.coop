@@ -4,7 +4,7 @@
 **Date:** 2026-08-09
 **RFC:** RFC-001 §10, §12
 **Depends on:** ADR-002
-**Implementation:** `src/analytics.rs`, `src/location.rs`, `workers/public-log-stream/`
+**Implementation:** `src/analytics.rs`, `src/location.rs`, `src/location_batch.rs`, `workers/public-log-stream/`
 **Implemented by:** #119 (Analytics Engine request logging), #120 (account/product sampling index), #153 (request duration and hashed client IP), #122 (real-time public log stream via Durable Objects), #171 (aggregate live-globe activity by datacenter)
 
 ---
@@ -89,7 +89,7 @@ A separate Worker (`workers/public-log-stream`) holds a Durable Object that fans
 - Only **GETs of public products returning a status below 400** are broadcast. Non-product paths, errors, and writes are excluded; note that a 3xx (for example a 304) counts as success, and HEAD reads are never broadcast.
 - The broadcast is fire-and-forget inside `wait_until`, so it never blocks the response.
 - The proxy posts only the datacenter (`colo`, from the request's `cf` object) and a count per `account/product`. No coordinates, city, country, or key leave the proxy, so requester geolocation finer than the datacenter is never published. The Durable Object also ignores any other field it receives. (Proxies that predate batching posted one event per request with latitude, longitude, city, country, and key; the Durable Object discarded those on arrival and still accepts the bare `account_id`/`product_id` form.)
-- Activity is **batched by datacenter** rather than emitted per request. An isolate runs in one datacenter, so each isolate gathers its public reads for three seconds and posts one batch of exact counts. A busy datacenter collapses into few posts, a quiet one still reports its first request, and nothing is sampled away. Each post is a billed Durable Object request plus the CPU of both Workers (a service-binding call is not billed as a separate Worker request). Posting per request cost about $145 a month (Oct 16–Nov 15: $132 of Durable Object requests, about $14 of CPU) and overloaded the single global Durable Object at peak.
+- Activity is **batched by datacenter** rather than emitted per request. An isolate runs in one datacenter, so each isolate gathers its public reads for three seconds and posts one batch of exact counts. A busy datacenter collapses into few posts, a quiet one still reports its first request, and nothing is sampled away. A datacenter's activity can therefore reach viewers up to three seconds after the requests. Each post is a billed Durable Object request plus the CPU of both Workers (a service-binding call is not billed as a separate Worker request). Posting per request cost about $145 a month (Oct 16–Nov 15: $132 of Durable Object requests, about $14 of CPU) and overloaded the single global Durable Object at peak.
 - Counts held by an isolate that is evicted before its window ends are lost, which is acceptable for a decorative display.
 
 Broadcasting a coarse datacenter location for a public-product read is a deliberately narrower disclosure than the request event stored in Analytics Engine: nothing user-identifying crosses into the public stream.

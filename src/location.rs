@@ -99,8 +99,25 @@ pub(crate) fn maybe_broadcast_location(ctx: &Context, env: &Env, event: Location
         let mut init = worker::RequestInit::new();
         init.with_method(worker::Method::Post);
         init.with_body(Some(wasm_bindgen::JsValue::from_str(&body.to_string())));
-        let _ = location_ws
+        // The batch is dropped on failure (it is a decorative display), but say
+        // so: a Durable Object past its request limit shows up here. Console
+        // rather than `tracing::warn!`, so a failing globe never counts toward
+        // the WARN alerts.
+        let failure = match location_ws
             .fetch("https://public-log-stream/location", Some(init))
-            .await;
+            .await
+        {
+            Ok(resp) if resp.status().as_u16() < 400 => return,
+            Ok(resp) => format!("status {}", resp.status().as_u16()),
+            Err(e) => e.to_string(),
+        };
+        worker::console_log!(
+            "{}",
+            serde_json::json!({
+                "message": "live-globe batch not delivered",
+                "colo": batch.colo,
+                "error": failure,
+            })
+        );
     });
 }
