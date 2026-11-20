@@ -36,6 +36,13 @@ SOURCE_API_URL = "https://source.coop"
 # 86400 = 24h. Unset → 3600 (1h). Clients must request DurationSeconds to use
 # more than 1h; this only raises the cap.
 STS_MAX_SESSION_DURATION_SECS = "43200"
+# Analytics Engine bills each data point written, ~1.7B a month at current
+# traffic. Per product and per isolate, the first ANALYTICS_SAMPLE_BURST
+# requests a minute are written in full; past that, one in ANALYTICS_SAMPLE_EVERY
+# is, with its weight in double4. Errors other than 404 and signed reads are
+# never sampled. Unset = no sampling (staging, previews). See ADR-008.
+ANALYTICS_SAMPLE_EVERY = "10"
+ANALYTICS_SAMPLE_BURST = "5"
 
 # Required secrets (managed as GitHub environment secrets; CI re-uploads them
 # via `wrangler secret bulk` on every deploy — see .github/workflows/deploy.yml):

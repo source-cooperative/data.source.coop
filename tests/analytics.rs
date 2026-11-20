@@ -1,7 +1,7 @@
 #[path = "../src/analytics.rs"]
 mod analytics;
 
-use analytics::{access_key_id, hash_ip, strip_range_unit, RequestEvent};
+use analytics::{access_key_id, hash_ip, strip_range_unit, RequestEvent, SampleConfig, Sampler};
 
 fn event<'a>() -> RequestEvent<'a> {
     RequestEvent {
@@ -50,13 +50,168 @@ fn blobs_in_schema_order() {
 #[test]
 fn doubles_in_schema_order() {
     assert_eq!(
-        event().doubles(),
+        event().doubles(10.0),
         [
             1024.0, // double1: bytes_sent
             200.0,  // double2: status_code
             42.5,   // double3: duration_ms
+            10.0,   // double4: sample weight
         ]
     );
+}
+
+// ── Sampling ────────────────────────────────────────────────────────
+
+fn config(every: u32, burst: u32) -> SampleConfig {
+    SampleConfig { every, burst }
+}
+
+/// u that always keeps / always drops a sampled event (kept when u < 1/every).
+const KEEP: f64 = 0.0;
+const DROP: f64 = 0.999;
+
+#[test]
+fn sampling_off_writes_everything_at_weight_one() {
+    let mut s = Sampler::new(config(1, 0));
+    for i in 0..100 {
+        assert_eq!(s.decide(&event(), i, DROP), Some(1.0));
+    }
+}
+
+#[test]
+fn a_products_first_requests_in_a_window_are_written_in_full() {
+    let mut s = Sampler::new(config(10, 3));
+    for _ in 0..3 {
+        assert_eq!(s.decide(&event(), 0, DROP), Some(1.0));
+    }
+    // Past the allowance, one in `every` is kept at weight `every`...
+    assert_eq!(s.decide(&event(), 0, KEEP), Some(10.0));
+    // ...and the rest are dropped.
+    assert_eq!(s.decide(&event(), 0, DROP), None);
+}
+
+#[test]
+fn the_allowance_renews_each_window() {
+    let mut s = Sampler::new(config(10, 2));
+    for _ in 0..2 {
+        s.decide(&event(), 0, DROP);
+    }
+    assert_eq!(s.decide(&event(), 59_999, DROP), None);
+    assert_eq!(s.decide(&event(), 60_000, DROP), Some(1.0));
+}
+
+#[test]
+fn a_clock_that_steps_back_renews_the_window() {
+    let mut s = Sampler::new(config(10, 1));
+    s.decide(&event(), 100_000, DROP);
+    assert_eq!(s.decide(&event(), 100_000, DROP), None);
+    assert_eq!(s.decide(&event(), 5_000, DROP), Some(1.0));
+}
+
+#[test]
+fn a_hot_product_does_not_use_up_a_quiet_ones_allowance() {
+    let mut s = Sampler::new(config(10, 2));
+    for _ in 0..1_000 {
+        s.decide(&event(), 0, DROP);
+    }
+    let quiet = RequestEvent {
+        product_id: "rarely-read",
+        ..event()
+    };
+    assert_eq!(s.decide(&quiet, 0, DROP), Some(1.0));
+    assert_eq!(s.decide(&quiet, 0, DROP), Some(1.0));
+}
+
+#[test]
+fn errors_other_than_404_are_never_sampled() {
+    let mut s = Sampler::new(config(10, 0));
+    for status in [400.0, 401.0, 403.0, 412.0, 429.0, 500.0, 503.0, 520.0] {
+        let e = RequestEvent {
+            status_code: status,
+            ..event()
+        };
+        assert_eq!(s.decide(&e, 0, DROP), Some(1.0), "status {status}");
+    }
+}
+
+#[test]
+fn a_404_is_sampled_like_any_other_read() {
+    let mut s = Sampler::new(config(10, 0));
+    let e = RequestEvent {
+        status_code: 404.0,
+        ..event()
+    };
+    assert_eq!(s.decide(&e, 0, DROP), None);
+    assert_eq!(s.decide(&e, 0, KEEP), Some(10.0));
+}
+
+#[test]
+fn signed_reads_are_never_sampled_but_signed_writes_are() {
+    let mut s = Sampler::new(config(10, 0));
+    for method in ["GET", "HEAD"] {
+        let read = RequestEvent {
+            method,
+            user_id: "ory-identity-1",
+            ..event()
+        };
+        assert_eq!(s.decide(&read, 0, DROP), Some(1.0), "{method}");
+    }
+    for method in ["PUT", "DELETE", "POST"] {
+        let write = RequestEvent {
+            method,
+            user_id: "ory-identity-1",
+            ..event()
+        };
+        assert_eq!(s.decide(&write, 0, DROP), None, "{method}");
+    }
+}
+
+#[test]
+fn weights_sum_to_the_true_request_count() {
+    // 200k requests to one product in one window, with u from a low-discrepancy
+    // sequence so the check is deterministic.
+    let (n, every) = (200_000u64, 10u32);
+    let mut s = Sampler::new(config(every, 5));
+    let (mut weight, mut written) = (0.0, 0u64);
+    for i in 0..n {
+        let u = (i as f64 * 0.618_033_988_749_895).fract();
+        if let Some(w) = s.decide(&event(), 0, u) {
+            weight += w;
+            written += 1;
+        }
+    }
+    let error = (weight - n as f64).abs() / n as f64;
+    assert!(error < 0.01, "weighted count {weight} vs {n}");
+    assert!(written < n / 8, "wrote {written} of {n}");
+}
+
+#[test]
+fn the_product_table_is_bounded() {
+    let mut s = Sampler::new(config(10, 1));
+    for i in 0..5_000 {
+        let name = format!("product-{i}");
+        let e = RequestEvent {
+            product_id: &name,
+            ..event()
+        };
+        s.decide(&e, 0, DROP);
+    }
+    // No panic, and a product seen again after a clear gets a fresh allowance.
+    assert_eq!(s.decide(&event(), 0, DROP), Some(1.0));
+}
+
+#[test]
+fn config_is_off_unless_set() {
+    assert_eq!(SampleConfig::parse(None, None), config(1, 5));
+    assert_eq!(SampleConfig::parse(Some(""), Some("")), config(1, 5));
+    assert_eq!(SampleConfig::parse(Some("ten"), Some("x")), config(1, 5));
+}
+
+#[test]
+fn config_reads_both_values_and_never_divides_by_zero() {
+    assert_eq!(SampleConfig::parse(Some("10"), Some("3")), config(10, 3));
+    assert_eq!(SampleConfig::parse(Some(" 20 "), None), config(20, 5));
+    assert_eq!(SampleConfig::parse(Some("0"), Some("0")), config(1, 0));
 }
 
 #[test]
