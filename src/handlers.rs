@@ -5,6 +5,7 @@
 
 use multistore::api::list::parse_list_query_params;
 use multistore::api::response::{ErrorResponse, ListBucketResult, ListCommonPrefix};
+use multistore::error::ProxyError;
 use multistore::route_handler::{ProxyResult, RequestInfo, RouteHandler, RouteHandlerFuture};
 
 use crate::pagination::paginate_prefixes;
@@ -102,7 +103,15 @@ impl RouteHandler for AccountListHandler {
                     Some(ProxyResult::xml(200, result.to_xml()))
                 }
                 Err(e) => {
-                    tracing::error!("AccountList({}) error: {:?}", account, e);
+                    // An unknown account is the answer, not a fault: logging it
+                    // at ERROR made every mistyped account name its own Workers
+                    // Issue. Anything else, including the API refusing the
+                    // proxy (403), is ours to look at.
+                    if matches!(e, ProxyError::BucketNotFound(_)) {
+                        tracing::debug!(account, "account listing: no such account");
+                    } else {
+                        tracing::error!(account, error = ?e, "account listing failed");
+                    }
                     // Let the ProxyError variant drive the S3 error code and
                     // HTTP status (e.g. AccessDenied → 403, Internal → 500).
                     let body =
