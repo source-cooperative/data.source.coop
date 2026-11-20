@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.6](https://github.com/source-cooperative/data.source.coop/compare/v2.5.5...v2.5.6) (2026-11-20)
+
+
+### Bug Fixes
+
+* **logging:** log unknown-account listings at debug, not ERROR ([#282](https://github.com/source-cooperative/data.source.coop/issues/282)) ([550ebf7](https://github.com/source-cooperative/data.source.coop/commit/550ebf7874c53cd887c99ece63bfa8158f6f7f3b))
+
 ## [2.5.5](https://github.com/source-cooperative/data.source.coop/compare/v2.5.4...v2.5.5) (2026-11-17)
 
 
