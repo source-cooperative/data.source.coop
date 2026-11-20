@@ -102,7 +102,14 @@ impl RouteHandler for AccountListHandler {
                     Some(ProxyResult::xml(200, result.to_xml()))
                 }
                 Err(e) => {
-                    tracing::error!("AccountList({}) error: {:?}", account, e);
+                    // A 4xx (an unknown or forbidden account) is the answer,
+                    // not a fault: logging it at ERROR made every mistyped
+                    // account name its own Workers Issue.
+                    if e.status_code() >= 500 {
+                        tracing::error!(account, error = ?e, "account listing failed");
+                    } else {
+                        tracing::debug!(account, error = ?e, "account listing refused");
+                    }
                     // Let the ProxyError variant drive the S3 error code and
                     // HTTP status (e.g. AccessDenied → 403, Internal → 500).
                     let body =
