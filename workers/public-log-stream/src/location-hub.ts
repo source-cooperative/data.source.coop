@@ -1,5 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
-import { addEvent, buildLocs } from "./aggregate.mjs";
+import {
+  SPREAD_SLOTS,
+  addBatchSpread,
+  buildLocs,
+  dueSlots,
+  hasPending,
+  pruneSlots,
+  replayWindow,
+  totalRequests,
+} from "./aggregate.mjs";
 
 export interface Env {
   LOCATION_HUB: DurableObjectNamespace<LocationHub>;
@@ -20,15 +29,20 @@ export interface LocationEvent {
   product_id?: string;
 }
 
-// One datacenter's activity within the current window.
+// One datacenter's activity within one tick.
 interface ColoStats {
   n: number;
   products: Map<string, number>;
 }
 
 export class LocationHub extends DurableObject<Env> {
-  private colos = new Map<string, ColoStats>();
-  private requestCount = 0;
+  // Activity queued per tick, keyed by absolute tick index (see tickOf). A
+  // batch is spread over the next SPREAD_SLOTS ticks so viewers get a steady
+  // trickle instead of one burst per proxy flush. Lost on eviction, which only
+  // forfeits the last few seconds of a decorative display.
+  private slots = new Map<number, Map<string, ColoStats>>();
+  private cursor = 0;
+  private lastEmitted: number;
   private sentIdle = false;
   private emitInterval: number;
   private maxProducts: number;
@@ -37,6 +51,15 @@ export class LocationHub extends DurableObject<Env> {
     super(ctx, env);
     this.emitInterval = parseInt(env.EMIT_INTERVAL_MS) || 500;
     this.maxProducts = parseInt(env.MAX_PRODUCTS_PER_COLO) || 5;
+    this.lastEmitted = this.tickOf(Date.now());
+  }
+
+  private tickOf(ms: number): number {
+    return Math.floor(ms / this.emitInterval);
+  }
+
+  private nextBoundary(ms: number): number {
+    return (this.tickOf(ms) + 1) * this.emitInterval;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -63,23 +86,48 @@ export class LocationHub extends DurableObject<Env> {
     const [client, server] = Object.values(pair);
 
     this.ctx.acceptWebSocket(server);
+    this.replay(server);
     await this.ensureAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // Show a new viewer the last few seconds at once, so the globe is not empty
+  // until the next live tick. Only ticks already emitted, so it never overlaps
+  // what the viewer receives live. Same shape as a tick plus `replay`, so
+  // clients that read only ticks need no change. Does not touch `sentIdle`.
+  private replay(server: WebSocket): void {
+    const recent = replayWindow(this.slots, this.lastEmitted, SPREAD_SLOTS);
+    if (recent.size === 0) return;
+    try {
+      server.send(
+        JSON.stringify({
+          type: "tick",
+          replay: true,
+          windowMs: SPREAD_SLOTS * this.emitInterval,
+          requestsPerWindow: totalRequests(recent),
+          viewers: this.ctx.getWebSockets().length,
+          locations: buildLocs(recent, this.maxProducts),
+        }),
+      );
+    } catch {
+      // The socket closed already; cleaned up in webSocketClose
+    }
+  }
+
   private async handleLocation(request: Request): Promise<Response> {
     const event: LocationEvent = await request.json();
 
-    // No datacenter → can't place it on the globe; drop it.
-    if (!event.colo) {
-      return new Response("ok");
-    }
+    const { total, cursor } = addBatchSpread(
+      this.slots,
+      event,
+      this.tickOf(Date.now()),
+      SPREAD_SLOTS,
+      this.cursor,
+    );
+    this.cursor = cursor;
+    if (total === 0) return new Response("ok");
 
-    const added = addEvent(this.colos, event);
-    if (added === 0) return new Response("ok");
-
-    this.requestCount += added;
     this.sentIdle = false;
     await this.ensureAlarm();
     return new Response("ok");
@@ -87,50 +135,61 @@ export class LocationHub extends DurableObject<Env> {
 
   // Storage is the source of truth for a pending alarm; a cached flag can drift.
   // An alarm long past due is not going to fire, so it is replaced, not trusted.
+  // Alarms are aligned to tick boundaries so slots are emitted on their tick.
   private async ensureAlarm(): Promise<void> {
+    const now = Date.now();
     const at = await this.ctx.storage.getAlarm();
-    if (at == null || at < Date.now() - 10 * this.emitInterval) {
-      await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
+    if (at == null || at < now - 10 * this.emitInterval) {
+      await this.ctx.storage.setAlarm(this.nextBoundary(now));
     }
   }
 
   async alarm(): Promise<void> {
+    const now = Date.now();
+    const tick = this.tickOf(now);
     const clients = this.ctx.getWebSockets();
 
-    // Nobody watching → let the alarm stop (re-armed on next connect/POST).
-    if (clients.length === 0) {
-      this.colos.clear();
-      this.requestCount = 0;
-      return;
-    }
+    // Everything now due, merged, so an alarm that fires late catches up on
+    // the ticks it missed instead of emitting them one by one.
+    const due = dueSlots(this.slots, this.lastEmitted, tick);
+    this.lastEmitted = Math.max(this.lastEmitted, tick);
+    pruneSlots(this.slots, tick - SPREAD_SLOTS);
+    const pending = hasPending(this.slots, tick);
 
-    const hasActivity = this.colos.size > 0;
-
-    // Emit while there's activity, plus one final tick when going idle so the
-    // globe can fade out, then stay quiet until activity resumes.
-    if (hasActivity || !this.sentIdle) {
-      const message = JSON.stringify({
-        type: "tick",
-        requestsPerWindow: this.requestCount,
-        viewers: clients.length,
-        locations: buildLocs(this.colos, this.maxProducts),
-      });
-
-      for (const ws of clients) {
-        try {
-          ws.send(message);
-        } catch {
-          // Cleaned up in webSocketClose
-        }
+    if (clients.length > 0) {
+      if (due.size > 0) {
+        this.send(clients, due);
+        this.sentIdle = false;
+      } else if (!pending && !this.sentIdle) {
+        // Going idle: one empty tick so the globe can fade out, then quiet
+        // until activity resumes. Not while later ticks still hold activity.
+        this.send(clients, due);
+        this.sentIdle = true;
       }
-
-      this.sentIdle = !hasActivity;
     }
 
-    // Reset for the next window and keep the alarm running while clients remain.
-    this.colos.clear();
-    this.requestCount = 0;
-    await this.ctx.storage.setAlarm(Date.now() + this.emitInterval);
+    // Keep ticking while someone watches or activity is still queued; with
+    // neither, let the alarm stop (re-armed on the next connect or post).
+    if (clients.length > 0 || pending) {
+      await this.ctx.storage.setAlarm(this.nextBoundary(now));
+    }
+  }
+
+  private send(clients: WebSocket[], colos: Map<string, ColoStats>): void {
+    const message = JSON.stringify({
+      type: "tick",
+      requestsPerWindow: totalRequests(colos),
+      viewers: clients.length,
+      locations: buildLocs(colos, this.maxProducts),
+    });
+
+    for (const ws of clients) {
+      try {
+        ws.send(message);
+      } catch {
+        // Cleaned up in webSocketClose
+      }
+    }
   }
 
   async webSocketMessage(
