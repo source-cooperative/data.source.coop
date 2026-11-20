@@ -54,6 +54,8 @@ Head sampling decides per request before the outcome is known, so it can't keep 
 
 Production traces are sampled at 1%, about 330k traced requests a day. That's ample for understanding latency and what a request is made of.
 
+Staging keeps every `WARN` and `ERROR` line and has no invocation logs, like production. Its traces are sampled at 10%: staging serves about 150k requests a day, so 1% would leave too few traces to debug with. That comes to about 5 GB a month.
+
 To trace a particular request, the intended mechanism is a zone **Trace Rule** that samples 100% of requests carrying a debug header. `coolnewgeo.com` is on the Free plan, and whether Trace Rules are available there is unverified.
 
 ### Query strings are redacted
