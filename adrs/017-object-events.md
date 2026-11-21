@@ -16,7 +16,7 @@ The proxy sees every read and write. It stores little of this. ADR-008 stores on
 3. **Analytics.** One event source for current and new analyses.
 4. **Event-driven systems.** A GitHub pipeline writes `source/metadata-catalog`. Each write must trigger a reindex into our database. Today we can only poll a listing, or call the indexer from the pipeline. Neither lets a third party react to a product they can read.
 
-**Terms.** A *principal* is the identity that signed a request: a person's identity ID, or a service account ID (ADR-008). A *write event* or *read event* describes one completed operation. The *router* is one Worker that reads the write-event Queue. The *product log* is one Durable Object per product that stores recent write events. The *audit table* is an Iceberg table of events. A *subscriber* is any program that pulls write events from `/.events`.
+**Terms.** A *principal* is the identity that signed a request: a person's identity ID, or a service account ID (ADR-008). A *write event* or *read event* describes one completed operation. The *router* is one Worker that reads the write-event Queue. The *product log* is one Durable Object per product that stores recent write events. The *audit table* is an Iceberg table of events. A *subscriber* is any program that receives write events, by pull or by push. A *subscription* is a push registration: a product and a destination.
 
 **Constraints.**
 
@@ -92,7 +92,22 @@ The product log is a SQLite-backed Durable Object.
 - Order is append order, not write-completion order. Two writes to one key can swap. A subscriber compares `etag` and `time`, or sends `HEAD` on the key.
 - An alarm deletes events older than 7 days (proposal). Each product keeps at most 5 million events (proposal).
 
-### Subscription: `/.events`
+### Delivery to subscribers: two strategies
+
+Subscribers can receive write events in two ways. Both read the same events from the router.
+
+| | Pull: we own the channel | Push: the subscriber owns the channel |
+|---|---|---|
+| Subscriber needs | Credentials only | A reachable endpoint, or a cloud queue |
+| Works inside a Kubernetes cluster with no ingress | Yes | Cloud queues: yes. Webhook: only with ingress. |
+| Replay | 7 days, kept by us | Kept by the subscriber's broker |
+| State we keep | Product log | Subscription registry and delivery queue |
+| Our cost grows with | Watched products | Events × subscriptions |
+| Control-plane work | None | Source API subscriptions, secrets, ownership checks |
+
+We propose pull first. It needs no control-plane work and no subscriber infrastructure, and it works from inside a cluster. Push follows, with webhooks first and cloud queues second. This order is a proposal (see Open Questions).
+
+### Pull: `/.events`
 
 ```
 GET /.events/{account}/{product}?after={seq}&limit=100&wait=25
@@ -111,6 +126,22 @@ GET /.events/{account}/{product}?after={seq}&limit=100&wait=25
 **Privacy.** Events show only what a reader of the product can already list, plus the time. A `deleted` event shows the name of a key that listing no longer shows. The subscriber had read access to that key, so we accept this. The proxy knows only the `read` and `write` permissions. So `principal` appears only for subscribers that have `write` permission on the product. Events never carry an IP hash or a country.
 
 **Contract.** A subscriber can miss events, get duplicates, and see swapped order. A subscriber that needs every change must also list the product on a schedule.
+
+### Push: subscriber-owned destinations
+
+A subscription names a product and a destination. The caller owns it. Creating one needs the permission that pull needs. The Source API stores subscriptions, and the router reads them from a cache.
+
+- The router sends each event to each subscription as its own Queue message. A failing destination does not delay the others.
+- Delivery is at-least-once, with retries and backoff. After 3 days of failure the router disables the subscription.
+- The router asks the Source API every hour whether the owner still has `read` permission. It disables the subscription if not.
+- Each product allows a fixed number of subscriptions (proposal). This bounds fan-out.
+- The `principal` rule is the same as for pull.
+
+Destinations are cloud-neutral. One baseline works everywhere. Cloud adapters are optional.
+
+- **Webhook (baseline).** The router sends the CloudEvents envelope in an HTTPS `POST`, using the CloudEvents HTTP binding. It signs the body with an HMAC secret, using the Standard Webhooks headers. We create the secret per subscription and show it once. The router accepts HTTPS only. It does not follow redirects, rejects IP literals and private addresses, and times out after 5 seconds. Before the first delivery, the subscriber echoes a challenge token to prove control. Kubernetes tools can receive CloudEvents over HTTP, for example Knative Eventing and Argo Events.
+- **Cloud queues, by workload identity federation.** The subscriber creates a role that trusts our OIDC issuer (ADR-012), with `sub` set to the subscription ID. The router exchanges our token for short-lived credentials and calls the service's HTTPS API. We store no secret. AWS, Google Cloud and Azure each accept OIDC federation. Adapters ship one at a time. AWS (SQS, SNS, EventBridge) comes first only because ADR-012 already federates to AWS. Pub/Sub and Service Bus follow.
+- **Other brokers.** Kafka, NATS and AMQP are not in v1. A subscriber reaches them through a webhook into a bridge.
 
 ### Audit table
 
@@ -154,6 +185,7 @@ Pipelines billing has been live since 2026-08-03. Pricing: $0.04 per GB for tran
 | This ADR: write events, signed reads, refusals, 1% anonymous | about $30–40 |
 | `/.events` per watched product, short poll every 2 s | about $0.20 |
 | `/.events` per watched product, held request | about $4 |
+| Push, per subscription | about $1.20 per million events (Queue operations) |
 
 All figures are estimates. They assume 10 million write events a month, 550 bytes per read event, and that signed requests are about 10% of reads. The first and third assumptions are unmeasured. Count them in Analytics Engine before we build.
 
@@ -165,10 +197,9 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 
 **Benefits**
 
-- One capture point feeds audit, usage and subscribers. A new target is a router change.
+- One capture point feeds audit, usage and both delivery modes.
 - We control audit retention.
-- Subscribers use the credentials and authorization they already have.
-- Pull with a client-held cursor means no per-subscriber server state.
+- Pull uses the credentials users already have. Push needs no stored cloud secrets.
 
 **Costs and risks**
 
@@ -178,6 +209,8 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 - A write through a presigned URL has no principal, because multistore treats a presigned URL as anonymous (ADR-008). We have not confirmed that such a write can succeed.
 - Usage counters are approximate.
 - `/.events` is a new public surface to authorize, rate-limit and document.
+- Push makes us send requests to destinations that users choose. This needs signing secrets, an ownership check, protection against requests to internal addresses, and a rule for broken destinations.
+- Two delivery modes mean two things to run and document.
 - We depend on a renamed Cloudflare product whose old names are "deprecated over time".
 - The audit table stores `principal` for 13 months. That is longer than ADR-008 keeps person-linked data.
 
@@ -189,7 +222,11 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 
 **A Queue per subscriber.** HTTP pull needs a Cloudflare API token. A token cannot be limited to one queue, so we cannot give one to external users.
 
-**Webhooks first.** They need subscriber registration, secrets, retry policy, and protection against requests to internal addresses. Pull is a subset of that work. A webhook sender can read the product log later.
+**Push only (no product log).** The data plane is simpler, and replay is the subscriber's broker's job. It leaves out subscribers that have no cloud account or cannot accept inbound requests, such as most Kubernetes clusters. It also needs all the control-plane work first. We keep it as the second delivery mode.
+
+**Pull only.** It needs no subscriber infrastructure and no control plane. It makes every subscriber poll, and it makes us pay for the product log. We keep it as the first delivery mode.
+
+**Cloud-specific destinations only (for example SQS).** They are simple to build. They favor one vendor. Webhooks and federation adapters for each cloud give the same result without that bias.
 
 **Analytics Engine as the stream.** It is sampled and queried, not subscribed. It cannot carry exact per-key events.
 
@@ -201,9 +238,10 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 
 ## Open questions
 
-1. **Is dropping an event on send failure acceptable for the indexer?** An outbox in the request path closes the gap. It adds a hop to every write.
-2. **What is the signed share of reads, and what is the write rate?** The read-audit scope and the cost table depend on both.
-3. **Can the Pipelines sink partition by product?** If not, we keep day partitions and rely on compaction.
-4. **Should anonymous callers subscribe to public products?** We refuse them to bound abuse. ADR-008 says open data stays freely readable.
-5. **Are 13 months of audit retention and 7 days of replay right?** Does a policy set either?
-6. **How do product owners read their audit rows?** An API endpoint is proposed. Is it enough?
+1. **Which delivery mode ships first?** We propose pull, then webhooks, then cloud queues. Push first would cut our data plane but needs the Source API work first.
+2. **Is dropping an event on send failure acceptable for the indexer?** An outbox in the request path closes the gap. It adds a hop to every write.
+3. **What is the signed share of reads, and what is the write rate?** The read-audit scope and the cost table depend on both.
+4. **Can the Pipelines sink partition by product?** If not, we keep day partitions and rely on compaction.
+5. **Should anonymous callers subscribe to public products?** We refuse them to bound abuse. ADR-008 says open data stays freely readable.
+6. **Are 13 months of audit retention and 7 days of replay right?** Does a policy set either?
+7. **How do product owners read their audit rows?** An API endpoint is proposed. Is it enough?
