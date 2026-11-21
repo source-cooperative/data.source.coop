@@ -98,7 +98,7 @@ Subscribers can receive write events in two ways. Both read the same events from
 
 | | Pull: we own the channel | Push: the subscriber owns the channel |
 |---|---|---|
-| Subscriber needs | Credentials only | A reachable endpoint, or a cloud queue |
+| Subscriber needs | Nothing for a public product. Credentials for a private one. | A reachable endpoint, or a cloud queue |
 | Works inside a Kubernetes cluster with no ingress | Yes | Cloud queues: yes. Webhook: only with ingress. |
 | Replay | 7 days, kept by us | Kept by the subscriber's broker |
 | State we keep | Product log | Subscription registry and delivery queue |
@@ -121,7 +121,12 @@ GET /.events/{account}/{product}?after={seq}&limit=100&wait=25
 
 `/.events` needs a new branch in the router, next to `/.sts`. Like other `/.` paths, it sends no analytics.
 
-**Authorization.** Subscribing needs the permission that listing the product needs. The proxy authorizes it as `ListBucket` on the product, through the existing gateway path, so the same SigV4 credentials work. `ReadOnly` roles allow `ListBucket` (ADR-011), so they can subscribe. Service accounts (ADR-014) subscribe with the credentials they get from `/.sts`. A public product needs a signed caller. An anonymous caller is refused (proposal). A private product needs `read` permission.
+**Authorization.** Subscribing needs the permission that listing the product needs. The proxy authorizes it as `ListBucket` on the product, through the existing gateway path, so the same SigV4 credentials work. `ReadOnly` roles allow `ListBucket` (ADR-011), so they can subscribe. Service accounts (ADR-014) subscribe with the credentials they get from `/.sts`. The stream has the same access as the product's data.
+
+- **Public product:** the stream is public. An anonymous caller can pull, under the same rule as an anonymous listing of that product. Anonymous callers never see `principal`.
+- **Private product:** the caller must sign the request and have `read` permission.
+
+Public pull needs two controls, because anyone can call it. The existing per-IP limit applies, as for `/.sts`. The front Worker also caches each response for 2 seconds, keyed by product and `after`, so many anonymous pollers share one product-log read.
 
 **Privacy.** Events show only what a reader of the product can already list, plus the time. A `deleted` event shows the name of a key that listing no longer shows. The subscriber had read access to that key, so we accept this. The proxy knows only the `read` and `write` permissions. So `principal` appears only for subscribers that have `write` permission on the product. Events never carry an IP hash or a country.
 
@@ -129,7 +134,7 @@ GET /.events/{account}/{product}?after={seq}&limit=100&wait=25
 
 ### Push: subscriber-owned destinations
 
-A subscription names a product and a destination. The caller owns it. Creating one needs the permission that pull needs. The Source API stores subscriptions, and the router reads them from a cache.
+A subscription names a product and a destination. The caller owns it, so creating one always needs a signed caller. For a public product, any signed caller can subscribe. For a private product, the caller needs `read` permission. The Source API stores subscriptions, and the router reads them from a cache.
 
 - The router sends each event to each subscription as its own Queue message. A failing destination does not delay the others.
 - Delivery is at-least-once, with retries and backoff. After 3 days of failure the router disables the subscription.
@@ -208,7 +213,7 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 - Anonymous reads are not in the audit table.
 - A write through a presigned URL has no principal, because multistore treats a presigned URL as anonymous (ADR-008). We have not confirmed that such a write can succeed.
 - Usage counters are approximate.
-- `/.events` is a new public surface to authorize, rate-limit and document.
+- `/.events` is a new public surface to authorize, rate-limit and document. Anonymous pull of a public product costs us Worker requests that we cannot attribute to a principal.
 - Push makes us send requests to destinations that users choose. This needs signing secrets, an ownership check, protection against requests to internal addresses, and a rule for broken destinations.
 - Two delivery modes mean two things to run and document.
 - We depend on a renamed Cloudflare product whose old names are "deprecated over time".
@@ -242,6 +247,6 @@ All figures are estimates. They assume 10 million write events a month, 550 byte
 2. **Is dropping an event on send failure acceptable for the indexer?** An outbox in the request path closes the gap. It adds a hop to every write.
 3. **What is the signed share of reads, and what is the write rate?** The read-audit scope and the cost table depend on both.
 4. **Can the Pipelines sink partition by product?** If not, we keep day partitions and rely on compaction.
-5. **Should anonymous callers subscribe to public products?** We refuse them to bound abuse. ADR-008 says open data stays freely readable.
+5. **Is a per-IP limit plus a 2-second cache enough for anonymous pull?** Public streams follow ADR-008: open data stays freely readable. The limit must still bound abuse.
 6. **Are 13 months of audit retention and 7 days of replay right?** Does a policy set either?
 7. **How do product owners read their audit rows?** An API endpoint is proposed. Is it enough?
