@@ -10,6 +10,11 @@
 > [!NOTE]
 > **Amended by ADR-013 (revised 2026-09-25).** One route, `POST /api/v1/service-account-keys/exchanges`, is called before the proxy knows which account is calling, so the proxy authenticates it as itself: a proxy-signed assertion whose subject is the sentinel `urn:source:data-proxy`, accepted only on that route and resolving to no account anywhere else. Every other lookup stays on behalf of the caller, as below.
 
+> [!NOTE]
+> **Amended (2026-10-13): the API also accepts Ory access tokens.** The proxy is no longer the only signer the API trusts. `source-coop login` gets an access token from Ory. The audience of the token is the API's origin, or the audience that a deployment sets, as Vercel previews do. The API accepts the token as a bearer. It verifies the token against Ory's published JWKS with the same pins as for the proxy's tokens: RS256, issuer, audience, and 30 seconds of clock tolerance. A bearer that fails verification never falls back to the cookie. The API sends each bearer to a verifier by its `iss`, so a verifier sees only its own tokens.
+>
+> The subject of an Ory token is an Ory identity. The API resolves it only as a person. A service account has no Ory identity, so it still reaches the API through the proxy. The two signers have different rights. The API accepts a proxy-signed assertion only on `GET` and `HEAD`, because the proxy can sign any subject and so must not change anything as anyone. An Ory token can also write. This adds a caller that does not use the proxy: the CLI. The CLI has one Ory client for each environment, staging and production. Ory lets only these two clients mint a token for the API, and each client's audience is its own environment's API origin. To add a client, change Ory. The API does not change. Nothing that the proxy signs or decides changes (source.coop#654, source.coop#662).
+
 ---
 
 ## Context
