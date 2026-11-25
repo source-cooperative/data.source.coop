@@ -9,10 +9,10 @@ use multistore::error::ProxyError;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-/// `aud` claim for the proxy's AWS `AssumeRoleWithWebIdentity` assertions. AWS's
-/// fixed web-identity convention — the value the customer registers their IAM
-/// OIDC provider with and conditions the role trust policy on — so it is constant
-/// across connections. Applied at the OIDC backend-auth provider (see `lib.rs`).
+/// Default `aud` claim for the proxy's AWS `AssumeRoleWithWebIdentity`
+/// assertions: AWS's web-identity convention, shared by every connection that
+/// doesn't set its own audience. Applied at the OIDC backend-auth provider (see
+/// `lib.rs`).
 pub(crate) const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
 
 /// Per-connection backend authentication, as reported by the Source API
@@ -25,9 +25,9 @@ pub(crate) const AWS_STS_AUDIENCE: &str = "sts.amazonaws.com";
 /// [`Unsupported`](BackendAuth::Unsupported) by [`deserialize_lenient`] instead
 /// of failing the request.
 ///
-/// The AWS variant carries only `role_arn`; the audience is the fixed constant
-/// [`AWS_STS_AUDIENCE`] set on the OIDC backend-auth provider, and session
-/// duration / subject scope may be added later.
+/// The AWS variant carries `role_arn` and an optional per-connection
+/// `audience`; without one, assertions carry [`AWS_STS_AUDIENCE`], the default
+/// set on the OIDC backend-auth provider.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BackendAuth {
@@ -40,6 +40,12 @@ pub enum BackendAuth {
     S3WebIdentityRole {
         /// ARN of the IAM role the proxy assumes for this connection.
         role_arn: String,
+        /// `aud` for this connection's assertions: absent or
+        /// [`AWS_STS_AUDIENCE`] for the shared default, or this connection's
+        /// own `scv1:conn:{id}`. Anything else is refused by
+        /// [`apply_backend_auth`].
+        #[serde(default)]
+        audience: Option<String>,
     },
     /// An authentication type this proxy build does not implement — e.g. the
     /// Source API's `gcp_workload_identity` / `azure_workload_identity` variants,
@@ -95,8 +101,9 @@ where
 ///   issues an unsigned request to a public bucket.
 /// - [`S3WebIdentityRole`](BackendAuth::S3WebIdentityRole) hands the role ARN and
 ///   a per-connection subject (`scv1:conn:{id}`) to multistore's OIDC backend-auth
-///   middleware (wired in `lib.rs`), which mints the assertion (with the fixed AWS
-///   audience set on the provider), exchanges it at AWS STS, and injects the
+///   middleware (wired in `lib.rs`), which mints the assertion (with the
+///   connection's own audience if it has one, else the provider's default),
+///   exchanges it at AWS STS, and injects the
 ///   temporary credentials — clearing `skip_signature` so the request is signed.
 ///   Restricted to `s3` providers (STS credentials only sign S3 requests).
 /// - [`Unsupported`](BackendAuth::Unsupported) can't be fulfilled, so it **fails
@@ -128,13 +135,26 @@ pub(crate) fn apply_backend_auth(
             );
             return Err(ProxyError::BackendAuthError("ProviderMismatch".into()));
         }
-        BackendAuth::S3WebIdentityRole { role_arn } => {
+        BackendAuth::S3WebIdentityRole { role_arn, audience } => {
+            let subject = format!("scv1:conn:{connection_id}");
+            // A connection may only claim its own audience. AWS checks `aud`
+            // against the client IDs a role owner registered before it reads
+            // the trust policy, so an audience naming another connection would
+            // pass the very check that audience exists to make.
+            let audience = match audience.as_deref() {
+                None | Some(AWS_STS_AUDIENCE) => None,
+                Some(aud) if aud == subject => Some(aud),
+                Some(_) => {
+                    tracing::warn!(connection_id, "audience names another connection");
+                    return Err(ProxyError::BackendAuthError("InvalidAudience".into()));
+                }
+            };
             options.insert("auth_type".to_string(), "oidc".to_string());
             options.insert("oidc_role_arn".to_string(), role_arn.clone());
-            options.insert(
-                "oidc_subject".to_string(),
-                format!("scv1:conn:{connection_id}"),
-            );
+            if let Some(aud) = audience {
+                options.insert("oidc_audience".to_string(), aud.to_string());
+            }
+            options.insert("oidc_subject".to_string(), subject);
         }
         // Fail closed: a scheme we can't fulfill (the app-side GCP/Azure
         // workload-identity variants, or a malformed `authentication`) must not
