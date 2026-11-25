@@ -47,8 +47,19 @@ Three request shapes short-circuit before logging and so are never recorded at a
 | blob9 | `range` | `Range` header with the `bytes=` unit prefix stripped |
 | blob10 | `access_key_id` | The access key ID that signed the request; empty for anonymous requests |
 | double1–3 | `bytes_sent`, `status_code`, `duration_ms` | `bytes_sent` is the response's declared `Content-Length`, recorded as 0 when absent — a chunked response therefore logs zero egress |
+| double4 | `sample_weight` | How many requests the row stands for: 1 when written unsampled, `ANALYTICS_SAMPLE_EVERY` when sampled. Rows written before it existed read 0. See *Sampling Before the Write* |
 
 Retaining `range` and `bytes_sent` is what makes read-amplification analysis possible: range-heavy formats (COG, Zarr, Parquet) are read very differently from whole-object downloads, and the distinction matters for both caching decisions and egress attribution.
+
+### Sampling Before the Write
+
+Analytics Engine bills each data point written (2026-11: about 1.7 billion a month at $0.25 per million over 10 million, about $425 a month; billing has not started). Its own adaptive sampling thins the rows it stores but not the writes it counts, so the proxy samples before writing.
+
+Per product and per isolate, the first `ANALYTICS_SAMPLE_BURST` (5) requests in each minute are written in full. Past that, one in `ANALYTICS_SAMPLE_EVERY` (10) is written, with that number as `double4`. A product that is read rarely never leaves its burst allowance and is recorded in full; a hot one is thinned. That keeps the long tail visible, which is why *Sample by request rather than by product* was rejected. Never sampled: every error except 404 (an outage is read one request at a time), and every signed read (they are rare, and they are how access to a restricted product is traced). Writes are signed but are sampled, because a bulk upload or delete is the volume this bounds: one product's benchmark runs made over 100 million PUTs and DELETEs in two days (2026-11-15 and 16). 404s are sampled because missing keys are routine for some products.
+
+The weights are unbiased: a request is counted once whether it is written at weight 1 or 10. A query counts requests as `SUM(if(double4 > 1, double4, 1.0))`, which the SQL API weights by `sampleInterval` itself; `double4` is read as 1 when it is 0 or absent, so rows from before this change still count once. Counts of the form `COUNT(*)` over a sampled period are too low, and so is any percentile that is not weighted.
+
+The state is per isolate, with no coordination, so how much a hot product is thinned depends on how many isolates serve it. Unset, `ANALYTICS_SAMPLE_EVERY` means no sampling, which is how staging and previews run. The monitors are rewritten for the weights (ADR-015).
 
 ### Who Made a Request
 
@@ -99,7 +110,7 @@ Distinct from analytics, and aimed at operators: requests emit a tracing span, a
 
 > **Amended by ADR-015 (Observability Sampling, Sinks and Alerting).** Production now keeps every log line the proxy writes, with invocation logs off; samples traces at 1%; redacts query strings; and exports nothing. Staging captures everything. The paragraph below describes the configuration before 2026-10-29.
 
-In production, logs and traces ship to Axiom with head sampling; staging is configured with no destinations, so nothing leaves it. Analytics data points are unsampled at the binding and sampled by Analytics Engine at the index.
+In production, logs and traces ship to Axiom with head sampling; staging is configured with no destinations, so nothing leaves it. Analytics data points were unsampled at the binding and sampled by Analytics Engine at the index. Production now samples before the write (*Sampling Before the Write*).
 
 ---
 
@@ -134,7 +145,7 @@ In production, logs and traces ship to Axiom with head sampling; staging is conf
 
 **Unsalted hash of the client IP** — rejected. The IPv4 space is enumerable, so an unsalted digest is a reversible encoding of the IP rather than a protection.
 
-**Sample by request rather than by product** — rejected. A single hot product would dominate the sample and starve visibility into the long tail, which is precisely where the interesting usage questions live.
+**Sample by request rather than by product** — rejected. A single hot product would dominate the sample and starve visibility into the long tail, which is precisely where the interesting usage questions live. The write-time sampling (*Sampling Before the Write*) is by product for that reason: a product's first requests each minute are never sampled.
 
 **Broadcast every request to the public stream** — rejected. Unbounded fan-out cost, and a per-request public feed of who is reading what is a finer public disclosure than the platform should make. Datacenter aggregation bounds both.
 
